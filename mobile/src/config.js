@@ -29,9 +29,9 @@ export function getApiBaseUrl() {
   }
 
   if (Platform.OS === "android") {
-    return "http://10.128.8.5:5000";
+    return "https://roopsy.onrender.com";
   }
-  return "http://localhost:5000";
+  return "https://roopsy.onrender.com";
 }
 
 export const API_PREFIX = "/api";
