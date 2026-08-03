@@ -1,0 +1,12 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: barber-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - barber_mongo_data:/data/db
+
+volumes:
+  barber_mongo_data:
