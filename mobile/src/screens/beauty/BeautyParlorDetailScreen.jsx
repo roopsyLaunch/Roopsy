@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -74,6 +74,49 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
   const toggleCategory = (catName) => {
     setExpandedCategories(prev => ({ ...prev, [catName]: !prev[catName] }));
   };
+
+  const [activeSlide, setActiveSlide] = useState(0);
+  const [zoomModalVisible, setZoomModalVisible] = useState(false);
+  const [zoomImagesList, setZoomImagesList] = useState([]);
+  const [zoomImageIndex, setZoomImageIndex] = useState(0);
+  const zoomScrollRef = useRef(null);
+
+  const b = detail?.barber || {};
+  const services = detail?.services || [];
+  const selectedServices = services.filter(s => selectedServiceIds.includes(s.id));
+  const totalDuration = selectedServices.reduce((sum, s) => sum + (s.durationMinutes || 0), 0);
+  const totalPrice = selectedServices.reduce((sum, s) => sum + (s.price || 0), 0);
+  const homeServiceFee = isHomeServiceSelected ? (b.homeServiceFee || 0) : 0;
+  
+  const heroImages = [];
+  if (b.shopPosterUrl) heroImages.push(b.shopPosterUrl);
+  if (b.gallery && b.gallery.length > 0) heroImages.push(...b.gallery);
+  if (heroImages.length === 0) heroImages.push(SALON_FALLBACK_IMAGES[0]);
+
+  const { shopCategorizedServices, homeCategorizedServices } = useMemo(() => {
+    const shopGroups = {};
+    const homeGroups = {};
+    services.forEach(s => {
+      if (s.isActive === false) return;
+      const cat = s.category || "other";
+      if (s.isHomeService) {
+        if (!homeGroups[cat]) homeGroups[cat] = [];
+        homeGroups[cat].push(s);
+      } else {
+        if (!shopGroups[cat]) shopGroups[cat] = [];
+        shopGroups[cat].push(s);
+      }
+    });
+    return { shopCategorizedServices: shopGroups, homeCategorizedServices: homeGroups };
+  }, [services]);
+
+  const loc = b.location;
+  function openMap() {
+    if (loc?.lat != null && loc?.lng != null) {
+      const q = `${loc.lat},${loc.lng}`;
+      Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`);
+    }
+  }
 
   useEffect(() => {
     navigation.setOptions({ headerShown: false });
@@ -184,15 +227,15 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
   async function executeBooking() {
     if (selectedServiceIds.length === 0) return;
     if (!isHomeServiceSelected && liveSeats.length > 0 && selectedChairIndex === null) {
-      Alert.alert("Required", "Please select a chair to book.");
+      Alert.alert("Chair Selection Required", "Please select your preferred styling chair to complete your booking.");
       return;
     }
     if (isHomeServiceSelected && !b.offersHomeService) {
-       Alert.alert("Unavailable", "Home Service is currently turned off by the parlor.");
+       Alert.alert("Home Service Unavailable", "Home Service is currently disabled by this salon. Please schedule a shop visit.");
        return;
     }
     if (!isHomeServiceSelected && selectedETA === null) {
-       Alert.alert("Required", "Please select an ETA (Arrival Time).");
+       Alert.alert("Estimated Arrival Required", "Please select your estimated arrival time (ETA) to complete the booking.");
        return;
     }
     setBookingBusy(true);
@@ -215,7 +258,7 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
         seatIndex: !isHomeServiceSelected && selectedChairIndex !== null ? selectedChairIndex : undefined,
       });
       setConfirmModalVisible(false);
-      Alert.alert("Success", "Your appointment is booked successfully!", [
+      Alert.alert("Booking Confirmed 🎉", "Your appointment has been successfully scheduled! You can review details in the bookings panel.", [
         { text: "View Bookings", onPress: () => navigation.getParent()?.navigate("MyBookings") },
       ]);
     } catch (e) {
@@ -223,12 +266,12 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
       if (e?.response?.status === 409) {
         setConfirmModalVisible(false);
         Alert.alert(
-          "Slot Unavailable", 
-          (typeof err === "string" ? err : "This slot was just taken.") + "\\n\\nWe will now find you some alternatives.",
-          [{ text: "Show Alternatives", onPress: () => handleBookedSlotPress(selectedSlot) }]
+          "Time Slot Unavailable", 
+          (typeof err === "string" ? err : "This time slot is no longer available.") + "\n\nLet's check alternative options for you.",
+          [{ text: "View Alternatives", onPress: () => handleBookedSlotPress(selectedSlot) }]
         );
       } else {
-        Alert.alert("Booking failed", typeof err === "string" ? err : JSON.stringify(err || e.message));
+        Alert.alert("Booking Request Failed", typeof err === "string" ? err : "An error occurred while confirming your appointment. Please try again.");
       }
     } finally {
       setBookingBusy(false);
@@ -242,7 +285,7 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
     } catch (e) {
       const err = e?.response?.data?.error;
       if (e?.response?.status === 409) {
-        Alert.alert("Slot Unavailable", err || "This slot is currently being held by another customer.");
+        Alert.alert("Time Slot Locked", err || "This time slot is temporarily held by another customer. Please select another slot.");
         setSelectedSlot(null);
       }
     }
@@ -272,25 +315,6 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
     });
   };
 
-  const services = detail?.services || [];
-  
-  const { shopCategorizedServices, homeCategorizedServices } = useMemo(() => {
-    const shopGroups = {};
-    const homeGroups = {};
-    services.forEach(s => {
-      if (s.isActive === false) return;
-      const cat = s.category || "other";
-      if (s.isHomeService) {
-        if (!homeGroups[cat]) homeGroups[cat] = [];
-        homeGroups[cat].push(s);
-      } else {
-        if (!shopGroups[cat]) shopGroups[cat] = [];
-        shopGroups[cat].push(s);
-      }
-    });
-    return { shopCategorizedServices: shopGroups, homeCategorizedServices: homeGroups };
-  }, [services]);
-
   if (loading || !detail) {
     return (
       <View style={styles.centered}>
@@ -298,15 +322,6 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
       </View>
     );
   }
-
-  const b = detail.barber || {};
-
-  const selectedServices = services.filter(s => selectedServiceIds.includes(s.id));
-  const totalDuration = selectedServices.reduce((sum, s) => sum + (s.durationMinutes || 0), 0);
-  const totalPrice = selectedServices.reduce((sum, s) => sum + (s.price || 0), 0);
-  const homeServiceFee = isHomeServiceSelected ? (b.homeServiceFee || 0) : 0;
-
-  const heroImage = b.shopPosterUrl || (b.gallery?.length > 0 ? b.gallery[0] : SALON_FALLBACK_IMAGES[0]);
 
   // UI renderers
   const renderHeaderRow = () => (
@@ -333,7 +348,16 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
           <Text style={styles.shopTitle} numberOfLines={2}>{b.shopName || shopName}</Text>
           <View style={styles.ratingRow}>
             <Ionicons name="star" size={14} color="#fbbf24" />
-            <Text style={styles.ratingText}>{b.averageRating || "4.8"} <Text style={styles.ratingCount}>({b.ratingCount || "256"} Reviews)</Text></Text>
+            <Text style={styles.ratingText}>
+              {b.ratingCount && b.ratingCount > 0 ? (
+                <>
+                  {b.averageRating || (b.ratingSum / b.ratingCount).toFixed(1)}{" "}
+                  <Text style={styles.ratingCount}>({b.ratingCount} Reviews)</Text>
+                </>
+              ) : (
+                <Text style={styles.ratingCount}>New</Text>
+              )}
+            </Text>
           </View>
           <Text style={styles.categoryText}>{b.businessCategory || "Beauty Parlour"}</Text>
           <View style={styles.statusStylistRow}>
@@ -569,11 +593,129 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
     </View>
   );
 
+  const screenWidth = Dimensions.get("window").width;
+
   return (
     <View style={styles.wrapper}>
-      <ScrollView style={styles.container} contentContainerStyle={{paddingBottom: 150}} showsVerticalScrollIndicator={false}>
-        {renderHeaderRow()}
-        {renderTopInfo()}
+      <ScrollView 
+        style={styles.container} 
+        contentContainerStyle={{paddingBottom: 150}} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#be185d" />}
+      >
+        {/* Parallax Hero Header */}
+        <View style={styles.heroContainer}>
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onScroll={(e) => {
+              const slide = Math.round(e.nativeEvent.contentOffset.x / screenWidth);
+              setActiveSlide(slide);
+            }}
+            scrollEventThrottle={16}
+          >
+            {heroImages.map((img, i) => (
+              <Pressable key={i} onPress={() => { setZoomImagesList(heroImages); setZoomImageIndex(i); setZoomModalVisible(true); }}>
+                <Image 
+                  source={{ uri: img }} 
+                  style={[styles.heroImage, { width: screenWidth }]} 
+                  resizeMode="contain"
+                />
+              </Pressable>
+            ))}
+          </ScrollView>
+          <View style={styles.heroOverlay} pointerEvents="none" />
+          
+          {/* Pagination Dots */}
+          {heroImages.length > 1 && (
+            <View style={styles.paginationContainer} pointerEvents="none">
+              {heroImages.map((_, i) => (
+                <View key={i} style={[styles.dot, activeSlide === i ? styles.activeDot : null]} />
+              ))}
+            </View>
+          )}
+          
+          {/* Hero Image Watermarks */}
+          <View style={styles.heroWatermarkContainer} pointerEvents="none">
+            <Text style={styles.heroWatermarkLeft}>Tap to zoom</Text>
+            <Text style={styles.heroWatermarkRight}>Roopsy</Text>
+          </View>
+          
+          {/* Custom Nav Bar */}
+          <View style={[styles.navBar, { top: Math.max(insets.top, 20) }]}>
+            <Pressable style={styles.navBtn} onPress={() => {
+              if (navigation.canGoBack()) {
+                navigation.goBack();
+              } else {
+                navigation.navigate("MainTabs", { screen: "Home" });
+              }
+            }}>
+              <Ionicons name="arrow-back" size={24} color="#0f172a" />
+            </Pressable>
+            <Pressable style={styles.navBtn} onPress={() => toggleFavorite(barberId)}>
+              <Ionicons name={favorites.includes(barberId) ? "heart" : "heart-outline"} size={24} color={favorites.includes(barberId) ? "#ef4444" : "#0f172a"} />
+            </Pressable>
+          </View>
+        </View>
+
+        {/* Info Card (Pulls up over the image) */}
+        <View style={styles.infoSheet}>
+          <View style={styles.titleRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.shopTitle}>{b.shopName || shopName || "Premium Parlour"}</Text>
+              <Text style={styles.shopCategory}>{b.businessCategory || "Beauty & Makeup Services"}</Text>
+            </View>
+            <View style={styles.ratingBadge}>
+              <Ionicons name="star" size={14} color="#fbbf24" />
+              <Text style={styles.ratingText}>
+                {b.ratingCount && b.ratingCount > 0 ? (
+                  `${b.averageRating || (b.ratingSum / b.ratingCount).toFixed(1)} (${b.ratingCount})`
+                ) : (
+                  "New"
+                )}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.divider} />
+
+          <View style={styles.metaInfoRow}>
+            <View style={styles.metaItem}>
+              <Ionicons name="time" size={20} color="#be185d" />
+              <View style={styles.metaTextCol}>
+                <Text style={styles.metaLabel}>Status</Text>
+                <Text style={[styles.metaValue, { color: b.isShopOpen ? "#16a34a" : "#ef4444" }]}>
+                  {b.isShopOpen ? "Open Now" : "Closed"}
+                </Text>
+              </View>
+            </View>
+            
+            {b.user && (
+              <View style={styles.metaItem}>
+                <Ionicons name="person" size={20} color="#be185d" />
+                <View style={styles.metaTextCol}>
+                  <Text style={styles.metaLabel}>Beautician</Text>
+                  <Text style={styles.metaValue}>{b.user.name}</Text>
+                </View>
+              </View>
+            )}
+          </View>
+
+          {(b.address?.line1 || b.address?.city) && (
+            <Pressable onPress={openMap} style={styles.locationBox}>
+              <View style={styles.locIconWrap}>
+                <Ionicons name="location" size={20} color="#3b82f6" />
+              </View>
+              <View style={styles.locTextWrap}>
+                <Text style={styles.locTitle}>Shop Location</Text>
+                <Text style={styles.locAddress}>{[b.address.line1, b.address.city, b.address.pincode].filter(Boolean).join(", ")}</Text>
+              </View>
+              <Ionicons name="arrow-forward" size={16} color="#94a3b8" />
+            </Pressable>
+          )}
+        </View>
+
         {renderTabs()}
         {isHomeServiceSelected ? renderHomeService() : renderShopVisit()}
       </ScrollView>
@@ -676,6 +818,49 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
         </View>
       </Modal>
 
+      {/* Zoomable Image Viewer Modal */}
+      <Modal
+        visible={zoomModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setZoomModalVisible(false)}
+      >
+        <View style={styles.zoomModalBg}>
+          <Pressable style={styles.zoomCloseBtn} onPress={() => setZoomModalVisible(false)}>
+            <Ionicons name="close" size={28} color="#ffffff" />
+          </Pressable>
+          <ScrollView
+            ref={zoomScrollRef}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            style={{ width: "100%", height: "100%" }}
+          >
+            {zoomImagesList.map((imgUrl, idx) => (
+              <View key={idx} style={{ width: Dimensions.get("window").width, height: "100%", justifyContent: "center", alignItems: "center" }}>
+                <View style={styles.zoomImageWrapper}>
+                  <ScrollView
+                    minimumZoomScale={1}
+                    maximumZoomScale={5}
+                    showsHorizontalScrollIndicator={false}
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={styles.zoomScrollContent}
+                  >
+                    <Image source={{ uri: imgUrl }} style={styles.zoomImage} resizeMode="contain" />
+                  </ScrollView>
+                  
+                  {/* Watermarks Container */}
+                  <View style={styles.watermarkContainer}>
+                    <Text style={styles.watermarkLeft}>Tap to zoom</Text>
+                    <Text style={styles.watermarkRight}>Roopsy</Text>
+                  </View>
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -685,27 +870,249 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   centered: { flex: 1, justifyContent: "center", alignItems: "center" },
   
-  headerRow: { position: "absolute", zIndex: 10, left: 16, right: 16, flexDirection: "row", justifyContent: "space-between" },
-  headerRight: { flexDirection: "row" },
-  iconBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#fff", justifyContent: "center", alignItems: "center", shadowColor: "#000", shadowOffset: {width: 0, height: 2}, shadowOpacity: 0.1, shadowRadius: 4, elevation: 2 },
+  heroContainer: { width: "100%", height: 320, position: "relative", backgroundColor: "#0f172a" },
+  heroImage: { width: "100%", height: "100%", resizeMode: "contain" },
+  heroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.15)" },
   
-  topInfoContainer: { paddingHorizontal: 16, paddingTop: 60, paddingBottom: 16, backgroundColor: "#fff" },
-  imageAndDetailsRow: { flexDirection: "row" },
-  shopImage: { width: 100, height: 100, borderRadius: 16, backgroundColor: "#e2e8f0" },
-  detailsCol: { flex: 1, marginLeft: 16 },
-  shopTitle: { fontSize: 20, fontWeight: "800", color: "#0f172a" },
-  ratingRow: { flexDirection: "row", alignItems: "center", marginTop: 4 },
-  ratingText: { fontSize: 13, fontWeight: "700", color: "#fbbf24", marginLeft: 4 },
-  ratingCount: { color: "#64748b", fontWeight: "500" },
-  categoryText: { fontSize: 14, color: "#be185d", fontWeight: "600", marginTop: 4 },
-  statusStylistRow: { flexDirection: "row", marginTop: 8, justifyContent: "space-between" },
-  statusCol: { flexDirection: "row", alignItems: "center" },
-  statusDotWrapper: { marginRight: 6 },
-  openText: { fontSize: 12, fontWeight: "700" },
-  closeTimeText: { fontSize: 10, color: "#64748b" },
-  stylistCol: { flexDirection: "row", alignItems: "center" },
-  stylistLabel: { fontSize: 10, color: "#64748b" },
-  stylistName: { fontSize: 12, fontWeight: "700", color: "#0f172a" },
+  zoomModalBg: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.95)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  zoomCloseBtn: {
+    position: "absolute",
+    top: 40,
+    right: 20,
+    zIndex: 100,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  zoomImageWrapper: {
+    width: "100%",
+    height: "80%",
+    position: "relative",
+  },
+  zoomScrollContent: {
+    flexGrow: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  zoomImage: {
+    width: Dimensions.get("window").width,
+    height: "100%",
+  },
+  watermarkContainer: {
+    position: "absolute",
+    bottom: 20,
+    left: 20,
+    right: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    zIndex: 10,
+  },
+  watermarkLeft: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.6)",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  watermarkRight: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: "rgba(255,255,255,0.7)",
+    letterSpacing: 1.5,
+  },
+
+  paginationContainer: {
+    position: "absolute",
+    bottom: 24,
+    left: 0,
+    right: 0,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 10,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "rgba(255, 255, 255, 0.4)",
+    marginHorizontal: 4,
+  },
+  activeDot: {
+    backgroundColor: "#ffffff",
+    width: 20,
+  },
+  heroWatermarkContainer: {
+    position: "absolute",
+    bottom: 54,
+    left: 20,
+    right: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    zIndex: 10,
+  },
+  heroWatermarkLeft: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "rgba(255, 255, 255, 0.7)",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    textShadowColor: "rgba(0, 0, 0, 0.6)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  heroWatermarkRight: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(255, 255, 255, 0.8)",
+    letterSpacing: 1.5,
+    textShadowColor: "rgba(0, 0, 0, 0.6)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  
+  navBar: {
+    position: "absolute",
+    left: 20,
+    right: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  navBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+
+  infoSheet: {
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    marginTop: -24,
+    paddingTop: 30,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+    shadowColor: "#0f172a",
+    shadowOffset: { width: 0, height: -10 },
+    shadowOpacity: 0.05,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  titleRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 16,
+  },
+  shopTitle: {
+    fontSize: 24,
+    fontWeight: "900",
+    color: "#0f172a",
+  },
+  shopCategory: {
+    fontSize: 14,
+    color: "#be185d",
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  ratingBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fffdf5",
+    borderWidth: 1,
+    borderColor: "#fef3c7",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  ratingText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#d97706",
+    marginLeft: 4,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: "#f1f5f9",
+    marginVertical: 16,
+  },
+  metaInfoRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 16,
+  },
+  metaItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  metaTextCol: {
+    marginLeft: 12,
+  },
+  metaLabel: {
+    fontSize: 11,
+    color: "#94a3b8",
+    fontWeight: "600",
+    textTransform: "uppercase",
+  },
+  metaValue: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#334155",
+    marginTop: 2,
+  },
+  locationBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f8fafc",
+    padding: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  locIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: "#eff6ff",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  locTextWrap: {
+    flex: 1,
+    marginLeft: 12,
+    marginRight: 8,
+  },
+  locTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#1e293b",
+  },
+  locAddress: {
+    fontSize: 12,
+    color: "#64748b",
+    marginTop: 2,
+    fontWeight: "500",
+  },
 
   tabContainer: { flexDirection: "row", marginHorizontal: 16, marginTop: 16, backgroundColor: "#fff", borderRadius: 12, padding: 4 },
   tabBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 12, borderRadius: 8 },

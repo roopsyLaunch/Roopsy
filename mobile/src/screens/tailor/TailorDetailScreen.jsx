@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { View, Text, StyleSheet, Image, ScrollView, ActivityIndicator, Pressable, Linking, Dimensions, Modal } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "../../api/client";
@@ -21,7 +21,20 @@ export function TailorDetailScreen({ route, navigation }) {
   const [activeSlide, setActiveSlide] = useState(0);
   const [collapsedCategories, setCollapsedCategories] = useState({});
   const [zoomModalVisible, setZoomModalVisible] = useState(false);
-  const [zoomImageUrl, setZoomImageUrl] = useState("");
+  const [zoomImagesList, setZoomImagesList] = useState([]);
+  const [zoomImageIndex, setZoomImageIndex] = useState(0);
+  const zoomScrollRef = useRef(null);
+
+  useEffect(() => {
+    if (zoomModalVisible && zoomScrollRef.current) {
+      setTimeout(() => {
+        zoomScrollRef.current?.scrollTo({
+          x: zoomImageIndex * Dimensions.get("window").width,
+          animated: false,
+        });
+      }, 50);
+    }
+  }, [zoomModalVisible, zoomImageIndex]);
 
   const normalServices = React.useMemo(() => {
     return services.filter(s => s.serviceMode !== "premium");
@@ -125,7 +138,7 @@ export function TailorDetailScreen({ route, navigation }) {
             scrollEventThrottle={16}
           >
             {heroImages.map((img, i) => (
-              <Pressable key={i} onPress={() => { setZoomImageUrl(img); setZoomModalVisible(true); }}>
+              <Pressable key={i} onPress={() => { setZoomImagesList(heroImages); setZoomImageIndex(i); setZoomModalVisible(true); }}>
                 <Image 
                   source={{ uri: img }} 
                   style={[styles.heroImage, { width: screenWidth }]} 
@@ -144,6 +157,12 @@ export function TailorDetailScreen({ route, navigation }) {
               ))}
             </View>
           )}
+          
+          {/* Hero Image Watermarks */}
+          <View style={styles.heroWatermarkContainer} pointerEvents="none">
+            <Text style={styles.heroWatermarkLeft}>Tap to zoom</Text>
+            <Text style={styles.heroWatermarkRight}>Roopsy</Text>
+          </View>
           
           {/* Custom Nav Bar */}
           <View style={[styles.navBar, { top: Math.max(insets.top, 20) }]}>
@@ -423,13 +442,33 @@ export function TailorDetailScreen({ route, navigation }) {
             <Ionicons name="close" size={28} color="#ffffff" />
           </Pressable>
           <ScrollView
-            minimumZoomScale={1}
-            maximumZoomScale={5}
+            ref={zoomScrollRef}
+            horizontal
+            pagingEnabled
             showsHorizontalScrollIndicator={false}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.zoomScrollContent}
+            style={{ width: "100%", height: "100%" }}
           >
-            <Image source={{ uri: zoomImageUrl }} style={styles.zoomImage} resizeMode="contain" />
+            {zoomImagesList.map((imgUrl, idx) => (
+              <View key={idx} style={{ width: Dimensions.get("window").width, height: "100%", justifyContent: "center", alignItems: "center" }}>
+                <View style={styles.zoomImageWrapper}>
+                  <ScrollView
+                    minimumZoomScale={1}
+                    maximumZoomScale={5}
+                    showsHorizontalScrollIndicator={false}
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={styles.zoomScrollContent}
+                  >
+                    <Image source={{ uri: imgUrl }} style={styles.zoomImage} resizeMode="contain" />
+                  </ScrollView>
+                  
+                  {/* Watermarks Container directly on the image box */}
+                  <View style={styles.watermarkContainer}>
+                    <Text style={styles.watermarkLeft}>Tap to zoom</Text>
+                    <Text style={styles.watermarkRight}>Roopsy</Text>
+                  </View>
+                </View>
+              </View>
+            ))}
           </ScrollView>
         </View>
       </Modal>
@@ -449,7 +488,7 @@ const styles = StyleSheet.create({
   heroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.15)" },
   zoomModalBg: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.95)",
+    backgroundColor: "rgba(0, 0, 0, 0.95)",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -471,6 +510,41 @@ const styles = StyleSheet.create({
     width: Dimensions.get("window").width,
     height: Dimensions.get("window").height * 0.75,
   },
+  zoomImageWrapper: {
+    width: Dimensions.get("window").width,
+    height: Dimensions.get("window").height * 0.75,
+    position: "relative",
+    justifyContent: "center",
+  },
+  watermarkContainer: {
+    position: "absolute",
+    bottom: 12,
+    left: 16,
+    right: 16,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    zIndex: 999,
+  },
+  watermarkLeft: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "rgba(255, 255, 255, 0.45)",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    textShadowColor: "rgba(0, 0, 0, 0.5)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  watermarkRight: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "rgba(255, 255, 255, 0.6)",
+    letterSpacing: 1,
+    textShadowColor: "rgba(0, 0, 0, 0.5)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
   paginationContainer: {
     position: "absolute",
     bottom: 40,
@@ -482,6 +556,35 @@ const styles = StyleSheet.create({
   },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "rgba(255, 255, 255, 0.5)" },
   activeDot: { width: 20, backgroundColor: "#ffffff" },
+  heroWatermarkContainer: {
+    position: "absolute",
+    bottom: 24,
+    left: 20,
+    right: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    zIndex: 10,
+  },
+  heroWatermarkLeft: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "rgba(255, 255, 255, 0.7)",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    textShadowColor: "rgba(0, 0, 0, 0.6)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  heroWatermarkRight: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(255, 255, 255, 0.8)",
+    letterSpacing: 1.5,
+    textShadowColor: "rgba(0, 0, 0, 0.6)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
   
   navBar: {
     position: "absolute",

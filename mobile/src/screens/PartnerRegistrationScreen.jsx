@@ -28,7 +28,7 @@ export function PartnerRegistrationScreen({ route, navigation }) {
 
   async function onSubmit() {
     if (!shopName.trim() || !city.trim()) {
-      Alert.alert("Error", "Please provide at least a Shop Name and City.");
+      Alert.alert("Information Required", "Please enter your business / shop name and city to proceed.");
       return;
     }
 
@@ -51,21 +51,25 @@ export function PartnerRegistrationScreen({ route, navigation }) {
 
       await refreshMe();
 
-      Alert.alert("Success", "Your business profile has been created!", [
+      Alert.alert("Profile Created 🎉", "Your business profile has been successfully created and configured.", [
         {
           text: "Go to Dashboard",
           onPress: () => navigation.navigate("Partners"),
         },
       ]);
     } catch (e) {
-      Alert.alert("Registration failed", e?.response?.data?.error || e.message);
+      Alert.alert("Registration Failed", e?.response?.data?.error || "Unable to register your business profile. Please verify your connection and try again.");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+    <KeyboardAvoidingView 
+      style={styles.flex} 
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
+    >
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
           <View style={styles.iconCircle}>

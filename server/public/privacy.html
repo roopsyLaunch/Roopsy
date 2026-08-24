@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy - Roopsy</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: rgba(30, 41, 59, 0.7);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --primary: #8b5cf6;
+            --primary-hover: #a78bfa;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent-glow: rgba(139, 92, 246, 0.15);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            line-height: 1.6;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(139, 92, 246, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(139, 92, 246, 0.05) 0%, transparent 40%);
+        }
+
+        header {
+            width: 100%;
+            max-width: 900px;
+            padding: 4rem 2rem 2rem 2rem;
+            text-align: center;
+            animation: fadeIn 1s ease-out;
+        }
+
+        .logo {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.05em;
+        }
+
+        header p {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 900px;
+            padding: 0 2rem 4rem 2rem;
+            animation: slideUp 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
+            border-radius: 24px;
+            padding: 3rem;
+            box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5), 0 0 50px 0 var(--accent-glow);
+        }
+
+        .last-updated {
+            font-size: 0.9rem;
+            color: var(--primary-hover);
+            font-weight: 500;
+            margin-bottom: 2rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        section {
+            margin-bottom: 2.5rem;
+        }
+
+        section:last-of-type {
+            margin-bottom: 0;
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--text-main);
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        h2::before {
+            content: '';
+            display: inline-block;
+            width: 4px;
+            height: 1.25rem;
+            background: var(--primary);
+            border-radius: 4px;
+        }
+
+        p {
+            color: var(--text-muted);
+            margin-bottom: 1rem;
+            font-weight: 300;
+        }
+
+        ul {
+            margin-left: 1.5rem;
+            margin-bottom: 1.5rem;
+            color: var(--text-muted);
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+            font-weight: 300;
+        }
+
+        .delete-box {
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin-top: 1rem;
+        }
+
+        .delete-box h3 {
+            color: #f87171;
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+
+        .delete-box p {
+            color: #fca5a5;
+            font-size: 0.95rem;
+            margin-bottom: 0;
+        }
+
+        .contact-info {
+            background: rgba(139, 92, 246, 0.08);
+            border: 1px solid rgba(139, 92, 246, 0.2);
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin-top: 1rem;
+        }
+
+        .contact-info a {
+            color: var(--primary-hover);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s ease;
+        }
+
+        .contact-info a:hover {
+            color: #c084fc;
+        }
+
+        footer {
+            margin-top: auto;
+            padding: 2rem;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            border-top: 1px solid var(--border-color);
+            width: 100%;
+            background: rgba(15, 23, 42, 0.8);
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @media (max-width: 640px) {
+            header {
+                padding: 2.5rem 1rem 1.5rem 1rem;
+            }
+            .logo {
+                font-size: 2rem;
+            }
+            .container {
+                padding: 0 1rem 2.5rem 1rem;
+            }
+            .card {
+                padding: 1.5rem;
+                border-radius: 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo">Roopsy</div>
+        <p>Privacy Policy</p>
+    </header>
+
+    <div class="container">
+        <div class="card">
+            <div class="last-updated">Last Updated: August 06, 2026</div>
+
+            <section>
+                <h2>1. Information We Collect</h2>
+                <p>We collect information to provide better services to all of our users. The types of information we collect include:</p>
+                <ul>
+                    <li><strong>Personal Information:</strong> Name, phone number, email address, and profile details provided during account creation.</li>
+                    <li><strong>Location Information:</strong> Precise or approximate location data from your mobile device to show you nearby barbers, beauty parlors, and tailors. This is optional but highly recommended.</li>
+                    <li><strong>Booking & Activity Details:</strong> Your appointment history, services booked, and shop preferences.</li>
+                    <li><strong>Device & Log Data:</strong> Device model, operating system version, unique device identifiers, and crash logs.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>2. How We Use Information</h2>
+                <p>We use the collected information for the following purposes:</p>
+                <ul>
+                    <li>To facilitate appointment booking, scheduling, and notifications.</li>
+                    <li>To help you locate nearby beauty parlor, barber, and tailoring services.</li>
+                    <li>To improve and optimize the performance and design of the Roopsy application.</li>
+                    <li>To communicate updates, notifications, and customer support messages.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>3. Information Sharing</h2>
+                <p>We do not share your personal information with third parties except in the following scenarios:</p>
+                <ul>
+                    <li><strong>With Service Providers:</strong> Sharing name, phone, and booking info with the specific partner (barber, salon, or tailor) you make a booking with.</li>
+                    <li><strong>For Legal Purposes:</strong> If required by law, regulation, or legal process to protect the rights and safety of Roopsy or its users.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>4. Data Retention & Account Deletion</h2>
+                <p>We retain your data for as long as your account is active. You have full control over your data, including the right to request account deletion.</p>
+                <div class="delete-box">
+                    <h3>Account Deletion & Data Removal</h3>
+                    <p>If you wish to delete your account and erase all personal information associated with it, you can do so directly in the App under <strong>Settings > Account > Delete Account</strong>, or submit a request via email to <a href="mailto:support@roopsy.com" style="color: #fca5a5; font-weight: 500;">support@roopsy.com</a>. We will process and delete your data within 7 business days.</p>
+                </div>
+            </section>
+
+            <section>
+                <h2>5. Contact Us</h2>
+                <p>If you have any questions or suggestions about our Privacy Policy, do not hesitate to contact us at:</p>
+                <div class="contact-info">
+                    <p><strong>Email:</strong> <a href="mailto:support@roopsy.com">support@roopsy.com</a></p>
+                    <p><strong>Website:</strong> <a href="https://roopsy.com" target="_blank">roopsy.com</a></p>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <footer>
+        &copy; 2026 Roopsy. All rights reserved.
+    </footer>
+
+</body>
+</html>

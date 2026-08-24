@@ -229,7 +229,7 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
 
         {/* Cancellation Action / Lock Banner for Tailor Partner */}
         {!order.isOtpVerified && !["cancelled", "completed", "declined"].includes(order.status) ? (
-          <Pressable 
+          <Pressable
             style={{ backgroundColor: "#fee2e2", padding: 12, borderRadius: 14, alignItems: "center", marginBottom: 14, borderWidth: 1, borderColor: "#fca5a5", flexDirection: "row", justifyContent: "center" }}
             onPress={cancelOrderByTailor}
           >
@@ -257,10 +257,10 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
                     {order.isOtpVerified
                       ? `Verified on ${new Date(order.otpVerifiedAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
                       : isExpired
-                      ? "Shop service OTP expired 4 hours after confirmation."
-                      : !order.isHomeService && expTimeStr
-                      ? `Shop service OTP valid for 4 hours (Expires at ${expTimeStr})`
-                      : "Customer will provide 4-digit code on arrival"}
+                        ? "Shop service OTP expired 4 hours after confirmation."
+                        : !order.isHomeService && expTimeStr
+                          ? `Shop service OTP valid for 4 hours (Expires at ${expTimeStr})`
+                          : "Customer will provide 4-digit code on arrival"}
                   </Text>
                 </View>
               </View>
@@ -303,8 +303,8 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
                       {order.isDeliveryOtpVerified
                         ? `Delivered on ${new Date(order.deliveryOtpVerifiedAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
                         : order.deliveryOtp
-                        ? "Enter customer 4-digit Delivery OTP to complete order"
-                        : "Tap below to generate Delivery OTP on customer app"}
+                          ? "Enter customer 4-digit Delivery OTP to complete order"
+                          : "Tap below to generate Delivery OTP on customer app"}
                     </Text>
                   </View>
                 </View>
@@ -350,10 +350,10 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
           <InfoRow label="Name" value={order.customerId?.name} />
           <InfoRow label="Phone" value={order.customerId?.phone} />
           <InfoRow label="Order Date" value={new Date(order.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })} />
-          <InfoRow 
-            label="Service Mode" 
-            value={order.isHomeService ? "🏡 Home Service (Doorstep Visit)" : "🏪 Shop Service (Customer Visit)"} 
-            valueColor={order.isHomeService ? "#7c3aed" : "#0369a1"} 
+          <InfoRow
+            label="Service Mode"
+            value={order.isHomeService ? "🏡 Home Service (Doorstep Visit)" : "🏪 Shop Service (Customer Visit)"}
+            valueColor={order.isHomeService ? "#7c3aed" : "#0369a1"}
           />
           {order.isHomeService && (
             <>
@@ -364,10 +364,10 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
             </>
           )}
           {order.estimatedDays ? (
-            <InfoRow 
-              label="Estimated Completion" 
-              value={`${order.estimatedDays} Days (${order.deliveryDate ? new Date(order.deliveryDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "Target"})`} 
-              valueColor="#059669" 
+            <InfoRow
+              label="Estimated Completion"
+              value={`${order.estimatedDays} Days (${order.deliveryDate ? new Date(order.deliveryDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "Target"})`}
+              valueColor="#059669"
             />
           ) : null}
         </Section>

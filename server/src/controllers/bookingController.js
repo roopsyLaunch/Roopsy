@@ -8,7 +8,6 @@ const AuditLog = require("../models/AuditLog");
 const User = require("../models/User");
 const { isWithinWorkingHours, endFitsWorkingHours } = require("../utils/time");
 const { availableSeatSlots } = require("../utils/barberSeats");
-const { sendPushNotification } = require("../utils/pushNotifications");
 
 const CHECKIN_WINDOW_START_MINS = 10;
 const CHECKIN_WINDOW_END_MINS = 5;
@@ -304,6 +303,34 @@ async function create(req, res) {
     details: { startTime, services: serviceIds }
   });
 
+  // Send Push Notification to Barber/Parlour Partner & Save to Inbox
+  if (barber.userId) {
+    try {
+      const Notification = require("../models/Notification");
+      const customerName = req.user?.name || "Customer";
+      const totalAmount = services.reduce((sum, s) => sum + s.price, 0);
+      await Notification.create({
+        userId: barber.userId,
+        title: "New Booking Request 💈",
+        body: `${customerName} booked an appointment for ₹${totalAmount}. Please review the request.`,
+        type: "general",
+        data: { bookingId: booking._id, type: "barber_booking" }
+      });
+    } catch (e) {
+      console.error("Failed to create booking request notification for barber", e);
+    }
+  }
+
+  // Send Booking OTP via SMS to Customer
+  if (req.user?.phone) {
+    try {
+      const { sendCustomSms } = require("../services/smsService");
+      await sendCustomSms(req.user.phone, booking.verificationPin);
+    } catch (err) {
+      console.error("Failed to send booking verification OTP SMS:", err);
+    }
+  }
+
   const io = req.app.get("io");
   if (io) {
     io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: barber.seats });
@@ -449,26 +476,35 @@ async function patch(req, res) {
     }
   }
 
-  // Send Push Notification to Customer
+  // Send Push Notification to Customer & Save to Notification Inbox
   if (booking.customerId && parsed.data.status !== undefined) {
-    const customer = await User.findById(booking.customerId);
-    if (customer && customer.expoPushToken) {
-      let title = "Booking Update";
-      let body = `Your booking status is now: ${parsed.data.status}`;
-      if (parsed.data.status === "confirmed") {
-        title = "Booking Confirmed!";
-        body = barber ? `Your booking at ${barber.shopName} has been confirmed.` : "Your booking is confirmed.";
-      } else if (parsed.data.status === "cancelled") {
-        title = "Booking Cancelled";
-        body = barber ? `Your booking at ${barber.shopName} has been cancelled.` : "Your booking is cancelled.";
-      } else if (parsed.data.status === "in-progress") {
-        title = "Haircut Started";
-        body = "You are now in the chair!";
-      } else if (parsed.data.status === "completed") {
-        title = "Thank You!";
-        body = "Your booking is complete. Don't forget to leave a review!";
-      }
-      await sendPushNotification(customer.expoPushToken, title, body, { bookingId: booking._id });
+    let title = "Booking Update";
+    let body = `Your booking status is now: ${parsed.data.status}`;
+    if (parsed.data.status === "confirmed") {
+      title = "Booking Confirmed!";
+      body = barber ? `Your booking at ${barber.shopName} has been confirmed.` : "Your booking is confirmed.";
+    } else if (parsed.data.status === "cancelled") {
+      title = "Booking Cancelled";
+      body = barber ? `Your booking at ${barber.shopName} has been cancelled.` : "Your booking is cancelled.";
+    } else if (parsed.data.status === "in-progress") {
+      title = "Haircut Started";
+      body = "You are now in the chair!";
+    } else if (parsed.data.status === "completed") {
+      title = "Thank You!";
+      body = "Your booking is complete. Don't forget to leave a review!";
+    }
+
+    try {
+      const Notification = require("../models/Notification");
+      await Notification.create({
+        userId: booking.customerId,
+        title,
+        body,
+        type: "booking_status",
+        data: { bookingId: booking._id }
+      });
+    } catch (e) {
+      console.error("Failed to create booking update notification", e);
     }
   }
 

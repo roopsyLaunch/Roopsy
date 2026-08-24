@@ -50,6 +50,7 @@ export default function App() {
   
   // Data States
   const [pendingApprovals, setPendingApprovals] = useState([]);
+  const [pendingTailorsApprovals, setPendingTailorsApprovals] = useState([]);
   const [tailors, setTailors] = useState([]);
   const [barbers, setBarbers] = useState([]);
   const [bookings, setBookings] = useState([]);
@@ -64,6 +65,7 @@ export default function App() {
 
   // Rejection Modal State
   const [rejectingId, setRejectingId] = useState(null);
+  const [rejectingType, setRejectingType] = useState("barber"); // "barber" or "tailor"
   const [rejectionReason, setRejectionReason] = useState("");
   const [showRejectModal, setShowRejectModal] = useState(false);
   
@@ -154,8 +156,12 @@ export default function App() {
         setOrders(ordersRes.data.slice(0, 5) || []);
         setBookings(bookingsRes.data.slice(0, 5) || []);
       } else if (activeTab === "approvals") {
-        const res = await axios.get(`${API_BASE}/admin/barbers/pending`);
-        setPendingApprovals(res.data.requests || []);
+        const [barberRes, tailorRes] = await Promise.all([
+          axios.get(`${API_BASE}/admin/barbers/pending`),
+          axios.get(`${API_BASE}/admin/tailors/pending`)
+        ]);
+        setPendingApprovals(barberRes.data.requests || []);
+        setPendingTailorsApprovals(tailorRes.data.requests || []);
       } else if (activeTab === "partners") {
         const [tailorsRes, barbersRes] = await Promise.all([
           axios.get(`${API_BASE}/admin-panel/tailors`),
@@ -183,7 +189,7 @@ export default function App() {
     }
   };
 
-  // Barber Approval Decision
+  // Barber & Tailor Approval Decisions
   const handleApproveBarber = async (id) => {
     if (!window.confirm("Are you sure you want to approve this shop request?")) return;
     try {
@@ -197,8 +203,29 @@ export default function App() {
     }
   };
 
+  const handleApproveTailor = async (id) => {
+    if (!window.confirm("Are you sure you want to approve this tailor request?")) return;
+    try {
+      await axios.patch(`${API_BASE}/admin/tailors/${id}/decision`, { status: "approved" });
+      alert("Tailor approved successfully!");
+      fetchTabDocs();
+      fetchStats();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to approve tailor");
+    }
+  };
+
   const handleOpenRejectBarber = (id) => {
     setRejectingId(id);
+    setRejectingType("barber");
+    setRejectionReason("");
+    setShowRejectModal(true);
+  };
+
+  const handleOpenRejectTailor = (id) => {
+    setRejectingId(id);
+    setRejectingType("tailor");
     setRejectionReason("");
     setShowRejectModal(true);
   };
@@ -209,7 +236,10 @@ export default function App() {
       return;
     }
     try {
-      await axios.patch(`${API_BASE}/admin/barbers/${rejectingId}/decision`, {
+      const endpoint = rejectingType === "tailor"
+        ? `${API_BASE}/admin/tailors/${rejectingId}/decision`
+        : `${API_BASE}/admin/barbers/${rejectingId}/decision`;
+      await axios.patch(endpoint, {
         status: "rejected",
         rejectionReason: rejectionReason
       });
@@ -224,11 +254,12 @@ export default function App() {
   };
 
   // Toggle Verification / Active states
-  const handleToggleTailorStatus = async (id, currentVerified, currentActive) => {
+  const handleToggleTailorStatus = async (id, currentStatus) => {
     try {
+      const nextStatus = currentStatus === "approved" ? "rejected" : "approved";
       await axios.patch(`${API_BASE}/admin-panel/tailors/${id}`, {
-        isVerified: !currentVerified,
-        isActive: currentActive
+        approvalStatus: nextStatus,
+        isShopOpen: nextStatus === "approved"
       });
       fetchTabDocs();
       fetchStats();
@@ -404,9 +435,9 @@ export default function App() {
           >
             <Clock size={18} />
             <span>Pending Approvals</span>
-            {((stats.pendingBarbers || 0) + (stats.pendingParlours || 0)) > 0 && (
+            {((stats.pendingBarbers || 0) + (stats.pendingParlours || 0) + (stats.pendingTailors || 0)) > 0 && (
               <span style={{ marginLeft: 'auto', backgroundColor: '#f59e0b', color: '#ffffff', fontSize: '10.5px', padding: '2px 6px', borderRadius: '10px', fontWeight: '800' }}>
-                {(stats.pendingBarbers || 0) + (stats.pendingParlours || 0)}
+                {(stats.pendingBarbers || 0) + (stats.pendingParlours || 0) + (stats.pendingTailors || 0)}
               </span>
             )}
           </div>
@@ -611,26 +642,28 @@ export default function App() {
                 ) : orders.length === 0 ? (
                   <div className="empty-state">No recent orders yet</div>
                 ) : (
-                  <table className="premium-table">
-                    <thead>
-                      <tr>
-                        <th>Order</th>
-                        <th>Shop</th>
-                        <th>Clothing</th>
-                        <th>Price</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {orders.map((o) => (
-                        <tr key={o._id}>
-                          <td style={{ fontWeight: '600' }}>#{o._id.substring(18)}</td>
-                          <td>{o.tailorId?.shopName || 'Tailor Partner'}</td>
-                          <td><span style={{ textTransform: 'capitalize', fontWeight: '600' }}>{o.clothingType || 'Outfit'}</span></td>
-                          <td style={{ fontWeight: '700', color: '#10b981' }}>₹{o.totalAmount || 0}</td>
+                  <div className="responsive-table-container">
+                    <table className="premium-table">
+                      <thead>
+                        <tr>
+                          <th>Order</th>
+                          <th>Shop</th>
+                          <th>Clothing</th>
+                          <th>Price</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {orders.map((o) => (
+                          <tr key={o._id}>
+                            <td style={{ fontWeight: '600' }}>#{o._id.substring(18)}</td>
+                            <td>{o.tailorId?.shopName || 'Tailor Partner'}</td>
+                            <td><span style={{ textTransform: 'capitalize', fontWeight: '600' }}>{o.clothingType || 'Outfit'}</span></td>
+                            <td style={{ fontWeight: '700', color: '#10b981' }}>₹{o.totalAmount || 0}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
 
@@ -642,30 +675,32 @@ export default function App() {
                 ) : bookings.length === 0 ? (
                   <div className="empty-state">No recent bookings yet</div>
                 ) : (
-                  <table className="premium-table">
-                    <thead>
-                      <tr>
-                        <th>Client</th>
-                        <th>Barber Shop</th>
-                        <th>Time</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {bookings.map((b) => (
-                        <tr key={b._id}>
-                          <td>{b.customerId?.name || b.guestName || 'Walk-In'}</td>
-                          <td>{b.barberId?.shopName || 'Barber'}</td>
-                          <td style={{ fontSize: '12px' }}>{new Date(b.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-                          <td>
-                            <span className={`badge ${b.status}`}>
-                              {b.status}
-                            </span>
-                          </td>
+                  <div className="responsive-table-container">
+                    <table className="premium-table">
+                      <thead>
+                        <tr>
+                          <th>Client</th>
+                          <th>Barber Shop</th>
+                          <th>Time</th>
+                          <th>Status</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {bookings.map((b) => (
+                          <tr key={b._id}>
+                            <td>{b.customerId?.name || b.guestName || 'Walk-In'}</td>
+                            <td>{b.barberId?.shopName || 'Barber'}</td>
+                            <td style={{ fontSize: '12px' }}>{new Date(b.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                            <td>
+                              <span className={`badge ${b.status}`}>
+                                {b.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
             </div>
@@ -674,88 +709,182 @@ export default function App() {
 
         {/* Tab 2: Pending registrations approvals list */}
         {activeTab === "approvals" && (
-          <div className="content-card">
-            <div className="card-header">Barber & Beauty Parlour Requests</div>
-            {loadingData ? (
-              <div className="loading-container"><div className="spinner"></div></div>
-            ) : pendingApprovals.length === 0 ? (
-              <div className="empty-state">
-                <CheckCircle size={40} className="empty-state-icon" style={{ color: '#10b981' }} />
-                <h3>All Caught Up!</h3>
-                <p>There are no pending shop registration requests to review.</p>
-              </div>
-            ) : (
-              <table className="premium-table">
-                <thead>
-                  <tr>
-                    <th>Shop Info</th>
-                    <th>Owner Details</th>
-                    <th>Location Info</th>
-                    <th>Aadhaar Digits</th>
-                    <th>UPI Handle</th>
-                    <th style={{ textAlign: 'center' }}>Decisions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pendingApprovals.map((req) => (
-                    <tr key={req.id}>
-                      <td>
-                        <div style={{ fontWeight: '700' }}>{req.shopName}</div>
-                        <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px', maxWidth: '180px' }} numberOfLines={1}>
-                          {req.bio || "No description"}
-                        </div>
-                      </td>
-                      <td>
-                        <div style={{ fontWeight: '600' }}>{req.user?.name || "Partner Owner"}</div>
-                        <div style={{ fontSize: '12px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
-                          <Phone size={10} /> {req.user?.phone || req.mobileNumber || "N/A"}
-                        </div>
-                        <div style={{ fontSize: '12px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
-                          <Mail size={10} /> {req.user?.email || "N/A"}
-                        </div>
-                      </td>
-                      <td>
-                        <div style={{ fontSize: '13.5px' }}>{req.address?.line1 || "No Line1"}</div>
-                        <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginTop: '2px' }}>
-                          {req.address?.city || "Lucknow"}
-                        </div>
-                      </td>
-                      <td style={{ fontFamily: 'monospace', fontWeight: '600' }}>
-                        XXXX-XXXX-{req.aadhaarLast4 || "0000"}
-                      </td>
-                      <td style={{ color: '#6d28d9', fontWeight: '600' }}>
-                        {req.bank?.upiId || "N/A"}
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                          <button 
-                            className="btn btn-outline" 
-                            style={{ padding: '8px 14px', fontSize: '12.5px' }}
-                            onClick={() => handleViewPartnerDetails(req.id, 'barber')}
-                          >
-                            View Details
-                          </button>
-                          <button 
-                            className="btn btn-success" 
-                            style={{ padding: '8px 14px', fontSize: '12.5px' }}
-                            onClick={() => handleApproveBarber(req.id)}
-                          >
-                            Approve
-                          </button>
-                          <button 
-                            className="btn btn-danger" 
-                            style={{ padding: '8px 14px', fontSize: '12.5px' }}
-                            onClick={() => handleOpenRejectBarber(req.id)}
-                          >
-                            Reject
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            <div className="content-card">
+              <div className="card-header">Barber & Beauty Parlour Requests</div>
+              {loadingData ? (
+                <div className="loading-container"><div className="spinner"></div></div>
+              ) : pendingApprovals.length === 0 ? (
+                <div className="empty-state">
+                  <CheckCircle size={40} className="empty-state-icon" style={{ color: '#10b981' }} />
+                  <h3>All Caught Up!</h3>
+                  <p>There are no pending barber/parlour registration requests.</p>
+                </div>
+              ) : (
+                <div className="responsive-table-container">
+                  <table className="premium-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '20%', minWidth: '160px' }}>Shop Info</th>
+                        <th style={{ width: '22%', minWidth: '180px' }}>Owner Details</th>
+                        <th style={{ width: '18%', minWidth: '140px' }}>Location Info</th>
+                        <th style={{ width: '13%', minWidth: '110px' }}>Aadhaar Digits</th>
+                        <th style={{ width: '12%', minWidth: '100px' }}>UPI Handle</th>
+                        <th style={{ width: '15%', minWidth: '220px', textAlign: 'center' }}>Decisions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pendingApprovals.map((req) => (
+                        <tr key={req.id}>
+                          <td style={{ verticalAlign: 'top' }}>
+                            <div style={{ fontWeight: '700', wordBreak: 'break-word' }}>{req.shopName}</div>
+                            <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px', maxWidth: '180px', whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: '1.4' }}>
+                              {req.bio || "No description"}
+                            </div>
+                          </td>
+                          <td style={{ verticalAlign: 'top' }}>
+                            <div style={{ fontWeight: '600', wordBreak: 'break-word' }}>{req.user?.name || "Partner Owner"}</div>
+                            <div style={{ fontSize: '12px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px', whiteSpace: 'nowrap' }}>
+                              <Phone size={10} /> {req.user?.phone || req.mobileNumber || "N/A"}
+                            </div>
+                            {req.user?.email && !req.user.email.startsWith("user_") && !req.user.email.endsWith("@roopsy.com") && (
+                              <div style={{ fontSize: '12px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px', wordBreak: 'break-all' }}>
+                                <Mail size={10} /> {req.user.email}
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ verticalAlign: 'top' }}>
+                            <div style={{ fontSize: '13.5px', whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: '1.4' }}>{req.address?.line1 || "No Line1"}</div>
+                            <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginTop: '2px' }}>
+                              {req.address?.city || "Lucknow"}
+                            </div>
+                          </td>
+                          <td style={{ fontFamily: 'monospace', fontWeight: '600', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                            XXXX-XXXX-{req.aadhaarLast4 || "0000"}
+                          </td>
+                          <td style={{ color: '#6d28d9', fontWeight: '600', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                            {req.bank?.upiId || "N/A"}
+                          </td>
+                          <td style={{ verticalAlign: 'top' }}>
+                            <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'nowrap' }}>
+                              <button 
+                                className="btn btn-outline" 
+                                style={{ padding: '8px 12px', fontSize: '12px', whiteSpace: 'nowrap' }}
+                                onClick={() => handleViewPartnerDetails(req.id, 'barber')}
+                              >
+                                View Details
+                              </button>
+                              <button 
+                                className="btn btn-success" 
+                                style={{ padding: '8px 12px', fontSize: '12px', whiteSpace: 'nowrap' }}
+                                onClick={() => handleApproveBarber(req.id)}
+                              >
+                                Approve
+                              </button>
+                              <button 
+                                className="btn btn-danger" 
+                                style={{ padding: '8px 12px', fontSize: '12px', whiteSpace: 'nowrap' }}
+                                onClick={() => handleOpenRejectBarber(req.id)}
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="content-card">
+              <div className="card-header">Tailoring Shop Requests</div>
+              {loadingData ? (
+                <div className="loading-container"><div className="spinner"></div></div>
+              ) : pendingTailorsApprovals.length === 0 ? (
+                <div className="empty-state">
+                  <CheckCircle size={40} className="empty-state-icon" style={{ color: '#10b981' }} />
+                  <h3>All Caught Up!</h3>
+                  <p>There are no pending tailor registration requests.</p>
+                </div>
+              ) : (
+                <div className="responsive-table-container">
+                  <table className="premium-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '20%', minWidth: '160px' }}>Shop Info</th>
+                        <th style={{ width: '22%', minWidth: '180px' }}>Owner Details</th>
+                        <th style={{ width: '18%', minWidth: '140px' }}>Location Info</th>
+                        <th style={{ width: '13%', minWidth: '110px' }}>Aadhaar Digits</th>
+                        <th style={{ width: '12%', minWidth: '100px' }}>UPI Handle</th>
+                        <th style={{ width: '15%', minWidth: '220px', textAlign: 'center' }}>Decisions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pendingTailorsApprovals.map((req) => (
+                        <tr key={req.id}>
+                          <td style={{ verticalAlign: 'top' }}>
+                            <div style={{ fontWeight: '700', wordBreak: 'break-word' }}>{req.shopName}</div>
+                            <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px', maxWidth: '180px', whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: '1.4' }}>
+                              {req.bio || "No description"}
+                            </div>
+                          </td>
+                          <td style={{ verticalAlign: 'top' }}>
+                            <div style={{ fontWeight: '600', wordBreak: 'break-word' }}>{req.user?.name || req.ownerName || "Partner Owner"}</div>
+                            <div style={{ fontSize: '12px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px', whiteSpace: 'nowrap' }}>
+                              <Phone size={10} /> {req.user?.phone || req.mobileNumber || "N/A"}
+                            </div>
+                            {req.user?.email && !req.user.email.startsWith("user_") && !req.user.email.endsWith("@roopsy.com") && (
+                              <div style={{ fontSize: '12px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px', wordBreak: 'break-all' }}>
+                                <Mail size={10} /> {req.user.email}
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ verticalAlign: 'top' }}>
+                            <div style={{ fontSize: '13.5px', whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: '1.4' }}>{req.address?.line1 || "No Line1"}</div>
+                            <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginTop: '2px' }}>
+                              {req.address?.city || "Lucknow"}
+                            </div>
+                          </td>
+                          <td style={{ fontFamily: 'monospace', fontWeight: '600', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                            XXXX-XXXX-{req.aadhaarLast4 || "0000"}
+                          </td>
+                          <td style={{ color: '#6d28d9', fontWeight: '600', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                            {req.bank?.upiId || "N/A"}
+                          </td>
+                          <td style={{ verticalAlign: 'top' }}>
+                            <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'nowrap' }}>
+                              <button 
+                                className="btn btn-outline" 
+                                style={{ padding: '8px 12px', fontSize: '12px', whiteSpace: 'nowrap' }}
+                                onClick={() => handleViewPartnerDetails(req.id, 'tailor')}
+                              >
+                                View Details
+                              </button>
+                              <button 
+                                className="btn btn-success" 
+                                style={{ padding: '8px 12px', fontSize: '12px', whiteSpace: 'nowrap' }}
+                                onClick={() => handleApproveTailor(req.id)}
+                              >
+                                Approve
+                              </button>
+                              <button 
+                                className="btn btn-danger" 
+                                style={{ padding: '8px 12px', fontSize: '12px', whiteSpace: 'nowrap' }}
+                                onClick={() => handleOpenRejectTailor(req.id)}
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -801,138 +930,135 @@ export default function App() {
             {loadingData ? (
               <div className="loading-container"><div className="spinner"></div></div>
             ) : (
-              <table className="premium-table">
-                <thead>
-                  <tr>
-                    <th>Shop / Brand</th>
-                    <th>Type</th>
-                    <th>Owner Info</th>
-                    <th>Location</th>
-                    <th>Verifications</th>
-                    <th style={{ textAlign: 'center' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {/* Render Tailors */}
-                  {(partnerSubTab === 'all' || partnerSubTab === 'tailor') && tailors
-                    .filter(t => 
-                      t.shopName?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                      t.ownerName?.toLowerCase().includes(searchQuery.toLowerCase())
-                    )
-                    .map((t) => (
-                      <tr key={`t-${t._id}`}>
-                        <td>
-                          <div style={{ fontWeight: '700' }}>{t.shopName}</div>
-                          <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '2px' }}>Seats: {t.seatCount || 1}</div>
-                        </td>
-                        <td>
-                          <span className="badge" style={{ backgroundColor: '#e6f7f2', color: '#0d9488', fontSize: '11px', fontWeight: '800' }}>
-                            Tailoring
-                          </span>
-                        </td>
-                        <td>
-                          <div style={{ fontWeight: '600' }}>{t.ownerName || t.userId?.name || "Owner"}</div>
-                          <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>{t.mobileNumber || t.userId?.phone}</div>
-                        </td>
-                        <td>
-                          <div style={{ fontSize: '13px' }}>{t.address?.city || "Lucknow"}</div>
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', gap: '6px' }}>
-                            <span className={`badge ${t.isVerified ? 'approved' : 'pending'}`}>
-                              {t.isVerified ? 'Verified' : 'Unverified'}
+              <div className="responsive-table-container">
+                <table className="premium-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '25%', minWidth: '160px' }}>Shop / Brand</th>
+                      <th style={{ width: '15%', minWidth: '100px' }}>Type</th>
+                      <th style={{ width: '25%', minWidth: '160px' }}>Owner Info</th>
+                      <th style={{ width: '15%', minWidth: '100px' }}>Location</th>
+                      <th style={{ width: '10%', minWidth: '100px' }}>Verifications</th>
+                      <th style={{ width: '10%', minWidth: '180px', textAlign: 'center' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* Render Tailors */}
+                    {(partnerSubTab === 'all' || partnerSubTab === 'tailor') && tailors
+                      .filter(t => 
+                        t.shopName?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                        t.ownerName?.toLowerCase().includes(searchQuery.toLowerCase())
+                      )
+                      .map((t) => (
+                        <tr key={`t-${t._id}`}>
+                          <td>
+                            <div style={{ fontWeight: '700' }}>{t.shopName}</div>
+                            <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '2px' }}>Seats: {t.seatCount || 1}</div>
+                          </td>
+                          <td>
+                            <span className="badge" style={{ backgroundColor: '#e6f7f2', color: '#0d9488', fontSize: '11px', fontWeight: '800' }}>
+                              Tailoring
                             </span>
-                            <span className={`badge ${t.isActive ? 'active' : 'inactive'}`}>
-                              {t.isActive ? 'Active' : 'Suspended'}
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: '600' }}>{t.ownerName || t.userId?.name || "Owner"}</div>
+                            <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>{t.mobileNumber || t.userId?.phone}</div>
+                          </td>
+                          <td>
+                            <div style={{ fontSize: '13px' }}>{t.address?.city || "Lucknow"}</div>
+                          </td>
+                          <td>
+                            <span className={`badge ${t.approvalStatus}`}>
+                              {t.approvalStatus}
                             </span>
-                          </div>
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                            <button 
-                              className="btn btn-outline"
-                              style={{ padding: '6px 12px', fontSize: '12px' }}
-                              onClick={() => handleViewPartnerDetails(t._id, 'tailor')}
-                            >
-                              View Details
-                            </button>
-                            <button 
-                              className={`btn ${t.isVerified ? 'btn-danger' : 'btn-success'}`}
-                              style={{ padding: '6px 12px', fontSize: '12px' }}
-                              onClick={() => handleToggleTailorStatus(t._id, t.isVerified, t.isActive)}
-                            >
-                              {t.isVerified ? 'Revoke Verify' : 'Verify Shop'}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  
-                  {/* Render Barbers */}
-                  {barbers
-                    .filter(b => {
-                      const matchesSearch = b.shopName?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                                            b.ownerName?.toLowerCase().includes(searchQuery.toLowerCase());
-                      const isBarber = b.businessCategory?.toLowerCase().includes('barber');
-                      const isBeauty = b.businessCategory?.toLowerCase().includes('beauty') || 
-                                       b.businessCategory?.toLowerCase().includes('parlor') || 
-                                       b.businessCategory?.toLowerCase().includes('parlour');
-                      const matchesSubTab = partnerSubTab === 'all' || 
-                                            (partnerSubTab === 'barber' && isBarber) || 
-                                            (partnerSubTab === 'beauty' && isBeauty);
-                      return matchesSearch && matchesSubTab;
-                    })
-                    .map((b) => (
-                      <tr key={`b-${b._id}`}>
-                        <td>
-                          <div style={{ fontWeight: '700' }}>{b.shopName}</div>
-                          <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '2px' }}>{b.businessCategory || 'Barber Shop'}</div>
-                        </td>
-                        <td>
-                          {b.businessCategory?.toLowerCase().includes('beauty') || b.businessCategory?.toLowerCase().includes('parlor') || b.businessCategory?.toLowerCase().includes('parlour') ? (
-                            <span className="badge" style={{ backgroundColor: '#fdf2f8', color: '#db2777', fontSize: '11px', fontWeight: '800' }}>
-                              Beauty Parlour
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                              <button 
+                                className="btn btn-outline"
+                                style={{ padding: '6px 12px', fontSize: '12px' }}
+                                onClick={() => handleViewPartnerDetails(t._id, 'tailor')}
+                              >
+                                View Details
+                              </button>
+                              <button 
+                                className={`btn ${t.approvalStatus === 'approved' ? 'btn-danger' : 'btn-success'}`}
+                                style={{ padding: '6px 12px', fontSize: '12px' }}
+                                onClick={() => handleToggleTailorStatus(t._id, t.approvalStatus)}
+                              >
+                                {t.approvalStatus === 'approved' ? 'Suspend Partner' : 'Approve Shop'}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    
+                    {/* Render Barbers */}
+                    {barbers
+                      .filter(b => {
+                        const matchesSearch = b.shopName?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                                              b.ownerName?.toLowerCase().includes(searchQuery.toLowerCase());
+                        const isBarber = b.businessCategory?.toLowerCase().includes('barber');
+                        const isBeauty = b.businessCategory?.toLowerCase().includes('beauty') || 
+                                         b.businessCategory?.toLowerCase().includes('parlor') || 
+                                         b.businessCategory?.toLowerCase().includes('parlour');
+                        const matchesSubTab = partnerSubTab === 'all' || 
+                                              (partnerSubTab === 'barber' && isBarber) || 
+                                              (partnerSubTab === 'beauty' && isBeauty);
+                        return matchesSearch && matchesSubTab;
+                      })
+                      .map((b) => (
+                        <tr key={`b-${b._id}`}>
+                          <td>
+                            <div style={{ fontWeight: '700' }}>{b.shopName}</div>
+                            <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '2px' }}>{b.businessCategory || 'Barber Shop'}</div>
+                          </td>
+                          <td>
+                            {b.businessCategory?.toLowerCase().includes('beauty') || b.businessCategory?.toLowerCase().includes('parlor') || b.businessCategory?.toLowerCase().includes('parlour') ? (
+                              <span className="badge" style={{ backgroundColor: '#fdf2f8', color: '#db2777', fontSize: '11px', fontWeight: '800' }}>
+                                Beauty Parlour
+                              </span>
+                            ) : (
+                              <span className="badge" style={{ backgroundColor: '#f5f3ff', color: '#6d28d9', fontSize: '11px', fontWeight: '800' }}>
+                                Barber Shop
+                              </span>
+                            )}
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: '600' }}>{b.ownerName || b.userId?.name || "Owner"}</div>
+                            <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>{b.mobileNumber || b.userId?.phone}</div>
+                          </td>
+                          <td>
+                            <div style={{ fontSize: '13px' }}>{b.address?.city || "Lucknow"}</div>
+                          </td>
+                          <td>
+                            <span className={`badge ${b.approvalStatus}`}>
+                              {b.approvalStatus}
                             </span>
-                          ) : (
-                            <span className="badge" style={{ backgroundColor: '#f5f3ff', color: '#6d28d9', fontSize: '11px', fontWeight: '800' }}>
-                              Barber Shop
-                            </span>
-                          )}
-                        </td>
-                        <td>
-                          <div style={{ fontWeight: '600' }}>{b.ownerName || b.userId?.name || "Owner"}</div>
-                          <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>{b.mobileNumber || b.userId?.phone}</div>
-                        </td>
-                        <td>
-                          <div style={{ fontSize: '13px' }}>{b.address?.city || "Lucknow"}</div>
-                        </td>
-                        <td>
-                          <span className={`badge ${b.approvalStatus}`}>
-                            {b.approvalStatus}
-                          </span>
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                            <button 
-                              className="btn btn-outline"
-                              style={{ padding: '6px 12px', fontSize: '12px' }}
-                              onClick={() => handleViewPartnerDetails(b._id, 'barber')}
-                            >
-                              View Details
-                            </button>
-                            <button 
-                              className={`btn ${b.approvalStatus === 'approved' ? 'btn-danger' : 'btn-success'}`}
-                              style={{ padding: '6px 12px', fontSize: '12px' }}
-                              onClick={() => handleToggleBarberStatus(b._id, b.approvalStatus)}
-                            >
-                              {b.approvalStatus === 'approved' ? 'Suspend Partner' : 'Approve Shop'}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                              <button 
+                                className="btn btn-outline"
+                                style={{ padding: '6px 12px', fontSize: '12px' }}
+                                onClick={() => handleViewPartnerDetails(b._id, 'barber')}
+                              >
+                                View Details
+                              </button>
+                              <button 
+                                className={`btn ${b.approvalStatus === 'approved' ? 'btn-danger' : 'btn-success'}`}
+                                style={{ padding: '6px 12px', fontSize: '12px' }}
+                                onClick={() => handleToggleBarberStatus(b._id, b.approvalStatus)}
+                              >
+                                {b.approvalStatus === 'approved' ? 'Suspend Partner' : 'Approve Shop'}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         )}
@@ -1010,97 +1136,99 @@ export default function App() {
             {loadingData ? (
               <div className="loading-container"><div className="spinner"></div></div>
             ) : (
-              <table className="premium-table">
-                <thead>
-                  <tr>
-                    <th>Customer Name</th>
-                    <th>Shop / Brand</th>
-                    <th>Scheduled Time</th>
-                    <th>Duration</th>
-                    <th>OTP Info</th>
-                    <th>Status</th>
-                    <th style={{ textAlign: 'center' }}>Cancel Slot</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bookings
-                    .filter(b => {
-                      const matchesSearch = b.customerId?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                            b.guestName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                            b.barberId?.shopName?.toLowerCase().includes(searchQuery.toLowerCase());
-                      
-                      let matchesStatus = true;
-                      if (bookingSubTab === 'active') {
-                        matchesStatus = ['pending', 'confirmed', 'arrived', 'in-progress'].includes(b.status);
-                      } else if (bookingSubTab === 'completed') {
-                        matchesStatus = b.status === 'completed';
-                      } else if (bookingSubTab === 'cancelled') {
-                        matchesStatus = ['cancelled', 'no-show', 'expired'].includes(b.status);
-                      }
+              <div className="responsive-table-container">
+                <table className="premium-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '25%', minWidth: '160px' }}>Customer Name</th>
+                      <th style={{ width: '20%', minWidth: '140px' }}>Shop / Brand</th>
+                      <th style={{ width: '20%', minWidth: '140px' }}>Scheduled Time</th>
+                      <th style={{ width: '10%', minWidth: '80px' }}>Duration</th>
+                      <th style={{ width: '10%', minWidth: '90px' }}>OTP Info</th>
+                      <th style={{ width: '10%', minWidth: '90px' }}>Status</th>
+                      <th style={{ width: '5%', minWidth: '100px', textAlign: 'center' }}>Cancel Slot</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bookings
+                      .filter(b => {
+                        const matchesSearch = b.customerId?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                              b.guestName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                              b.barberId?.shopName?.toLowerCase().includes(searchQuery.toLowerCase());
+                        
+                        let matchesStatus = true;
+                        if (bookingSubTab === 'active') {
+                          matchesStatus = ['pending', 'confirmed', 'arrived', 'in-progress'].includes(b.status);
+                        } else if (bookingSubTab === 'completed') {
+                          matchesStatus = b.status === 'completed';
+                        } else if (bookingSubTab === 'cancelled') {
+                          matchesStatus = ['cancelled', 'no-show', 'expired'].includes(b.status);
+                        }
 
-                      let matchesCategory = true;
-                      const cat = b.barberId?.businessCategory?.toLowerCase() || '';
-                      const isBeauty = cat.includes('beauty') || cat.includes('parlor') || cat.includes('parlour');
-                      
-                      if (bookingCategoryFilter === 'barber') {
-                        matchesCategory = !isBeauty;
-                      } else if (bookingCategoryFilter === 'beauty') {
-                        matchesCategory = isBeauty;
-                      }
+                        let matchesCategory = true;
+                        const cat = b.barberId?.businessCategory?.toLowerCase() || '';
+                        const isBeauty = cat.includes('beauty') || cat.includes('parlor') || cat.includes('parlour');
+                        
+                        if (bookingCategoryFilter === 'barber') {
+                          matchesCategory = !isBeauty;
+                        } else if (bookingCategoryFilter === 'beauty') {
+                          matchesCategory = isBeauty;
+                        }
 
-                      return matchesSearch && matchesStatus && matchesCategory;
-                    })
-                    .map((b) => (
-                      <tr key={b._id}>
-                        <td>
-                          <div style={{ fontWeight: '700' }}>{b.customerId?.name || b.guestName || 'Walk-In'}</div>
-                          <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>{b.customerId?.phone || b.guestPhone || 'N/A'}</div>
-                          {b.isHomeService && (
-                            <div style={{ marginTop: '6px', fontSize: '11px', color: '#eab308', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                              <span className="badge" style={{ backgroundColor: '#fffbeb', color: '#d97706', fontSize: '9.5px', padding: '2px 6px', fontWeight: '800', width: 'fit-content' }}>🏠 Home Service</span>
-                              <span style={{ color: '#78350f', maxWidth: '200px', display: 'inline-block' }}>{b.homeServiceAddress}</span>
-                            </div>
-                          )}
-                        </td>
-                        <td>
-                          <div style={{ fontWeight: '600' }}>{b.barberId?.shopName || 'Salon Provider'}</div>
-                        </td>
-                        <td>
-                          <div style={{ fontSize: '13.5px', fontWeight: '700' }}>{new Date(b.startTime).toLocaleDateString()}</div>
-                          <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>
-                            {new Date(b.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(b.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </div>
-                        </td>
-                        <td>{b.expectedDuration} mins</td>
-                        <td>
-                          <span style={{ fontFamily: 'monospace', fontWeight: '700', color: '#6d28d9', border: '1px dashed #c4b5fd', padding: '2px 6px', borderRadius: '4px' }}>
-                            {b.verificationPin || 'N/A'}
-                          </span>
-                        </td>
-                        <td>
-                          <span className={`badge ${b.status}`}>
-                            {b.status}
-                          </span>
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', justifyContent: 'center' }}>
-                            {b.status !== 'cancelled' && b.status !== 'completed' ? (
-                              <button 
-                                className="btn btn-danger"
-                                style={{ padding: '6px 12px', fontSize: '12px' }}
-                                onClick={() => handleCancelBooking(b._id)}
-                              >
-                                Cancel
-                              </button>
-                            ) : (
-                              <span style={{ fontSize: '12px', color: '#94a3b8' }}>N/A</span>
+                        return matchesSearch && matchesStatus && matchesCategory;
+                      })
+                      .map((b) => (
+                        <tr key={b._id}>
+                          <td>
+                            <div style={{ fontWeight: '700' }}>{b.customerId?.name || b.guestName || 'Walk-In'}</div>
+                            <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>{b.customerId?.phone || b.guestPhone || 'N/A'}</div>
+                            {b.isHomeService && (
+                              <div style={{ marginTop: '6px', fontSize: '11px', color: '#eab308', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                <span className="badge" style={{ backgroundColor: '#fffbeb', color: '#d97706', fontSize: '9.5px', padding: '2px 6px', fontWeight: '800', width: 'fit-content' }}>🏠 Home Service</span>
+                                <span style={{ color: '#78350f', maxWidth: '200px', display: 'inline-block' }}>{b.homeServiceAddress}</span>
+                              </div>
                             )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: '600' }}>{b.barberId?.shopName || 'Salon Provider'}</div>
+                          </td>
+                          <td>
+                            <div style={{ fontSize: '13.5px', fontWeight: '700' }}>{new Date(b.startTime).toLocaleDateString()}</div>
+                            <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>
+                              {new Date(b.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(b.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          </td>
+                          <td>{b.expectedDuration} mins</td>
+                          <td>
+                            <span style={{ fontFamily: 'monospace', fontWeight: '700', color: '#6d28d9', border: '1px dashed #c4b5fd', padding: '2px 6px', borderRadius: '4px' }}>
+                              {b.verificationPin || 'N/A'}
+                            </span>
+                          </td>
+                          <td>
+                            <span className={`badge ${b.status}`}>
+                              {b.status}
+                            </span>
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', justifyContent: 'center' }}>
+                              {b.status !== 'cancelled' && b.status !== 'completed' ? (
+                                <button 
+                                  className="btn btn-danger"
+                                  style={{ padding: '6px 12px', fontSize: '12px' }}
+                                  onClick={() => handleCancelBooking(b._id)}
+                                >
+                                  Cancel
+                                </button>
+                              ) : (
+                                <span style={{ fontSize: '12px', color: '#94a3b8' }}>N/A</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         )}
@@ -1163,70 +1291,72 @@ export default function App() {
             ) : orders.length === 0 ? (
               <div className="empty-state">No orders registered in system</div>
             ) : (
-              <table className="premium-table">
-                <thead>
-                  <tr>
-                    <th>Order ID</th>
-                    <th>Customer Details</th>
-                    <th>Shop Info</th>
-                    <th>Stitched Item</th>
-                    <th>Price</th>
-                    <th>Order Date</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {orders
-                    .filter(o => {
-                      const matchesSearch = o.customerId?.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                                            o.tailorId?.shopName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                            o.status?.toLowerCase().includes(searchQuery.toLowerCase());
-                      
-                      let matchesStatus = true;
-                      if (tailorSubTab === 'pending') {
-                        matchesStatus = ['pending', 'accepted', 'measurement_pending', 'fabric_pending'].includes(o.status);
-                      } else if (tailorSubTab === 'production') {
-                        matchesStatus = ['pattern_making', 'cutting', 'stitching', 'embroidery', 'trial', 'alteration', 'ironing', 'quality_check', 'packing'].includes(o.status);
-                      } else if (tailorSubTab === 'ready') {
-                        matchesStatus = ['ready', 'dispatched'].includes(o.status);
-                      } else if (tailorSubTab === 'completed') {
-                        matchesStatus = o.status === 'completed';
-                      } else if (tailorSubTab === 'cancelled') {
-                        matchesStatus = ['cancelled', 'declined', 'refund'].includes(o.status);
-                      }
+              <div className="responsive-table-container">
+                <table className="premium-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '10%', minWidth: '80px' }}>Order ID</th>
+                      <th style={{ width: '25%', minWidth: '160px' }}>Customer Details</th>
+                      <th style={{ width: '20%', minWidth: '140px' }}>Shop Info</th>
+                      <th style={{ width: '15%', minWidth: '110px' }}>Stitched Item</th>
+                      <th style={{ width: '10%', minWidth: '80px' }}>Price</th>
+                      <th style={{ width: '10%', minWidth: '100px' }}>Order Date</th>
+                      <th style={{ width: '10%', minWidth: '100px' }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orders
+                      .filter(o => {
+                        const matchesSearch = o.customerId?.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                                              o.tailorId?.shopName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                              o.status?.toLowerCase().includes(searchQuery.toLowerCase());
+                        
+                        let matchesStatus = true;
+                        if (tailorSubTab === 'pending') {
+                          matchesStatus = ['pending', 'accepted', 'measurement_pending', 'fabric_pending'].includes(o.status);
+                        } else if (tailorSubTab === 'production') {
+                          matchesStatus = ['pattern_making', 'cutting', 'stitching', 'embroidery', 'trial', 'alteration', 'ironing', 'quality_check', 'packing'].includes(o.status);
+                        } else if (tailorSubTab === 'ready') {
+                          matchesStatus = ['ready', 'dispatched'].includes(o.status);
+                        } else if (tailorSubTab === 'completed') {
+                          matchesStatus = o.status === 'completed';
+                        } else if (tailorSubTab === 'cancelled') {
+                          matchesStatus = ['cancelled', 'declined', 'refund'].includes(o.status);
+                        }
 
-                      return matchesSearch && matchesStatus;
-                    })
-                    .map((o) => (
-                      <tr key={o._id}>
-                        <td style={{ fontWeight: '700' }}>#{o._id.substring(18)}</td>
-                        <td>
-                          <div style={{ fontWeight: '600' }}>{o.customerId?.name || 'Guest Client'}</div>
-                          <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>{o.customerId?.phone || 'N/A'}</div>
-                          {o.isHomeService && (
-                            <div style={{ marginTop: '6px', fontSize: '11px', color: '#eab308', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                              <span className="badge" style={{ backgroundColor: '#fffbeb', color: '#d97706', fontSize: '9.5px', padding: '2px 6px', fontWeight: '800', width: 'fit-content' }}>🏠 Home Measurement</span>
-                              <span style={{ color: '#78350f', maxWidth: '200px', display: 'inline-block' }}>{o.homeServiceAddress}</span>
-                            </div>
-                          )}
-                        </td>
-                        <td>
-                          <div style={{ fontWeight: '600' }}>{o.tailorId?.shopName || 'Tailor Partner'}</div>
-                        </td>
-                        <td>
-                          <span style={{ textTransform: 'capitalize', fontWeight: '700' }}>{o.clothingType || 'Outfit'}</span>
-                        </td>
-                        <td style={{ fontWeight: '700', color: '#10b981' }}>₹{o.totalAmount || 0}</td>
-                        <td>{new Date(o.createdAt).toLocaleDateString()}</td>
-                        <td>
-                          <span className={`badge ${o.status}`}>
-                            {o.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
+                        return matchesSearch && matchesStatus;
+                      })
+                      .map((o) => (
+                        <tr key={o._id}>
+                          <td style={{ fontWeight: '700' }}>#{o._id.substring(18)}</td>
+                          <td>
+                            <div style={{ fontWeight: '600' }}>{o.customerId?.name || 'Guest Client'}</div>
+                            <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>{o.customerId?.phone || 'N/A'}</div>
+                            {o.isHomeService && (
+                              <div style={{ marginTop: '6px', fontSize: '11px', color: '#eab308', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                <span className="badge" style={{ backgroundColor: '#fffbeb', color: '#d97706', fontSize: '9.5px', padding: '2px 6px', fontWeight: '800', width: 'fit-content' }}>🏠 Home Measurement</span>
+                                <span style={{ color: '#78350f', maxWidth: '200px', display: 'inline-block' }}>{o.homeServiceAddress}</span>
+                              </div>
+                            )}
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: '600' }}>{o.tailorId?.shopName || 'Tailor Partner'}</div>
+                          </td>
+                          <td>
+                            <span style={{ textTransform: 'capitalize', fontWeight: '700' }}>{o.clothingType || 'Outfit'}</span>
+                          </td>
+                          <td style={{ fontWeight: '700', color: '#10b981' }}>₹{o.totalAmount || 0}</td>
+                          <td>{new Date(o.createdAt).toLocaleDateString()}</td>
+                          <td>
+                            <span className={`badge ${o.status}`}>
+                              {o.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         )}
@@ -1238,59 +1368,61 @@ export default function App() {
             {loadingData ? (
               <div className="loading-container"><div className="spinner"></div></div>
             ) : (
-              <table className="premium-table">
-                <thead>
-                  <tr>
-                    <th>Customer</th>
-                    <th>Shop Reviewed</th>
-                    <th>Rating Stars</th>
-                    <th style={{ width: '40%' }}>Comment Review</th>
-                    <th>Date Posted</th>
-                    <th style={{ textAlign: 'center' }}>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {reviews
-                    .filter(r => 
-                      r.comment?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                      r.barberId?.shopName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                      r.userId?.name?.toLowerCase().includes(searchQuery.toLowerCase())
-                    )
-                    .map((r) => (
-                      <tr key={r._id}>
-                        <td>
-                          <div style={{ fontWeight: '700' }}>{r.userId?.name || 'Anonymous client'}</div>
-                        </td>
-                        <td>
-                          <div style={{ fontWeight: '600' }}>{r.barberId?.shopName || 'Shop Partner'}</div>
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#eab308' }}>
-                            <Star size={16} fill="#eab308" />
-                            <span style={{ fontWeight: '800' }}>{r.rating}.0</span>
-                          </div>
-                        </td>
-                        <td>
-                          <p style={{ fontStyle: 'italic', fontSize: '13.5px', color: '#334155' }}>
-                            "{r.comment || 'No comment text'}"
-                          </p>
-                        </td>
-                        <td>{new Date(r.createdAt).toLocaleDateString()}</td>
-                        <td>
-                          <div style={{ display: 'flex', justifyContent: 'center' }}>
-                            <button 
-                              className="btn btn-outline" 
-                              style={{ padding: '6px', color: '#ef4444', borderColor: '#fca5a5' }}
-                              onClick={() => handleDeleteReview(r._id)}
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
+              <div className="responsive-table-container">
+                <table className="premium-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '15%', minWidth: '120px' }}>Customer</th>
+                      <th style={{ width: '20%', minWidth: '140px' }}>Shop Reviewed</th>
+                      <th style={{ width: '15%', minWidth: '110px' }}>Rating Stars</th>
+                      <th style={{ width: '30%', minWidth: '220px' }}>Comment Review</th>
+                      <th style={{ width: '12%', minWidth: '100px' }}>Date Posted</th>
+                      <th style={{ width: '8%', minWidth: '80px', textAlign: 'center' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reviews
+                      .filter(r => 
+                        r.comment?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                        r.barberId?.shopName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                        r.userId?.name?.toLowerCase().includes(searchQuery.toLowerCase())
+                      )
+                      .map((r) => (
+                        <tr key={r._id}>
+                          <td>
+                            <div style={{ fontWeight: '700' }}>{r.userId?.name || 'Anonymous client'}</div>
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: '600' }}>{r.barberId?.shopName || 'Shop Partner'}</div>
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#eab308' }}>
+                              <Star size={16} fill="#eab308" />
+                              <span style={{ fontWeight: '800' }}>{r.rating}.0</span>
+                            </div>
+                          </td>
+                          <td>
+                            <p style={{ fontStyle: 'italic', fontSize: '13.5px', color: '#334155' }}>
+                              "{r.comment || 'No comment text'}"
+                            </p>
+                          </td>
+                          <td>{new Date(r.createdAt).toLocaleDateString()}</td>
+                          <td>
+                            <div style={{ display: 'flex', justifyContent: 'center' }}>
+                              <button 
+                                className="btn btn-outline" 
+                                style={{ padding: '6px', color: '#ef4444', borderColor: '#fca5a5' }}
+                                onClick={() => handleDeleteReview(r._id)}
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         )}
@@ -1305,51 +1437,55 @@ export default function App() {
               {loadingData ? (
                 <div className="loading-container"><div className="spinner"></div></div>
               ) : (
-                <table className="premium-table">
-                  <thead>
-                    <tr>
-                      <th>Customer Name</th>
-                      <th>Email / Contact</th>
-                      <th style={{ textAlign: 'center' }}>Delete</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {users
-                      .filter(u => u.role === 'customer' || !u.role)
-                      .filter(u => {
-                        const matchesSearch = u.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                                              u.email?.toLowerCase().includes(searchQuery.toLowerCase());
-                        return matchesSearch;
-                      })
-                      .map((u) => (
-                        <tr key={u._id}>
-                          <td>
-                            <div className="user-info-cell">
-                              <div className="user-avatar-mini" style={{ backgroundColor: '#f0fdf4', color: '#16a34a', fontWeight: 'bold' }}>
-                                {u.name ? u.name.charAt(0).toUpperCase() : 'C'}
+                <div className="responsive-table-container">
+                  <table className="premium-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '45%', minWidth: '160px' }}>Customer Name</th>
+                        <th style={{ width: '45%', minWidth: '160px' }}>Email / Contact</th>
+                        <th style={{ width: '10%', minWidth: '80px', textAlign: 'center' }}>Delete</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users
+                        .filter(u => u.role === 'customer' || !u.role)
+                        .filter(u => {
+                          const matchesSearch = u.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                                                u.email?.toLowerCase().includes(searchQuery.toLowerCase());
+                          return matchesSearch;
+                        })
+                        .map((u) => (
+                          <tr key={u._id}>
+                            <td>
+                              <div className="user-info-cell">
+                                <div className="user-avatar-mini" style={{ backgroundColor: '#f0fdf4', color: '#16a34a', fontWeight: 'bold' }}>
+                                  {u.name ? u.name.charAt(0).toUpperCase() : 'C'}
+                                </div>
+                                <div className="user-name-text" style={{ fontWeight: '700' }}>{u.name || 'Customer'}</div>
                               </div>
-                              <div className="user-name-text" style={{ fontWeight: '700' }}>{u.name || 'Customer'}</div>
-                            </div>
-                          </td>
-                          <td>
-                            <div style={{ fontSize: '13px', fontWeight: '600' }}>{u.email}</div>
-                            <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '2px' }}>{u.phone || 'No phone'}</div>
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', justifyContent: 'center' }}>
-                              <button 
-                                className="btn btn-outline" 
-                                style={{ padding: '6px', color: '#ef4444', borderColor: '#fca5a5' }}
-                                onClick={() => handleDeleteUser(u._id)}
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
+                            </td>
+                            <td>
+                              <div style={{ fontSize: '13px', fontWeight: '600' }}>
+                                {u.email && u.email.startsWith("user_") && u.email.endsWith("@roopsy.com") ? "Auto-generated (OTP)" : u.email}
+                              </div>
+                              <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '2px' }}>{u.phone || 'No phone'}</div>
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                                <button 
+                                  className="btn btn-outline" 
+                                  style={{ padding: '6px', color: '#ef4444', borderColor: '#fca5a5' }}
+                                  onClick={() => handleDeleteUser(u._id)}
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
 
@@ -1359,61 +1495,65 @@ export default function App() {
               {loadingData ? (
                 <div className="loading-container"><div className="spinner"></div></div>
               ) : (
-                <table className="premium-table">
-                  <thead>
-                    <tr>
-                      <th>Partner Name</th>
-                      <th>Role / Status</th>
-                      <th style={{ textAlign: 'center' }}>Delete</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {users
-                      .filter(u => ['barber', 'tailor'].includes(u.role))
-                      .filter(u => {
-                        const matchesSearch = u.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                                              u.email?.toLowerCase().includes(searchQuery.toLowerCase());
-                        return matchesSearch;
-                      })
-                      .map((u) => (
-                        <tr key={u._id}>
-                          <td>
-                            <div className="user-info-cell">
-                              <div className="user-avatar-mini" style={{ backgroundColor: '#f5f3ff', color: '#7c3aed', fontWeight: 'bold' }}>
-                                {u.name ? u.name.charAt(0).toUpperCase() : 'P'}
+                <div className="responsive-table-container">
+                  <table className="premium-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '55%', minWidth: '180px' }}>Partner Name</th>
+                        <th style={{ width: '35%', minWidth: '100px' }}>Role / Status</th>
+                        <th style={{ width: '10%', minWidth: '80px', textAlign: 'center' }}>Delete</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users
+                        .filter(u => ['barber', 'tailor'].includes(u.role))
+                        .filter(u => {
+                          const matchesSearch = u.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                                                u.email?.toLowerCase().includes(searchQuery.toLowerCase());
+                          return matchesSearch;
+                        })
+                        .map((u) => (
+                          <tr key={u._id}>
+                            <td>
+                              <div className="user-info-cell">
+                                <div className="user-avatar-mini" style={{ backgroundColor: '#f5f3ff', color: '#7c3aed', fontWeight: 'bold' }}>
+                                  {u.name ? u.name.charAt(0).toUpperCase() : 'P'}
+                                </div>
+                                <div>
+                                  <div className="user-name-text" style={{ fontWeight: '700' }}>{u.name || 'Partner'}</div>
+                                  <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
+                                    {u.email && u.email.startsWith("user_") && u.email.endsWith("@roopsy.com") ? "Auto-generated (OTP)" : u.email}
+                                  </div>
+                                </div>
                               </div>
-                              <div>
-                                <div className="user-name-text" style={{ fontWeight: '700' }}>{u.name || 'Partner'}</div>
-                                <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>{u.email}</div>
+                            </td>
+                            <td>
+                              <span className="badge" style={{ 
+                                textTransform: 'uppercase', 
+                                backgroundColor: u.role === 'barber' ? '#f5f3ff' : '#e6f7f2',
+                                color: u.role === 'barber' ? '#6d28d9' : '#0d9488',
+                                fontSize: '10px',
+                                fontWeight: '800'
+                              }}>
+                                {u.role}
+                              </span>
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                                <button 
+                                  className="btn btn-outline" 
+                                  style={{ padding: '6px', color: '#ef4444', borderColor: '#fca5a5' }}
+                                  onClick={() => handleDeleteUser(u._id)}
+                                >
+                                  <Trash2 size={16} />
+                                </button>
                               </div>
-                            </div>
-                          </td>
-                          <td>
-                            <span className="badge" style={{ 
-                              textTransform: 'uppercase', 
-                              backgroundColor: u.role === 'barber' ? '#f5f3ff' : '#e6f7f2',
-                              color: u.role === 'barber' ? '#6d28d9' : '#0d9488',
-                              fontSize: '10px',
-                              fontWeight: '800'
-                            }}>
-                              {u.role}
-                            </span>
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', justifyContent: 'center' }}>
-                              <button 
-                                className="btn btn-outline" 
-                                style={{ padding: '6px', color: '#ef4444', borderColor: '#fca5a5' }}
-                                onClick={() => handleDeleteUser(u._id)}
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
 

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable,
   ActivityIndicator, Alert, RefreshControl, Modal, TextInput
@@ -7,6 +7,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "../../api/client";
 import { useFocusEffect } from "@react-navigation/native";
+import { useAuth } from "../../context/AuthContext";
+import { getSocket } from "../../api/socket";
 
 const STAGES = [
   { key: "pending",             label: "New",              color: "#f59e0b", bg: "#fef3c7", icon: "notifications"   },
@@ -47,6 +49,7 @@ const NEXT_STAGE = {
 };
 
 export function ProductionBoardScreen({ navigation }) {
+  const { user } = useAuth();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -66,6 +69,22 @@ export function ProductionBoardScreen({ navigation }) {
   useFocusEffect(useCallback(() => {
     loadOrders().finally(() => setLoading(false));
   }, [loadOrders]));
+
+  useEffect(() => {
+    if (!user || !user.id) return;
+    const socket = getSocket();
+    if (socket) {
+      socket.emit("joinUserRoom", user.id);
+      socket.on("tailorNewOrder", loadOrders);
+      socket.on("bookingUpdated", loadOrders);
+
+      return () => {
+        socket.emit("leaveUserRoom", user.id);
+        socket.off("tailorNewOrder", loadOrders);
+        socket.off("bookingUpdated", loadOrders);
+      };
+    }
+  }, [user, loadOrders]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -317,7 +336,7 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 22, fontWeight: "900", color: "#0f172a" },
   refreshBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#ede9fe", justifyContent: "center", alignItems: "center" },
 
-  tabsScroll: { backgroundColor: "#ffffff", maxHeight: 68 },
+  tabsScroll: { backgroundColor: "#ffffff", height: 64, flexGrow: 0 },
   tabsContainer: { paddingHorizontal: 16, paddingVertical: 10, gap: 8 },
   tab: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 100, backgroundColor: "#f8fafc", gap: 8 },
   tabInner: { flexDirection: "row", alignItems: "center", gap: 6 },

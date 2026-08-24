@@ -3,7 +3,6 @@ const Tailor = require("../models/Tailor");
 const TailorService = require("../models/TailorService");
 const TailorOrder = require("../models/TailorOrder");
 const Notification = require("../models/Notification");
-const { sendPushNotification } = require("../utils/pushNotifications");
 const { haversineDistance } = require("../utils/distance");
 
 exports.registerTailor = async (req, res) => {
@@ -25,7 +24,7 @@ exports.registerTailor = async (req, res) => {
       workingHours,
       gallery,
       specialties: category ? [category] : [],
-      approvalStatus: "approved" // auto-approve for now so it shows up
+      approvalStatus: "pending"
     });
 
     // Update user role to tailor
@@ -49,6 +48,7 @@ exports.getTailors = async (req, res) => {
       } else {
         t.distance = Infinity;
       }
+      t.averageRating = t.ratingCount ? (t.ratingSum / t.ratingCount).toFixed(1) : "0.0";
       return t;
     });
 
@@ -65,8 +65,9 @@ exports.getTailors = async (req, res) => {
 
 exports.getTailorById = async (req, res) => {
   try {
-    const tailor = await Tailor.findById(req.params.id);
+    const tailor = await Tailor.findById(req.params.id).lean();
     if (!tailor) return res.status(404).json({ error: "Tailor not found" });
+    tailor.averageRating = tailor.ratingCount ? (tailor.ratingSum / tailor.ratingCount).toFixed(1) : "0.0";
     res.json({ tailor });
   } catch (error) {
     console.error(error);
@@ -213,10 +214,7 @@ exports.createOrder = async (req, res) => {
         data: { orderId: order._id, type: "tailor_order" }
       }).catch(err => console.error("Notification create error:", err));
 
-      const tailorUser = await User.findById(targetTailor.userId);
-      if (tailorUser && tailorUser.pushToken) {
-        await sendPushNotification(tailorUser.pushToken, "New Tailor Booking Request ✂️", notifBody, { orderId: order._id });
-      }
+
 
       const io = req.app.get("io");
       if (io) {
@@ -414,6 +412,17 @@ exports.generateDeliveryOtp = async (req, res) => {
       data: { orderId: order._id, deliveryOtp: generatedDeliveryOtp }
     }).catch(err => console.error("Notification create error:", err));
 
+    // Send Delivery OTP via SMS to Customer
+    const customer = await User.findById(custId);
+    if (customer && customer.phone) {
+      try {
+        const { sendCustomSms } = require("../services/smsService");
+        await sendCustomSms(customer.phone, generatedDeliveryOtp);
+      } catch (err) {
+        console.error("Failed to send tailor delivery OTP SMS:", err);
+      }
+    }
+
     const io = req.app.get("io");
     if (io) {
       io.to(`user_${custId.toString()}`).emit("bookingUpdated", { orderId: order._id, status: order.status, deliveryOtp: generatedDeliveryOtp });
@@ -467,10 +476,7 @@ exports.verifyDeliveryOtp = async (req, res) => {
       data: { orderId: order._id, tailorId: order.tailorId, requestRating: true }
     }).catch(err => console.error("Notification create error:", err));
 
-    const customerUser = await User.findById(order.customerId);
-    if (customerUser && customerUser.pushToken) {
-      await sendPushNotification(customerUser.pushToken, notifTitle, notifBody, { orderId: order._id, requestRating: true });
-    }
+
 
     const io = req.app.get("io");
     if (io) {
@@ -540,10 +546,7 @@ exports.rateTailorOrder = async (req, res) => {
           data: { orderId: order._id, type: "tailor_rating" }
         }).catch(err => console.error("Notification create error:", err));
 
-        const tailorUser = await User.findById(tailor.userId);
-        if (tailorUser && tailorUser.pushToken) {
-          await sendPushNotification(tailorUser.pushToken, "New Customer Rating ⭐️", notifMsg, { orderId: order._id });
-        }
+
 
         const io = req.app.get("io");
         if (io) {
@@ -657,6 +660,16 @@ exports.updateOrderStatus = async (req, res) => {
         type: "general",
         data: { orderId: updated._id, otp: finalOtp }
       }).catch(err => console.error("Notification create error:", err));
+
+      // Send Initial OTP SMS to Customer on Acceptance
+      if ((status === "accepted" || status === "confirmed") && updated.customerId && updated.customerId.phone) {
+        try {
+          const { sendCustomSms } = require("../services/smsService");
+          await sendCustomSms(updated.customerId.phone, finalOtp);
+        } catch (err) {
+          console.error("Failed to send tailor booking initial OTP SMS:", err);
+        }
+      }
 
       const io = req.app.get("io");
       if (io) {

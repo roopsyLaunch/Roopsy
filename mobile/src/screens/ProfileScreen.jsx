@@ -221,6 +221,30 @@ export function ProfileScreen() {
     }
   };
 
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      "Delete Account ⚠️",
+      "Are you sure you want to permanently delete your account and all associated booking data? This action cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Delete My Account", 
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await api.delete("/auth/me");
+              Alert.alert("Success ✅", "Your account has been deleted successfully.");
+              logout();
+            } catch (err) {
+              console.error(err);
+              Alert.alert("Error", "Could not delete your account. Please try again later.");
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const OptionRow = ({ icon, label, value, color = "#64748b", isDanger = false, onPress }) => (
     <Pressable style={styles.optionRow} onPress={onPress}>
       <View style={[styles.iconWrapper, { backgroundColor: isDanger ? "#fee2e2" : "#f1f5f9" }]}>
@@ -268,7 +292,13 @@ export function ProfileScreen() {
           </View>
           
           <Text style={styles.userName}>{user?.name || "Premium User"}</Text>
-          <Text style={styles.userEmail}>{user?.email || "user@example.com"}</Text>
+          <Text style={styles.userEmail}>
+            {user?.email && !user.email.startsWith("user_") && !user.email.endsWith("@roopsy.com")
+              ? user.email
+              : user?.phone 
+                ? `+91 ${user.phone}`
+                : "user@example.com"}
+          </Text>
           
           <View style={styles.roleBadge}>
             <Ionicons name={isPartner ? "star" : "person"} size={12} color="#ffffff" />
@@ -348,6 +378,7 @@ export function ProfileScreen() {
             <OptionRow icon="person-outline" label="Personal Information" color="#0f172a" onPress={openEditModal} />
             <OptionRow icon="wallet-outline" label="Payment Methods" color="#0f172a" onPress={() => setPaymentModalVisible(true)} />
             <OptionRow icon="notifications-outline" label="Notifications" color="#0f172a" onPress={() => setNotifSettingsModalVisible(true)} />
+            <OptionRow icon="trash-outline" label="Delete Account" color="#ef4444" isDanger={true} onPress={handleDeleteAccount} />
           </View>
         </View>
 
@@ -447,7 +478,7 @@ export function ProfileScreen() {
                 <Ionicons name="close" size={28} color="#94a3b8" />
               </Pressable>
             </View>
-            <ScrollView style={styles.modalBody}>
+            <ScrollView contentContainerStyle={styles.modalScrollContent}>
               {["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map(day => {
                 const dayData = editWorkingHours[day] || { open: "09:00", close: "18:00", isClosed: false };
                 return (
@@ -513,7 +544,7 @@ export function ProfileScreen() {
               </Pressable>
             </View>
 
-            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+            <ScrollView contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false}>
               <Text style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>Manage your preferred payment options for instant salon & tailor bookings.</Text>
 
               {/* UPI Section */}
@@ -583,7 +614,7 @@ export function ProfileScreen() {
               </Pressable>
             </View>
 
-            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+            <ScrollView contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false}>
               <View style={{ backgroundColor: "#f8fafc", padding: 16, borderRadius: 16, marginBottom: 12, borderWidth: 1, borderColor: "#e2e8f0", flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                 <View style={{ flex: 1, marginRight: 10 }}>
                   <Text style={{ fontSize: 14, fontWeight: "800", color: "#0f172a" }}>Push Notifications</Text>
@@ -644,7 +675,7 @@ export function ProfileScreen() {
               </Pressable>
             </View>
 
-            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+            <ScrollView contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false}>
               <Text style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>Find answers to common questions or reach our 24/7 customer support team.</Text>
 
               {/* FAQs */}
@@ -711,7 +742,7 @@ export function ProfileScreen() {
               </Pressable>
             </View>
 
-            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+            <ScrollView contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false}>
               <Text style={{ fontSize: 13, color: "#64748b", marginBottom: 14 }}>Your privacy and data security are our top priorities.</Text>
 
               <View style={{ backgroundColor: "#f8fafc", padding: 14, borderRadius: 14, marginBottom: 12, borderWidth: 1, borderColor: "#e2e8f0" }}>
@@ -793,7 +824,7 @@ export function ProfileScreen() {
               </Pressable>
             </View>
 
-            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+            <ScrollView contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false}>
               <View style={{ alignItems: "center", marginBottom: 20 }}>
                 <View style={{ width: 80, height: 80, borderRadius: 20, backgroundColor: "#ede9fe", justifyContent: "center", alignItems: "center", marginBottom: 12, overflow: "hidden" }}>
                   <Image source={require("../../assets/logo.jpeg")} style={{ width: "100%", height: "100%", borderRadius: 20 }} />
@@ -1080,6 +1111,7 @@ const styles = StyleSheet.create({
   modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 24, borderBottomWidth: 1, borderBottomColor: "#f1f5f9" },
   modalTitle: { fontSize: 20, fontWeight: "800", color: "#0f172a" },
   modalBody: { padding: 24, paddingBottom: 40 },
+  modalScrollContent: { padding: 24, paddingBottom: 100 },
   editAvatarWrapper: { width: 100, height: 100, borderRadius: 50, marginBottom: 10 },
   editAvatarPlaceholder: { width: "100%", height: "100%", backgroundColor: "#f1f5f9", borderRadius: 50, justifyContent: "center", alignItems: "center", borderWidth: 2, borderColor: "#e2e8f0" },
   editAvatarImage: { width: "100%", height: "100%", borderRadius: 50, borderWidth: 2, borderColor: "#e2e8f0" },

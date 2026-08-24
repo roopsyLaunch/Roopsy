@@ -25,8 +25,8 @@ exports.getDashboardStats = async (req, res) => {
     // Tailors
     const tailors = await Tailor.find();
     const totalTailors = tailors.length;
-    const activeTailors = tailors.filter(t => t.isVerified && t.isActive).length;
-    const pendingTailors = tailors.filter(t => !t.isVerified).length;
+    const activeTailors = tailors.filter(t => t.approvalStatus === "approved" && t.isShopOpen).length;
+    const pendingTailors = tailors.filter(t => t.approvalStatus === "pending").length;
     
     // Fetch all completed bookings & orders to calculate financials
     const bookings = await Booking.find({ status: "completed" }).populate("serviceIds").lean();
@@ -119,11 +119,11 @@ exports.getAllTailors = async (req, res) => {
 exports.updateTailorStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { isVerified, isActive } = req.body;
+    const { approvalStatus, isShopOpen } = req.body;
     
     const tailor = await Tailor.findByIdAndUpdate(
       id,
-      { $set: { isVerified, isActive } },
+      { $set: { approvalStatus, isShopOpen } },
       { new: true }
     );
     

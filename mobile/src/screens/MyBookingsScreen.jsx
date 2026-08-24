@@ -66,10 +66,10 @@ const LiveCountdown = ({ targetDate }) => {
 export function MyBookingsScreen({ navigation }) {
   const { user } = useAuth();
   const isPartner = user?.role === "barber" || user?.role === "admin";
-  
+
   const [viewMode, setViewMode] = useState(isPartner ? "Shop Queue" : "My Appointments"); // My Appointments, Shop Queue
   const [queueSegment, setQueueSegment] = useState("Upcoming"); // Upcoming, Completed, Cancelled
-  
+
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -79,7 +79,7 @@ export function MyBookingsScreen({ navigation }) {
     const interval = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(interval);
   }, []);
-  
+
   // Custom OTP Modal State
   const [otpModalVisible, setOtpModalVisible] = useState(false);
   const [otpInput, setOtpInput] = useState("");
@@ -87,7 +87,7 @@ export function MyBookingsScreen({ navigation }) {
   const [verifying, setVerifying] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
-  
+
   // History Modal
   const [historyModalVisible, setHistoryModalVisible] = useState(false);
   const [customerHistory, setCustomerHistory] = useState([]);
@@ -169,7 +169,7 @@ export function MyBookingsScreen({ navigation }) {
       } else if (isPartner) {
         const res = await api.get("/bookings/barber");
         setItems(res.data.bookings || []);
-        
+
         const svcRes = await api.get("/barbers/me");
         if (svcRes.data?.services) {
           setShopServices(svcRes.data.services);
@@ -191,12 +191,12 @@ export function MyBookingsScreen({ navigation }) {
           if (isActive) setLoading(false);
         }
       })();
-      
+
       const socket = getSocket();
       if (user?.id) {
         socket.emit("joinUserRoom", user.id);
       }
-      
+
       const handleBookingUpdated = (data) => {
         if (isActive) {
           load();
@@ -208,7 +208,7 @@ export function MyBookingsScreen({ navigation }) {
               if (res.data?.order) {
                 openTailorRatingModal(res.data.order);
               }
-            }).catch(() => {});
+            }).catch(() => { });
           }
         }
       };
@@ -221,16 +221,16 @@ export function MyBookingsScreen({ navigation }) {
               if (res.data?.order) {
                 openTailorRatingModal(res.data.order);
               }
-            }).catch(() => {});
+            }).catch(() => { });
           }
         }
       };
-      
+
       socket.on("bookingUpdated", handleBookingUpdated);
       socket.on("tailorOrderCompleted", handleTailorOrderCompleted);
-      
-      return () => { 
-        isActive = false; 
+
+      return () => {
+        isActive = false;
         if (user?.id) socket.emit("leaveUserRoom", user.id);
         socket.off("bookingUpdated", handleBookingUpdated);
         socket.off("tailorOrderCompleted", handleTailorOrderCompleted);
@@ -254,14 +254,14 @@ export function MyBookingsScreen({ navigation }) {
       setConfirmHomeModalVisible(true);
       return;
     }
-    
+
     let confirmMsg = `Are you sure you want to mark this booking as ${status}?`;
     if (status === "confirmed" && startTime) {
       confirmMsg = `Confirm this booking for arrival at ${formatTime(startTime)}?`;
     } else if (status === "cancelled" && viewMode === "My Appointments") {
       confirmMsg = "Are you sure you want to cancel this booking?";
     }
-    
+
     Alert.alert("Confirm Action", confirmMsg, [
       { text: "No", style: "cancel" },
       {
@@ -288,39 +288,39 @@ export function MyBookingsScreen({ navigation }) {
 
   const submitOtp = async () => {
     if (!otpInput || otpInput.length !== 4) {
-      Alert.alert("Error", "Please enter a valid 4-digit OTP");
+      Alert.alert("Invalid Input", "Please enter a valid 4-digit OTP check-in code.");
       return;
     }
     setVerifying(true);
     try {
       await api.post("/bookings/verify-otp", { bookingId: activeBookingId, otp: otpInput });
       setOtpModalVisible(false);
-      Alert.alert("Success", "Customer verified and haircut started. A vacant slot has been occupied.");
+      Alert.alert("Verification Success", "Customer check-in verified successfully. The service session has started.");
       await load();
     } catch (e) {
       const err = e?.response?.data?.error;
-      Alert.alert("Verification Failed", typeof err === "string" ? err : JSON.stringify(err || e.message));
+      Alert.alert("Verification Error", typeof err === "string" ? err : "Failed to verify the customer OTP. Please check the code and try again.");
     } finally {
       setVerifying(false);
     }
   };
 
   const openHistory = async (phone) => {
-    if (!phone) return Alert.alert("Error", "No phone number available for this customer");
+    if (!phone) return Alert.alert("Information Missing", "No contact details are available for this customer.");
     setHistoryModalVisible(true);
     setLoadingHistory(true);
     try {
       const res = await api.get(`/barbers/customer-history/${phone}`);
       setCustomerHistory(res.data.history || []);
     } catch (e) {
-      Alert.alert("Error", "Failed to load history");
+      Alert.alert("System Error", "Failed to retrieve the customer session history. Please try again.");
     } finally {
       setLoadingHistory(false);
     }
   };
 
   const submitWalkIn = async () => {
-    if (selectedWalkInServices.length === 0) return Alert.alert("Error", "Select at least one service");
+    if (selectedWalkInServices.length === 0) return Alert.alert("Selection Required", "Please select at least one styling service to proceed.");
     setSubmittingWalkIn(true);
     try {
       await api.post("/bookings/walk-in", {
@@ -331,17 +331,17 @@ export function MyBookingsScreen({ navigation }) {
       setWalkInModalVisible(false);
       setWalkInName("");
       setSelectedWalkInServices([]);
-      Alert.alert("Success", "Walk-in customer added to queue");
+      Alert.alert("Customer Added", "The walk-in customer has been successfully added to the queue.");
       await load();
     } catch (e) {
-      Alert.alert("Error", e?.response?.data?.error || e.message);
+      Alert.alert("Booking Failed", e?.response?.data?.error || "Could not add the walk-in customer. Please try again.");
     } finally {
       setSubmittingWalkIn(false);
     }
   };
 
   const submitReview = async () => {
-    if (rating < 1 || rating > 5) return Alert.alert("Error", "Please provide a valid rating between 1 and 5");
+    if (rating < 1 || rating > 5) return Alert.alert("Invalid Rating", "Please select a rating value between 1 and 5 stars.");
     setSubmittingReview(true);
     try {
       await api.post("/reviews", {
@@ -353,10 +353,10 @@ export function MyBookingsScreen({ navigation }) {
       setReviewModalVisible(false);
       setRating(5);
       setComment("");
-      Alert.alert("Success", "Thank you for your review!");
+      Alert.alert("Feedback Saved", "Thank you! Your rating and review have been submitted successfully.");
       await load();
     } catch (e) {
-      Alert.alert("Error", e?.response?.data?.error || e.message);
+      Alert.alert("Submission Failed", e?.response?.data?.error || "An error occurred while saving your feedback. Please try again.");
     } finally {
       setSubmittingReview(false);
     }
@@ -395,13 +395,13 @@ export function MyBookingsScreen({ navigation }) {
     const cat = (item.barber?.businessCategory || "").toLowerCase();
     const pref = (item.barber?.genderPreference || "").toLowerCase();
     const svcs = (item.services || []).map(s => ((s.category || "") + " " + (s.name || "")).toLowerCase()).join(" ");
-    
+
     if (
-      cat.includes("beauty") || cat.includes("parlor") || 
-      pref === "women_only" || 
-      svcs.includes("beauty") || svcs.includes("parlor") || 
-      svcs.includes("facial") || svcs.includes("makeup") || 
-      svcs.includes("waxing") || svcs.includes("thread") || 
+      cat.includes("beauty") || cat.includes("parlor") ||
+      pref === "women_only" ||
+      svcs.includes("beauty") || svcs.includes("parlor") ||
+      svcs.includes("facial") || svcs.includes("makeup") ||
+      svcs.includes("waxing") || svcs.includes("thread") ||
       svcs.includes("manicure") || svcs.includes("pedicure")
     ) {
       return "beauty";
@@ -463,7 +463,7 @@ export function MyBookingsScreen({ navigation }) {
         return name.toLowerCase().includes(searchQuery.toLowerCase()) || phone.includes(searchQuery) || svcs.toLowerCase().includes(searchQuery.toLowerCase());
       });
     }
-    
+
     if (viewMode === "Shop Queue" && queueSegment === "Upcoming") {
       list.sort((a, b) => {
         if (a.status === "in-progress" && b.status !== "in-progress") return -1;
@@ -471,7 +471,7 @@ export function MyBookingsScreen({ navigation }) {
         return new Date(b.createdAt) - new Date(a.createdAt);
       });
     }
-    
+
     return list;
   }, [items, viewMode, queueSegment, customerTab, serviceTypeFilter, searchQuery]);
 
@@ -508,21 +508,21 @@ export function MyBookingsScreen({ navigation }) {
         {/* Live Queue Position & Delay */}
         {["pending", "confirmed", "arrived"].includes(item.status) && item.queuePosition > 0 && (
           <View style={{ backgroundColor: "#ffedd5", padding: 12, borderRadius: 12, marginBottom: 16, flexDirection: "row", alignItems: "center" }}>
-             <Ionicons name="people" size={20} color="#ea580c" style={{marginRight: 8}}/>
-             <View>
-               <Text style={{color: "#c2410c", fontWeight: "700", fontSize: 14}}>Queue Position: #{item.queuePosition}</Text>
-               <Text style={{color: "#ea580c", fontSize: 12}}>Customers ahead of you: {item.queuePosition - 1}</Text>
-             </View>
+            <Ionicons name="people" size={20} color="#ea580c" style={{ marginRight: 8 }} />
+            <View>
+              <Text style={{ color: "#c2410c", fontWeight: "700", fontSize: 14 }}>Queue Position: #{item.queuePosition}</Text>
+              <Text style={{ color: "#ea580c", fontSize: 12 }}>Customers ahead of you: {item.queuePosition - 1}</Text>
+            </View>
           </View>
         )}
-        
+
         {item.delayMinutes > 0 && (
           <View style={{ backgroundColor: "#fee2e2", padding: 12, borderRadius: 12, marginBottom: 16, flexDirection: "row", alignItems: "center" }}>
-             <Ionicons name="warning" size={20} color="#ef4444" style={{marginRight: 8}}/>
-             <View>
-               <Text style={{color: "#b91c1c", fontWeight: "700", fontSize: 14}}>Service Delayed</Text>
-               <Text style={{color: "#ef4444", fontSize: 12}}>Estimated delay: {item.delayMinutes} mins</Text>
-             </View>
+            <Ionicons name="warning" size={20} color="#ef4444" style={{ marginRight: 8 }} />
+            <View>
+              <Text style={{ color: "#b91c1c", fontWeight: "700", fontSize: 14 }}>Service Delayed</Text>
+              <Text style={{ color: "#ef4444", fontSize: 12 }}>Estimated delay: {item.delayMinutes} mins</Text>
+            </View>
           </View>
         )}
 
@@ -569,7 +569,7 @@ export function MyBookingsScreen({ navigation }) {
                 </View>
               ))}
             </View>
-            <Text style={{fontSize: 13, fontWeight: "700", color: "#334155", marginTop: 8}}>Total: ₹{item.services.reduce((sum, s) => sum + (s.price || 0), 0)}</Text>
+            <Text style={{ fontSize: 13, fontWeight: "700", color: "#334155", marginTop: 8 }}>Total: ₹{item.services.reduce((sum, s) => sum + (s.price || 0), 0)}</Text>
           </View>
         ) : null}
 
@@ -618,7 +618,7 @@ export function MyBookingsScreen({ navigation }) {
           <View style={styles.otpBox}>
             {(() => {
               const { start, end } = getCheckInTimes(item);
-              
+
               if (currentTime < start) {
                 const diff = start - currentTime;
                 const hh = Math.floor(diff / 3600000).toString().padStart(2, '0');
@@ -656,41 +656,63 @@ export function MyBookingsScreen({ navigation }) {
         )}
 
         {item.status !== "cancelled" && item.status !== "completed" && item.status !== "in-progress" && item.status !== "expired" && (
-          <View style={{flexDirection: 'row', gap: 10, marginTop: 16}}>
-            <Pressable style={[styles.cancelBtn, {flex:1, marginTop: 0}]} onPress={() => setStatus(item.id, "cancelled")}>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+            <Pressable style={[styles.cancelBtn, { flex: 1, marginTop: 0 }]} onPress={() => setStatus(item.id, "cancelled")}>
               <Text style={styles.cancelText}>Cancel</Text>
             </Pressable>
-            <Pressable style={[styles.cancelBtn, {flex:1, marginTop: 0, backgroundColor: "#f3e8ff"}]} onPress={() => {
+            <Pressable style={[styles.cancelBtn, { flex: 1, marginTop: 0, backgroundColor: "#f3e8ff" }]} onPress={() => {
               Alert.alert(
                 "Reschedule Appointment",
                 "Do you want to cancel this booking and book a new one?",
                 [
                   { text: "No", style: "cancel" },
-                  { text: "Yes, Reschedule", onPress: async () => {
-                    try {
-                      await api.patch(`/bookings/${item.id}`, { status: "cancelled" });
-                      navigation.navigate("BarberDetail", { barberId: item.barber?.id || item.barberId, shopName: item.barber?.shopName });
-                    } catch (e) {
-                      Alert.alert("Error", e?.response?.data?.error || e.message);
+                  {
+                    text: "Yes, Reschedule", onPress: async () => {
+                      try {
+                        await api.patch(`/bookings/${item.id}`, { status: "cancelled" });
+                        const bObj = item.barber || item.barberId || {};
+                        const cat = (bObj.businessCategory || "").toLowerCase();
+                        const bId = bObj.id || bObj._id || item.barberId;
+                        const sName = bObj.shopName || "";
+                        if (cat.includes("tailor") || cat.includes("stitching") || cat.includes("center")) {
+                          navigation.navigate("TailorDetail", { tailorId: bId, shopName: sName });
+                        } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour")) {
+                          navigation.navigate("BeautyParlorDetail", { barberId: bId, shopName: sName });
+                        } else {
+                          navigation.navigate("BarberDetail", { barberId: bId, shopName: sName });
+                        }
+                      } catch (e) {
+                        Alert.alert("Error", e?.response?.data?.error || e.message);
+                      }
                     }
-                  }}
+                  }
                 ]
               );
             }}>
-              <Text style={[styles.cancelText, {color: "#7e22ce"}]}>Reschedule</Text>
+              <Text style={[styles.cancelText, { color: "#7e22ce" }]}>Reschedule</Text>
             </Pressable>
           </View>
         )}
 
         {item.status === "completed" && viewMode === "My Appointments" && (
-          <View style={{flexDirection: 'row', gap: 10, marginTop: 16}}>
-            <Pressable style={[styles.cancelBtn, {flex: 1, marginTop: 0, backgroundColor: "#f1f5f9"}]} onPress={() => {
-              navigation.navigate("BarberDetail", { barberId: item.barber?.id || item.barberId, shopName: item.barber?.shopName });
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+            <Pressable style={[styles.cancelBtn, { flex: 1, marginTop: 0, backgroundColor: "#f1f5f9" }]} onPress={() => {
+              const bObj = item.barber || item.barberId || {};
+              const cat = (bObj.businessCategory || "").toLowerCase();
+              const bId = bObj.id || bObj._id || item.barberId;
+              const sName = bObj.shopName || "";
+              if (cat.includes("tailor") || cat.includes("stitching") || cat.includes("center")) {
+                navigation.navigate("TailorDetail", { tailorId: bId, shopName: sName });
+              } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour")) {
+                navigation.navigate("BeautyParlorDetail", { barberId: bId, shopName: sName });
+              } else {
+                navigation.navigate("BarberDetail", { barberId: bId, shopName: sName });
+              }
             }}>
-              <Text style={[styles.cancelText, {color: "#0f172a"}]}>Book Again</Text>
+              <Text style={[styles.cancelText, { color: "#0f172a" }]}>Book Again</Text>
             </Pressable>
-            <Pressable style={[styles.cancelBtn, {flex: 1, marginTop: 0, backgroundColor: "#fef08a"}]} onPress={() => { setReviewBookingId(item.id); setReviewBarberId(item.barber?.id || item.barberId?._id || item.barberId); setReviewModalVisible(true); }}>
-              <Text style={[styles.cancelText, {color: "#854d0e"}]}>Leave a Review</Text>
+            <Pressable style={[styles.cancelBtn, { flex: 1, marginTop: 0, backgroundColor: "#fef08a" }]} onPress={() => { setReviewBookingId(item.id); setReviewBarberId(item.barber?.id || item.barberId?._id || item.barberId); setReviewModalVisible(true); }}>
+              <Text style={[styles.cancelText, { color: "#854d0e" }]}>Leave a Review</Text>
             </Pressable>
           </View>
         )}
@@ -701,9 +723,9 @@ export function MyBookingsScreen({ navigation }) {
   const renderTailorCard = (item) => {
     const statusStyle = getStatusBadge(item.status);
     const shopName = item.tailorId?.shopName || "Tailor Shop";
-    
+
     const cancelTailorOrder = async () => {
-      Alert.alert("Cancel Booking", "Are you sure you want to cancel this booking?", [
+      Alert.alert("Cancel Booking Request", "Are you sure you want to cancel this tailor booking?", [
         { text: "No", style: "cancel" },
         {
           text: "Yes, Cancel",
@@ -711,11 +733,11 @@ export function MyBookingsScreen({ navigation }) {
           onPress: async () => {
             try {
               await api.patch(`/tailors/orders/${item._id}/cancel`, { cancellationReason: "Cancelled by customer" });
-              Alert.alert("Booking Cancelled", "Your booking has been cancelled.");
+              Alert.alert("Booking Cancelled", "Your tailor booking request has been successfully cancelled.");
               await load();
             } catch (e) {
               const errMsg = e?.response?.data?.error || "Failed to cancel order";
-              Alert.alert("Error", errMsg);
+              Alert.alert("Cancellation Failed", errMsg);
             }
           }
         }
@@ -871,7 +893,7 @@ export function MyBookingsScreen({ navigation }) {
                 </View>
               ))}
             </View>
-            
+
             <View style={{ marginTop: 10, padding: 12, backgroundColor: "#f8fafc", borderRadius: 12, borderWidth: 1, borderColor: "#e2e8f0" }}>
               <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
                 <Text style={{ fontSize: 13, color: "#64748b" }}>Services Total:</Text>
@@ -879,7 +901,7 @@ export function MyBookingsScreen({ navigation }) {
                   ₹{item.services.reduce((acc, s) => acc + (s.price || 0) * (s.quantity || 1), 0)}
                 </Text>
               </View>
-              
+
               {item.fabricDetails?.totalFabricCost > 0 && (
                 <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
                   <Text style={{ fontSize: 13, color: "#64748b" }}>Fabric Cost:</Text>
@@ -939,7 +961,7 @@ export function MyBookingsScreen({ navigation }) {
                 </Pressable>
               </View>
             ) : (
-              <Pressable 
+              <Pressable
                 style={{ backgroundColor: "#6d28d9", paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", shadowColor: "#6d28d9", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4, elevation: 3 }}
                 onPress={() => openTailorRatingModal(item)}
               >
@@ -1025,7 +1047,7 @@ export function MyBookingsScreen({ navigation }) {
                 </View>
               ))}
             </View>
-            <Text style={{fontSize: 13, fontWeight: "700", color: "#334155", marginTop: 8}}>Total: ₹{item.services.reduce((sum, s) => sum + (s.price || 0), 0)}</Text>
+            <Text style={{ fontSize: 13, fontWeight: "700", color: "#334155", marginTop: 8 }}>Total: ₹{item.services.reduce((sum, s) => sum + (s.price || 0), 0)}</Text>
           </View>
         ) : null}
 
@@ -1044,20 +1066,20 @@ export function MyBookingsScreen({ navigation }) {
               )}
             </View>
             <Text style={{ fontSize: 13, color: "#4c1d95", fontWeight: "500", marginTop: 6 }}>
-              <Text style={{fontWeight: "700"}}>Address:</Text> {item.homeServiceAddress || "Not provided"}
+              <Text style={{ fontWeight: "700" }}>Address:</Text> {item.homeServiceAddress || "Not provided"}
             </Text>
             {item.homeServiceLocation?.lat != null && item.homeServiceLocation?.lng != null && (
-              <Pressable 
-                style={{ 
-                  flexDirection: 'row', 
-                  alignItems: 'center', 
-                  backgroundColor: '#7c3aed', 
-                  paddingHorizontal: 12, 
-                  paddingVertical: 8, 
-                  borderRadius: 8, 
+              <Pressable
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: '#7c3aed',
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderRadius: 8,
                   marginTop: 10,
                   alignSelf: 'flex-start'
-                }} 
+                }}
                 onPress={() => {
                   Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${item.homeServiceLocation.lat},${item.homeServiceLocation.lng}`);
                 }}
@@ -1080,7 +1102,7 @@ export function MyBookingsScreen({ navigation }) {
             <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#f1f5f9" }]} onPress={() => setStatus(item.id, "cancelled")}>
               <Text style={[styles.actionBtnTextSolid, { color: "#ef4444" }]}>Decline</Text>
             </Pressable>
-            
+
             <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#6d28d9" }]} onPress={() => setStatus(item.id, "confirmed", item.startTime, item.isHomeService)}>
               <Text style={[styles.actionBtnTextSolid, { color: "#ffffff" }]}>Confirm Booking</Text>
             </Pressable>
@@ -1089,8 +1111,8 @@ export function MyBookingsScreen({ navigation }) {
           <View style={styles.verifyBox}>
             <Text style={styles.verifyLabel}>Verify Customer OTP</Text>
             <View style={{ flexDirection: "row", gap: 10 }}>
-              <Pressable 
-                style={styles.verifyBtn} 
+              <Pressable
+                style={styles.verifyBtn}
                 onPress={() => promptVerifyOtp(item.id)}
               >
                 <Text style={styles.verifyBtnText}>Enter OTP & Start Haircut</Text>
@@ -1118,7 +1140,7 @@ export function MyBookingsScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      
+
       {/* Top Header Title */}
       <View style={styles.headerContainer}>
         <Text style={styles.headerTitle}>Bookings</Text>
@@ -1131,8 +1153,8 @@ export function MyBookingsScreen({ navigation }) {
             {["Shop Queue", "My Appointments"].map((mode) => {
               const active = viewMode === mode;
               return (
-                <Pressable 
-                  key={mode} 
+                <Pressable
+                  key={mode}
                   style={[styles.primaryToggleBtn, active && styles.primaryToggleBtnActive]}
                   onPress={() => setViewMode(mode)}
                 >
@@ -1240,7 +1262,7 @@ export function MyBookingsScreen({ navigation }) {
       <View style={styles.searchSection}>
         <View style={styles.searchInputWrapper}>
           <Ionicons name="search" size={20} color="#94a3b8" />
-          <TextInput 
+          <TextInput
             style={styles.searchInput}
             placeholder="Search by name or phone..."
             value={searchQuery}
@@ -1270,8 +1292,8 @@ export function MyBookingsScreen({ navigation }) {
               {viewMode === "Shop Queue" ? "No Requests Yet" : "No Appointments"}
             </Text>
             <Text style={styles.emptySub}>
-              {viewMode === "Shop Queue" 
-                ? "Incoming requests from customers will appear here." 
+              {viewMode === "Shop Queue"
+                ? "Incoming requests from customers will appear here."
                 : "Your upcoming salon appointments will show up here."}
             </Text>
           </View>
@@ -1284,7 +1306,7 @@ export function MyBookingsScreen({ navigation }) {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Verify Customer OTP</Text>
             <Text style={styles.modalDesc}>Enter the 4-digit PIN shown on the customer's app.</Text>
-            
+
             <TextInput
               style={styles.otpInputBox}
               placeholder="0000"
@@ -1294,7 +1316,7 @@ export function MyBookingsScreen({ navigation }) {
               onChangeText={setOtpInput}
               editable={!verifying}
             />
-            
+
             <View style={styles.modalActions}>
               <Pressable style={styles.modalCancelBtn} onPress={() => setOtpModalVisible(false)} disabled={verifying}>
                 <Text style={styles.modalCancelText}>Cancel</Text>
@@ -1324,7 +1346,7 @@ export function MyBookingsScreen({ navigation }) {
               {shopServices.map(svc => {
                 const isSelected = selectedWalkInServices.includes(svc.id);
                 return (
-                  <Pressable 
+                  <Pressable
                     key={svc.id}
                     style={{ padding: 8, borderRadius: 8, borderWidth: 1, borderColor: isSelected ? '#6d28d9' : '#e2e8f0', backgroundColor: isSelected ? '#6d28d9' : '#fff' }}
                     onPress={() => {
@@ -1381,7 +1403,7 @@ export function MyBookingsScreen({ navigation }) {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Rate & Review</Text>
             <Text style={styles.modalDesc}>How was your experience?</Text>
-            
+
             <View style={{ flexDirection: "row", justifyContent: "center", gap: 8, marginBottom: 20 }}>
               {[1, 2, 3, 4, 5].map((star) => (
                 <Pressable key={star} onPress={() => setRating(star)}>
@@ -1398,7 +1420,7 @@ export function MyBookingsScreen({ navigation }) {
               placeholderTextColor="#94a3b8"
               multiline
             />
-            
+
             <View style={styles.modalActions}>
               <Pressable style={styles.modalCancelBtn} onPress={() => setReviewModalVisible(false)} disabled={submittingReview}>
                 <Text style={styles.modalCancelText}>Cancel</Text>
@@ -1422,7 +1444,7 @@ export function MyBookingsScreen({ navigation }) {
               <Text style={styles.modalTitle}>Rate Tailor Service ✂️</Text>
               <Text style={styles.modalDesc}>How was your tailoring & outfit experience?</Text>
             </View>
-            
+
             <View style={{ flexDirection: "row", justifyContent: "center", gap: 10, marginBottom: 20 }}>
               {[1, 2, 3, 4, 5].map((star) => (
                 <Pressable key={star} onPress={() => setTailorRating(star)} style={{ padding: 4 }}>
@@ -1439,7 +1461,7 @@ export function MyBookingsScreen({ navigation }) {
               placeholderTextColor="#94a3b8"
               multiline
             />
-            
+
             <View style={styles.modalActions}>
               <Pressable style={styles.modalCancelBtn} onPress={() => setTailorRatingModalVisible(false)} disabled={submittingTailorRating}>
                 <Text style={styles.modalCancelText}>Skip / Rate Later</Text>
@@ -1458,7 +1480,7 @@ export function MyBookingsScreen({ navigation }) {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Confirm Home Service</Text>
             <Text style={styles.modalDesc}>ETA to Customer (Minutes)</Text>
-            
+
             <TextInput
               style={[styles.otpInputBox, { fontSize: 16, textAlign: "left", letterSpacing: 0, padding: 12, marginBottom: 24 }]}
               placeholder="e.g. 15"
@@ -1467,7 +1489,7 @@ export function MyBookingsScreen({ navigation }) {
               onChangeText={setConfirmETA}
               placeholderTextColor="#94a3b8"
             />
-            
+
             <View style={styles.modalActions}>
               <Pressable style={styles.modalCancelBtn} onPress={() => setConfirmHomeModalVisible(false)}>
                 <Text style={styles.modalCancelText}>Cancel</Text>
@@ -1496,7 +1518,7 @@ export function MyBookingsScreen({ navigation }) {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: "#f8fafc" },
   centered: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#f8fafc" },
-  
+
   headerContainer: {
     paddingHorizontal: 20,
     paddingTop: Platform.OS === "android" ? 20 : 10,
@@ -1571,7 +1593,7 @@ const styles = StyleSheet.create({
   },
 
   listContent: { paddingHorizontal: 20, paddingBottom: 100 },
-  
+
   card: {
     backgroundColor: "#ffffff",
     borderRadius: 20,
@@ -1595,25 +1617,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flex: 1,
   },
-  avatarCircle: { 
-    width: 44, 
-    height: 44, 
-    borderRadius: 22, 
-    justifyContent: "center", 
-    alignItems: "center", 
-    borderWidth: 1, 
+  avatarCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
   },
   avatarText: { fontSize: 16, fontWeight: "800" },
   cardHeaderInfo: { marginLeft: 12, flex: 1 },
   shopName: { fontSize: 16, fontWeight: "800", color: "#0f172a" },
   bookingIdText: { fontSize: 12, color: "#94a3b8", marginTop: 2, fontWeight: "500" },
-  
-  badge: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    paddingHorizontal: 10, 
-    paddingVertical: 6, 
-    borderRadius: 12 
+
+  badge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12
   },
   badgeText: { fontSize: 11, fontWeight: "800", textTransform: "uppercase" },
 
@@ -1659,7 +1681,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#7e22ce"
   },
-  
+
   seatHighlightBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -1733,20 +1755,20 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
-  cancelBtn: { 
-    marginTop: 16, 
-    alignItems: "center", 
+  cancelBtn: {
+    marginTop: 16,
+    alignItems: "center",
     paddingVertical: 10,
     backgroundColor: "#fef2f2",
     borderRadius: 12,
   },
   cancelText: { color: "#ef4444", fontWeight: "700", fontSize: 13 },
 
-  emptyState: { 
-    alignItems: "center", 
-    justifyContent: "center", 
-    paddingVertical: 80, 
-    paddingHorizontal: 32 
+  emptyState: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 80,
+    paddingHorizontal: 32
   },
   emptyIconCircle: {
     width: 80,

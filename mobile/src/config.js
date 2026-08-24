@@ -16,24 +16,9 @@ function getHostIp() {
 
 /** Android emulator: 10.0.2.2 = host machine. Physical device: dynamically resolves from Expo hostUri or EXPO_PUBLIC_API_URL */
 export function getApiBaseUrl() {
-  if (extra?.apiUrl) {
-    return String(extra.apiUrl).replace(/\/$/, "");
-  }
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return String(process.env.EXPO_PUBLIC_API_URL).replace(/\/$/, "");
-  }
-
-  const hostIp = getHostIp();
-  if (hostIp && hostIp !== "localhost" && hostIp !== "127.0.0.1") {
-    return `http://${hostIp}:5000`;
-  }
-
-  if (Platform.OS === "android") {
-    //return "http://10.128.8.5:5000";
-    return "https://roopsy.onrender.com";
-  }
-  //return "http://localhost:5000";
-  return "https://roopsy.onrender.com"
+  const url = "http://10.35.125.5:5000";
+  console.log("[Mobile Config] Resolved API URL:", url);
+  return url;
 }
 
 export const API_PREFIX = "/api";

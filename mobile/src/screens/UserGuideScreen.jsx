@@ -136,7 +136,7 @@ export function UserGuideScreen({ navigation, route }) {
 
         <Pressable 
           style={[styles.actionBtn, { backgroundColor: "#7c3aed" }]}
-          onPress={() => navigation.navigate("BarberList")}
+          onPress={() => navigation.navigate("Home", { screen: "BarberList" })}
         >
           <Ionicons name="search" size={16} color="#ffffff" style={{ marginRight: 6 }} />
           <Text style={styles.actionBtnText}>Book Barber Now</Text>
@@ -205,7 +205,7 @@ export function UserGuideScreen({ navigation, route }) {
 
         <Pressable 
           style={[styles.actionBtn, { backgroundColor: "#6d28d9" }]}
-          onPress={() => navigation.navigate("TailorList")}
+          onPress={() => navigation.navigate("Home", { screen: "TailorList" })}
         >
           <Ionicons name="cut" size={16} color="#ffffff" style={{ marginRight: 6 }} />
           <Text style={styles.actionBtnText}>Book Tailor Now</Text>
@@ -250,7 +250,7 @@ export function UserGuideScreen({ navigation, route }) {
 
         <Pressable 
           style={[styles.actionBtn, { backgroundColor: "#be185d" }]}
-          onPress={() => navigation.navigate("BeautyParlorList")}
+          onPress={() => navigation.navigate("Home", { screen: "BeautyParlorList" })}
         >
           <Ionicons name="sparkles" size={16} color="#ffffff" style={{ marginRight: 6 }} />
           <Text style={styles.actionBtnText}>Book Beauty Parlor Now</Text>

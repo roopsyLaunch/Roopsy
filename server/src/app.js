@@ -15,11 +15,14 @@ const crmRoutes         = require("./routes/crmRoutes");
 const inventoryRoutes   = require("./routes/inventoryRoutes");
 const staffRoutes       = require("./routes/staffRoutes");
 const financeRoutes     = require("./routes/financeRoutes");
+const path = require("path");
 const adminPanelRoutes  = require("./routes/adminPanelRoutes");
 
 const app = express();
 
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: false, // Turn off CSP for easy inline style loading of privacy page if needed
+}));
 app.use(
   cors({
     origin: process.env.CORS_ORIGIN || "*",
@@ -27,9 +30,18 @@ app.use(
   })
 );
 app.use(express.json());
+app.use(express.static(path.join(__dirname, "../public")));
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+app.get("/privacy", (_req, res) => {
+  res.sendFile(path.join(__dirname, "../public/privacy.html"));
+});
+
+app.get("/delete-account", (_req, res) => {
+  res.sendFile(path.join(__dirname, "../public/delete-account.html"));
 });
 
 app.use("/api/auth", authRoutes);

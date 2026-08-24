@@ -6,6 +6,8 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { api } from "../api/client";
+import { useAuth } from "../context/AuthContext";
+import { getSocket } from "../api/socket";
 
 function formatDateLabel(isoDate) {
   const d = new Date(isoDate);
@@ -43,6 +45,7 @@ const LiveCountdown = ({ targetDate }) => {
 };
 
 export function BarberQueueScreen() {
+  const { barber } = useAuth();
   const [queue, setQueue] = useState([]);
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -84,6 +87,25 @@ export function BarberQueueScreen() {
       return () => { isActive = false; };
     }, [loadData])
   );
+
+  useEffect(() => {
+    const barberId = barber?.id || barber?._id;
+    if (!barberId) return;
+    const socket = getSocket();
+    if (socket) {
+      socket.emit("joinBarberRoom", barberId);
+      socket.on("queueUpdated", loadData);
+      socket.on("slotsUpdated", loadData);
+      socket.on("bookingUpdated", loadData);
+
+      return () => {
+        socket.emit("leaveBarberRoom", barberId);
+        socket.off("queueUpdated", loadData);
+        socket.off("slotsUpdated", loadData);
+        socket.off("bookingUpdated", loadData);
+      };
+    }
+  }, [barber, loadData]);
 
   async function onRefresh() {
     setRefreshing(true);

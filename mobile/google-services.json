@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "873979389128",
+    "project_id": "roopsy-barber",
+    "storage_bucket": "roopsy-barber.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:873979389128:android:807fc8a185a4a52bbeb1fd",
+        "android_client_info": {
+          "package_name": "com.roopsy.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBM5uJ7RIyTNGBsEC44BzDO5Q595Gxhx-E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

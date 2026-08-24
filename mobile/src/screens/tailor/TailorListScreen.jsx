@@ -1,10 +1,8 @@
 import React, { useState, useCallback, useEffect } from "react";
-import { View, Text, FlatList, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl, TextInput, ScrollView, Dimensions } from "react-native";
+import { View, Text, FlatList, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl, TextInput, ScrollView, Dimensions, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "../../api/client";
-
-import { Alert } from "react-native";
-import { getCurrentGPSLocation } from "../../services/locationService";
+import { LinearGradient } from "expo-linear-gradient";
 
 const { width } = Dimensions.get("window");
 const FALLBACK_IMAGE = "https://images.unsplash.com/photo-1598522325754-046dd13ac1c0?w=500&auto=format&fit=crop&q=80";
@@ -80,11 +78,20 @@ export function TailorListScreen({ navigation }) {
     let matchesCategory = true;
     if (selectedCategory === "Open Now") {
       matchesCategory = tailor.isShopOpen;
+    } else if (selectedCategory === "Top Rated") {
+      const ratingVal = parseFloat(tailor.averageRating || tailor.rating || 4.5);
+      matchesCategory = ratingVal >= 4.0;
     }
-    // Add logic for Top Rated, etc. if needed later
-
     return matchesSearch && matchesCategory;
   });
+
+  if (selectedCategory === "Top Rated") {
+    filteredTailors.sort((a, b) => {
+      const ratingA = parseFloat(a.averageRating || a.rating || 4.5);
+      const ratingB = parseFloat(b.averageRating || b.rating || 4.5);
+      return ratingB - ratingA;
+    });
+  }
 
   const renderHeader = () => (
     <View style={styles.header}>
@@ -163,15 +170,21 @@ export function TailorListScreen({ navigation }) {
   const renderBanner = () => (
     <View style={styles.bannerContainer}>
       <Image source={{ uri: BANNER_IMAGE }} style={styles.bannerImage} />
-      <View style={styles.bannerOverlay}>
-        <Text style={styles.bannerTitle}>Expert Tailoring</Text>
-        <Text style={styles.bannerSubtitle}>Perfect Fit. Every Time.</Text>
-        <Text style={styles.bannerDesc}>Book trusted tailors for stitching, alterations & custom designs.</Text>
+      <LinearGradient
+        colors={["rgba(13, 148, 136, 0.9)", "rgba(4, 120, 87, 0.75)"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0.8 }}
+        style={styles.bannerOverlay}
+      >
+        <View style={{ flex: 1, justifyContent: "center" }}>
+          <Text style={styles.bannerTitle}>Expert Tailoring</Text>
+          <Text style={styles.bannerSubtitle}>Perfect Fit. Every Time. Custom stitching & alterations.</Text>
+        </View>
         <Pressable style={styles.bannerBtn}>
-          <Text style={styles.bannerBtnText}>Book Now</Text>
-          <Ionicons name="arrow-forward" size={16} color="#fff" />
+          <Text style={styles.bannerBtnText}>Book</Text>
+          <Ionicons name="arrow-forward" size={12} color="#fff" />
         </Pressable>
-      </View>
+      </LinearGradient>
     </View>
   );
 
@@ -270,7 +283,14 @@ export function TailorListScreen({ navigation }) {
                   <View style={styles.ratingRow}>
                     <Ionicons name="star" size={14} color="#f59e0b" />
                     <Text style={styles.ratingText}>
-                      {item.rating || "4.8"} <Text style={styles.ratingCount}>({item.ratingCount || "124"})</Text>
+                      {item.ratingCount && item.ratingCount > 0 ? (
+                        <>
+                          {item.averageRating || (item.ratingSum / item.ratingCount).toFixed(1)}{" "}
+                          <Text style={styles.ratingCount}>({item.ratingCount})</Text>
+                        </>
+                      ) : (
+                        <Text style={styles.ratingCount}>New</Text>
+                      )}
                     </Text>
                     <Text style={styles.dot}>•</Text>
                     <Text style={styles.distanceText}>
@@ -351,14 +371,14 @@ const styles = StyleSheet.create({
   
   listContent: { paddingBottom: 100 },
   
-  bannerContainer: { marginHorizontal: 20, marginBottom: 24, borderRadius: 16, overflow: "hidden", height: 160 },
+  bannerContainer: { marginHorizontal: 20, marginBottom: 24, borderRadius: 16, overflow: "hidden", height: 110 },
   bannerImage: { width: "100%", height: "100%" },
-  bannerOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(13, 148, 136, 0.85)", padding: 20, justifyContent: "center" },
-  bannerTitle: { fontSize: 20, fontWeight: "800", color: "#ffffff", marginBottom: 4 },
-  bannerSubtitle: { fontSize: 14, fontWeight: "700", color: "#ffffff", marginBottom: 8 },
+  bannerOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, flexDirection: "row", alignItems: "center", paddingHorizontal: 20, paddingVertical: 12 },
+  bannerTitle: { fontSize: 18, fontWeight: "800", color: "#ffffff", marginBottom: 2 },
+  bannerSubtitle: { fontSize: 12, fontWeight: "500", color: "rgba(255,255,255,0.9)", width: "90%" },
   bannerDesc: { fontSize: 12, color: "rgba(255,255,255,0.9)", width: "70%", marginBottom: 12, lineHeight: 18 },
-  bannerBtn: { flexDirection: "row", alignItems: "center", backgroundColor: "#0f766e", alignSelf: "flex-start", paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
-  bannerBtnText: { color: "#ffffff", fontSize: 13, fontWeight: "700", marginRight: 6 },
+  bannerBtn: { flexDirection: "row", alignItems: "center", backgroundColor: "#0f766e", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, alignSelf: "center" },
+  bannerBtnText: { color: "#ffffff", fontSize: 12, fontWeight: "700", marginRight: 4 },
   
   sectionTitleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 20, marginBottom: 16 },
   sectionTitle: { fontSize: 16, fontWeight: "800", color: "#0f172a" },

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { View, Text, StyleSheet, Pressable, ScrollView, TextInput, KeyboardAvoidingView, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -27,6 +27,12 @@ export function PartnerBasicInfoScreen({ navigation, route }) {
   });
 
   const onChange = (key, value) => setData(prev => ({ ...prev, [key]: value }));
+
+  const ownerNameRef = useRef(null);
+  const mobileNumberRef = useRef(null);
+  const addressLineRef = useRef(null);
+  const cityRef = useRef(null);
+  const pincodeRef = useRef(null);
 
   const handleSelectLocation = (loc) => {
     setData((prev) => ({
@@ -80,24 +86,97 @@ export function PartnerBasicInfoScreen({ navigation, route }) {
         <View style={{ width: 40 }} />
       </View>
       <StepIndicator />
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={styles.container}>
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === "ios" ? "padding" : "height"} 
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
+        style={{ flex: 1 }}
+      >
+        <ScrollView
+          contentContainerStyle={styles.container}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           
           <View style={styles.inputGroup}>
             <Text style={styles.label}>
               {isParlor ? "Beauty Parlor Name" : isStitching ? "Tailor Shop Name" : "Shop / Business Name"}
             </Text>
-            <TextInput style={styles.input} placeholder={isParlor ? "Enter parlor name" : isStitching ? "Enter tailor shop name" : "Enter shop name"} value={data.shopName} onChangeText={t => onChange("shopName", t)} />
+            <TextInput
+              style={styles.input}
+              placeholder={isParlor ? "Enter parlor name" : isStitching ? "Enter tailor shop name" : "Enter shop name"}
+              value={data.shopName}
+              onChangeText={t => onChange("shopName", t)}
+              returnKeyType="next"
+              onSubmitEditing={() => ownerNameRef.current?.focus()}
+            />
           </View>
 
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Owner Name</Text>
-            <TextInput style={styles.input} placeholder="Enter owner name" value={data.ownerName} onChangeText={t => onChange("ownerName", t)} />
+            <TextInput
+              ref={ownerNameRef}
+              style={styles.input}
+              placeholder="Enter owner name"
+              value={data.ownerName}
+              onChangeText={t => onChange("ownerName", t)}
+              returnKeyType="next"
+              onSubmitEditing={() => mobileNumberRef.current?.focus()}
+            />
           </View>
 
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Mobile Number</Text>
-            <TextInput style={styles.input} placeholder="Enter mobile number" keyboardType="phone-pad" value={data.mobileNumber} onChangeText={t => onChange("mobileNumber", t)} />
+            <TextInput
+              ref={mobileNumberRef}
+              style={styles.input}
+              placeholder="Enter mobile number"
+              keyboardType="phone-pad"
+              value={data.mobileNumber}
+              onChangeText={t => onChange("mobileNumber", t)}
+              returnKeyType="next"
+              onSubmitEditing={() => addressLineRef.current?.focus()}
+            />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Address Line 1</Text>
+            <TextInput
+              ref={addressLineRef}
+              style={styles.input}
+              placeholder="Enter shop address"
+              value={data.addressLine}
+              onChangeText={t => onChange("addressLine", t)}
+              returnKeyType="next"
+              onSubmitEditing={() => cityRef.current?.focus()}
+            />
+          </View>
+
+          <View style={{ flexDirection: "row", gap: 16 }}>
+            <View style={[styles.inputGroup, { flex: 1 }]}>
+              <Text style={styles.label}>City</Text>
+              <TextInput
+                ref={cityRef}
+                style={styles.input}
+                placeholder="e.g. Lucknow"
+                value={data.city}
+                onChangeText={t => onChange("city", t)}
+                returnKeyType="next"
+                onSubmitEditing={() => pincodeRef.current?.focus()}
+              />
+            </View>
+            <View style={[styles.inputGroup, { flex: 1 }]}>
+              <Text style={styles.label}>Pincode</Text>
+              <TextInput
+                ref={pincodeRef}
+                style={styles.input}
+                placeholder="e.g. 226001"
+                keyboardType="number-pad"
+                value={data.pincode}
+                onChangeText={t => onChange("pincode", t)}
+                returnKeyType="done"
+                onSubmitEditing={onContinue}
+              />
+            </View>
           </View>
 
           <View style={styles.inputGroup}>

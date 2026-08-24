@@ -355,8 +355,8 @@ export function TailorOrdersScreen() {
                   </Pressable>
                 )}
                 {item.status === "accepted" && (
-                  <Pressable 
-                    style={[styles.nextBtn, !item.isOtpVerified && { backgroundColor: "#f59e0b" }]} 
+                  <Pressable
+                    style={[styles.nextBtn, !item.isOtpVerified && { backgroundColor: "#f59e0b" }]}
                     onPress={() => updateStatus(item._id, "stitching")}
                   >
                     <Text style={styles.nextBtnText}>
@@ -609,7 +609,7 @@ const styles = StyleSheet.create({
   date: { fontSize: 12, color: "#64748b", marginTop: 2 },
   statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
   statusText: { fontSize: 10, fontWeight: "800" },
-  
+
   modeBadgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },
   modeBadge: { flexDirection: "row", alignItems: "center", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
   modeBadgeText: { fontSize: 12, fontWeight: "700", marginLeft: 6 },
@@ -618,20 +618,20 @@ const styles = StyleSheet.create({
 
   servicesBox: { backgroundColor: "#f1f5f9", padding: 12, borderRadius: 8, marginBottom: 16 },
   serviceText: { fontSize: 13, color: "#334155", marginBottom: 4 },
-  
+
   footerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   totalPrice: { fontSize: 18, fontWeight: "800", color: "#0f172a" },
   actions: { flexDirection: "row", gap: 8 },
-  
+
   btn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
   declineBtn: { backgroundColor: "#fef2f2" },
   declineText: { color: "#ef4444", fontWeight: "600", fontSize: 13 },
   acceptBtn: { backgroundColor: "#6d28d9" },
   acceptText: { color: "#fff", fontWeight: "700", fontSize: 13 },
-  
+
   nextBtn: { backgroundColor: "#0f172a", paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
   nextBtnText: { color: "#fff", fontWeight: "600", fontSize: 13 },
-  
+
   empty: { padding: 40, alignItems: "center" },
   emptyText: { marginTop: 12, fontSize: 15, color: "#64748b", fontWeight: "500" },
 

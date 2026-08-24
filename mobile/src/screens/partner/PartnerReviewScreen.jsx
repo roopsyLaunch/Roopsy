@@ -21,7 +21,53 @@ export function PartnerReviewScreen({ navigation, route }) {
     
     try {
       if (data.category === "Stitching Center") {
-        setProgress(15);
+        // Upload gallery photos first
+        const images = data.images || [];
+        const totalImages = images.length;
+        const uploadedImages = [];
+
+        for (let i = 0; i < totalImages; i++) {
+          const uri = images[i];
+          const displayIdx = i + 1;
+          setProgressText(`Uploading tailor shop photo ${displayIdx} of ${totalImages}...`);
+
+          if (uri.startsWith('http')) {
+            uploadedImages.push(uri);
+            const stepPercent = 10 + (displayIdx / (totalImages + 1)) * 30;
+            setProgress(Math.round(stepPercent));
+          } else {
+            try {
+              const formData = new FormData();
+              formData.append("image", {
+                uri,
+                name: `tailor_photo_${Date.now()}_${i}.jpg`,
+                type: "image/jpeg"
+              });
+
+              const uploadRes = await api.post("/upload", formData, {
+                headers: { "Content-Type": "multipart/form-data" },
+                onUploadProgress: (progressEvent) => {
+                  const percentCompleted = progressEvent.total
+                    ? Math.round((progressEvent.loaded * 100) / progressEvent.total)
+                    : 0;
+                  
+                  const imageWeight = 30 / (totalImages + 1);
+                  const baseProgress = 10 + (i / (totalImages + 1)) * 30;
+                  const chunkProgress = (percentCompleted / 100) * imageWeight;
+                  setProgress(Math.round(baseProgress + chunkProgress));
+                }
+              });
+
+              if (uploadRes.data && uploadRes.data.url) {
+                uploadedImages.push(uploadRes.data.url);
+              }
+            } catch (err) {
+              console.error("Failed to upload tailor image:", err);
+            }
+          }
+        }
+
+        setProgress(45);
         setProgressText("Registering tailor account details...");
         
         const payload = await upgradeToTailor({
@@ -36,7 +82,7 @@ export function PartnerReviewScreen({ navigation, route }) {
           },
           location: data.lat && data.lng ? { lat: Number(data.lat), lng: Number(data.lng) } : undefined,
           workingHours: data.hours,
-          gallery: data.images || [],
+          gallery: uploadedImages,
           seatCount: Number(data.seatCount) || 1,
         });
 
@@ -45,7 +91,7 @@ export function PartnerReviewScreen({ navigation, route }) {
         const totalServices = services.length;
         for (let idx = 0; idx < totalServices; idx++) {
           const svc = services[idx];
-          const stepPercent = 15 + ((idx + 1) / totalServices) * 75;
+          const stepPercent = 50 + ((idx + 1) / totalServices) * 45;
           setProgress(Math.round(stepPercent));
           setProgressText(`Configuring stitching service: ${svc.name}...`);
           
@@ -162,7 +208,7 @@ export function PartnerReviewScreen({ navigation, route }) {
       }, 500);
     } catch (e) {
       console.error(e);
-      Alert.alert("Submission Failed", e?.response?.data?.error || e.message);
+      Alert.alert("Application Submission Failed", e?.response?.data?.error || "We encountered an error while processing your partner registration. Please try again.");
     } finally {
       setBusy(false);
     }

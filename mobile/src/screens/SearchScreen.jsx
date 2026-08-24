@@ -230,7 +230,16 @@ export function SearchScreen({ navigation, route }) {
           renderItem={({ item, index }) => (
             <Pressable
               style={styles.card}
-              onPress={() => navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName })}
+              onPress={() => {
+                const cat = (item.businessCategory || "").toLowerCase();
+                if (cat.includes("tailor") || cat.includes("stitching") || cat.includes("center")) {
+                  navigation.navigate("TailorDetail", { tailorId: item.id, shopName: item.shopName });
+                } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour")) {
+                  navigation.navigate("BeautyParlorDetail", { barberId: item.id, shopName: item.shopName });
+                } else {
+                  navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName });
+                }
+              }}
             >
               <Image source={{ uri: item.shopPosterUrl || (item.gallery && item.gallery.length > 0 && item.gallery[0]) || FALLBACK_IMAGE }} style={styles.poster} />
               

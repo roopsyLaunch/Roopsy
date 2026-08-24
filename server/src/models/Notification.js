@@ -14,4 +14,20 @@ const notificationSchema = new mongoose.Schema(
 
 notificationSchema.index({ userId: 1, createdAt: -1 });
 
+// Post-save hook to automatically trigger push notifications
+notificationSchema.post("save", async function (doc) {
+  try {
+    const User = mongoose.model("User");
+    const user = await User.findById(doc.userId).select("expoPushToken");
+    
+    if (user && user.expoPushToken) {
+      const { sendPushNotification } = require("../services/notificationService");
+      // Asynchronously send push notification
+      await sendPushNotification(user.expoPushToken, doc.title, doc.body, doc.data);
+    }
+  } catch (err) {
+    console.error("[Notification Model Hook] Error sending push notification:", err);
+  }
+});
+
 module.exports = mongoose.model("Notification", notificationSchema);

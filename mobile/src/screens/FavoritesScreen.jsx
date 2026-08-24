@@ -78,9 +78,16 @@ export function FavoritesScreen({ navigation }) {
         renderItem={({ item }) => (
           <Pressable
             style={styles.card}
-            onPress={() =>
-              navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName })
-            }
+            onPress={() => {
+              const cat = (item.businessCategory || "").toLowerCase();
+              if (cat.includes("tailor") || cat.includes("stitching") || cat.includes("center")) {
+                navigation.navigate("TailorDetail", { tailorId: item.id, shopName: item.shopName });
+              } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour")) {
+                navigation.navigate("BeautyParlorDetail", { barberId: item.id, shopName: item.shopName });
+              } else {
+                navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName });
+              }
+            }}
           >
             {item.shopPosterUrl ? (
               <Image source={{ uri: item.shopPosterUrl }} style={styles.poster} />

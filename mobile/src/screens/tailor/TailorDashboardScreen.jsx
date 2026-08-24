@@ -162,6 +162,28 @@ export function TailorDashboardScreen({ navigation }) {
           </View>
         </View>
 
+        {/* Verification Status Banner */}
+        {tailor.approvalStatus === "pending" && (
+          <View style={{ backgroundColor: "#fef3c7", padding: 12, marginHorizontal: 20, marginBottom: 16, borderRadius: 12, borderWidth: 1, borderColor: "#fde68a" }}>
+            <Text style={{ color: "#92400e", fontWeight: "700", fontSize: 14, marginBottom: 4 }}>
+              Verification Pending
+            </Text>
+            <Text style={{ color: "#b45309", fontSize: 12 }}>
+              You can configure your shop setup, but it will not appear to customers until an admin verifies your details.
+            </Text>
+          </View>
+        )}
+        {tailor.approvalStatus === "rejected" && (
+          <View style={{ backgroundColor: "#fee2e2", padding: 12, marginHorizontal: 20, marginBottom: 16, borderRadius: 12, borderWidth: 1, borderColor: "#fca5a5" }}>
+            <Text style={{ color: "#991b1b", fontWeight: "700", fontSize: 14, marginBottom: 4 }}>
+              Application Rejected
+            </Text>
+            <Text style={{ color: "#c53030", fontSize: 12 }}>
+              Your application was rejected. Reason: {tailor.rejectionReason || "Not specified"}. Please update your profile details.
+            </Text>
+          </View>
+        )}
+
         {/* Urgent Alert Banner */}
         {stats.urgent > 0 && (
           <Pressable style={styles.urgentBanner} onPress={() => navigation.navigate("TailorOrders")}>

@@ -2,33 +2,48 @@
   "expo": {
     "name": "ROOPSY",
     "slug": "roopsy",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
-    "icon": "./assets/logo.jpeg",
+    "icon": "./assets/logo.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "notification": {
+      "icon": "./assets/icon.png",
+      "color": "#7c3aed"
+    },
     "splash": {
-      "image": "./assets/logo.jpeg",
+      "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.barber.app",
-      "buildNumber": "1"
+      "bundleIdentifier": "com.roopsy.app",
+      "buildNumber": "2"
     },
     "android": {
-      "package": "com.barber.app",
-      "versionCode": 1,
+      "package": "com.roopsy.app",
+      "googleServicesFile": "./google-services.json",
+      "versionCode": 2,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/logo.jpeg",
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "@react-native-community/datetimepicker"
+    ],
+    "extra": {
+      "apiUrl": "",
+      "eas": {
+        "projectId": "dce6a0bf-12bf-48a2-b1ce-81c71fb1ce4a"
+      }
     }
   }
 }

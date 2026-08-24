@@ -221,6 +221,13 @@ body {
   color: var(--text-main);
 }
 
+.responsive-table-container {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: 12px;
+  margin-bottom: 10px;
+}
+
 .premium-table {
   width: 100%;
   border-collapse: collapse;

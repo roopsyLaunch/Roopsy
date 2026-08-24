@@ -1,8 +1,11 @@
 import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  Dimensions,
   FlatList,
   Image,
+  Keyboard,
   Modal,
   Pressable,
   RefreshControl,
@@ -17,6 +20,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import LocationPickerModal from "../components/LocationPickerModal";
+import { getCurrentGPSLocation } from "../services/locationService";
+import { LinearGradient } from "expo-linear-gradient";
 
 // Fallback high-quality salon images to show if shopPosterUrl is empty
 const SALON_FALLBACK_IMAGES = [
@@ -27,6 +32,9 @@ const SALON_FALLBACK_IMAGES = [
 
 // Banner model image fallback
 const BANNER_MODEL_IMAGE = "https://images.unsplash.com/photo-1560066984-138dadb4c035?w=500&auto=format&fit=crop&q=80";
+
+const { width: SCREEN_WIDTH } = Dimensions.get("window");
+const CAROUSEL_CARD_WIDTH = (SCREEN_WIDTH - 40 - 12) / 2;
 
 function getDistanceInKm(lat1, lon1, lat2, lon2) {
   if (!lat1 || !lon1 || !lat2 || !lon2) return null;
@@ -51,6 +59,7 @@ export function HomeScreen({ navigation, route }) {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedFilter, setSelectedFilter] = useState("Nearby");
+  const isSearching = searchQuery.trim().length > 0;
 
   const [locationModalVisible, setLocationModalVisible] = useState(false);
 
@@ -78,6 +87,8 @@ export function HomeScreen({ navigation, route }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifModalVisible, setNotifModalVisible] = useState(false);
   const [loadingNotifs, setLoadingNotifs] = useState(false);
+  const [selectedNotifIds, setSelectedNotifIds] = useState([]);
+  const [selectionMode, setSelectionMode] = useState(false);
 
   const fetchNotifications = useCallback(async () => {
     try {
@@ -90,6 +101,8 @@ export function HomeScreen({ navigation, route }) {
   }, []);
 
   const openNotifModal = async () => {
+    setSelectionMode(false);
+    setSelectedNotifIds([]);
     setNotifModalVisible(true);
     setLoadingNotifs(true);
     try {
@@ -109,9 +122,93 @@ export function HomeScreen({ navigation, route }) {
     }
   };
 
+  const toggleSelectNotification = (notifId) => {
+    setSelectedNotifIds((prev) => {
+      if (prev.includes(notifId)) {
+        const next = prev.filter((id) => id !== notifId);
+        if (next.length === 0) setSelectionMode(false);
+        return next;
+      } else {
+        return [...prev, notifId];
+      }
+    });
+  };
+
+  const startSelectionMode = (notifId) => {
+    setSelectionMode(true);
+    setSelectedNotifIds([notifId]);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedNotifIds.length === notifications.length) {
+      setSelectedNotifIds([]);
+      setSelectionMode(false);
+    } else {
+      setSelectedNotifIds(notifications.map((n) => n._id));
+      setSelectionMode(true);
+    }
+  };
+
+  const confirmDeleteNotification = (notifId) => {
+    Alert.alert(
+      "Delete Notification",
+      "Are you sure you want to remove this notification?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Delete", 
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await api.delete(`/auth/notifications/${notifId}`);
+              setNotifications((prev) => prev.filter((n) => n._id !== notifId));
+              setUnreadCount((prev) => {
+                const isUnread = notifications.find((n) => n._id === notifId && !n.isRead);
+                return isUnread ? Math.max(0, prev - 1) : prev;
+              });
+            } catch (err) {
+              console.error(err);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const deleteSelectedNotifications = () => {
+    if (selectedNotifIds.length === 0) return;
+    Alert.alert(
+      "Delete Selected",
+      `Are you sure you want to delete ${selectedNotifIds.length} selected notifications?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await api.post("/auth/notifications/delete-bulk", { ids: selectedNotifIds });
+              setNotifications((prev) => prev.filter((n) => !selectedNotifIds.includes(n._id)));
+              setUnreadCount((prev) => {
+                const unreadSelectedCount = notifications.filter(
+                  (n) => selectedNotifIds.includes(n._id) && !n.isRead
+                ).length;
+                return Math.max(0, prev - unreadSelectedCount);
+              });
+              setSelectedNotifIds([]);
+              setSelectionMode(false);
+            } catch (err) {
+              console.error("Bulk delete failed", err);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const load = useCallback(async () => {
     try {
-      const params = { businessContext: "barber" };
+      const params = { businessContext: "all" };
       if (userLat && userLng) {
         params.lat = userLat;
         params.lng = userLng;
@@ -147,6 +244,21 @@ export function HomeScreen({ navigation, route }) {
       }
     })();
   }, [load, fetchNotifications]);
+
+  React.useEffect(() => {
+    (async () => {
+      if (!userLat || !userLng) {
+        try {
+          const loc = await getCurrentGPSLocation();
+          if (loc && loc.lat && loc.lng) {
+            await handleSelectLocation(loc);
+          }
+        } catch (err) {
+          console.log("Auto GPS location detection skipped/failed: ", err.message);
+        }
+      }
+    })();
+  }, [userLat, userLng]);
 
   async function onRefresh() {
     setRefreshing(true);
@@ -234,32 +346,39 @@ export function HomeScreen({ navigation, route }) {
     }
   };
 
-  const renderHeader = () => (
-    <View style={styles.headerSection}>
-      {/* Top Header: Greeting + Location + Notification */}
-      <View style={styles.topBar}>
-        <View style={styles.userInfoTop}>
-          <Text style={styles.greetSubtitle}>{getDynamicGreeting()}</Text>
-          <Text style={styles.greetTitle}>
-            {user?.name ? user.name.split(" ")[0] : "Stylish"} 👋
-          </Text>
+  const getCardAccentColor = (idx) => {
+    const colors = ["#7c3aed", "#ec4899", "#10b981", "#f97316", "#3b82f6"];
+    return colors[idx % colors.length];
+  };
+
+  const renderHeader = () => {
+    return (
+      <View style={styles.headerSection}>
+        {/* Top Header: Greeting + Location + Notification */}
+        <View style={styles.topBar}>
+        <View style={styles.leftHeader}>
+          <View style={styles.userInfoTop}>
+            <Text style={styles.greetTitle}>
+              Mr. {user?.name ? user.name.split(" ")[0] : "Hridesh"}
+            </Text>
+          </View>
         </View>
         
         <View style={styles.topActions}>
           {/* Location Button */}
           <Pressable style={styles.locationSelector} onPress={() => setLocationModalVisible(true)}>
-            <Ionicons name="location" size={16} color="#7c3aed" />
+            <Ionicons name="location" size={15} color="#7c3aed" />
             <Text style={styles.locationText} numberOfLines={1}>
               {user?.address?.city ? `${user.address.city}, India` : "Lucknow, India"}
             </Text>
-            <Ionicons name="chevron-down" size={14} color="#334155" style={styles.chevron} />
+            <Ionicons name="chevron-down" size={13} color="#7c3aed" style={styles.chevron} />
           </Pressable>
           
           {/* Notification Button */}
           <Pressable style={styles.iconButton} onPress={openNotifModal}>
-            <Ionicons name="notifications-outline" size={20} color="#1e293b" />
+            <Ionicons name="notifications-outline" size={22} color="#0f172a" />
             {unreadCount > 0 && (
-              <View style={styles.notificationBadge}>
+              <View style={[styles.notificationBadge, { backgroundColor: "#7c3aed" }]}>
                 <Text style={styles.notificationBadgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
               </View>
             )}
@@ -267,135 +386,98 @@ export function HomeScreen({ navigation, route }) {
         </View>
       </View>
 
-      {/* Search Input Bar */}
-      <View style={styles.searchContainer}>
-        <Ionicons name="search-outline" size={20} color="#7c3aed" style={styles.searchIcon} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search for salons, services..."
-          placeholderTextColor="#94a3b8"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-        {searchQuery.length > 0 && (
-          <Pressable onPress={() => setSearchQuery("")}>
-            <Ionicons name="close-circle" size={18} color="#94a3b8" style={styles.clearIcon} />
-          </Pressable>
-        )}
-      </View>
-
-      {/* Quick Filter Pills Row */}
-      <ScrollView 
-        horizontal 
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filterRowContainer}
-      >
-        <Pressable 
-          style={[styles.filterPill, selectedFilter === "Nearby" && styles.filterPillActive]}
-          onPress={() => setSelectedFilter("Nearby")}
-        >
-          <Ionicons name="location" size={14} color="#7c3aed" />
-          <Text style={[styles.filterPillText, selectedFilter === "Nearby" && styles.filterPillTextActive]}>Nearby</Text>
-          <Ionicons name="chevron-down" size={12} color="#64748b" />
-        </Pressable>
-
-        <Pressable 
-          style={[styles.filterPill, selectedFilter === "Popular" && styles.filterPillActive]}
-          onPress={() => setSelectedFilter("Popular")}
-        >
-          <Ionicons name="bookmarks-outline" size={14} color="#a855f7" />
-          <Text style={[styles.filterPillText, selectedFilter === "Popular" && styles.filterPillTextActive]}>Popular</Text>
-        </Pressable>
-
-        <Pressable 
-          style={[styles.filterPill, selectedFilter === "Offers" && styles.filterPillActive]}
-          onPress={() => setSelectedFilter("Offers")}
-        >
-          <Ionicons name="pricetag-outline" size={14} color="#ec4899" />
-          <Text style={[styles.filterPillText, selectedFilter === "Offers" && styles.filterPillTextActive]}>Offers</Text>
-        </Pressable>
-
-        <Pressable 
-          style={[styles.filterPill, selectedFilter === "Top Rated" && styles.filterPillActive]}
-          onPress={() => setSelectedFilter("Top Rated")}
-        >
-          <Ionicons name="star" size={14} color="#eab308" />
-          <Text style={[styles.filterPillText, selectedFilter === "Top Rated" && styles.filterPillTextActive]}>Top Rated</Text>
-        </Pressable>
-      </ScrollView>
-
-      {/* Promo Banner Card */}
-      <View style={styles.bannerContainer}>
-        <View style={styles.bannerTextSection}>
-          <Text style={styles.bannerTitle}>Look Good.</Text>
-          <Text style={styles.bannerTitle}>Feel Great.</Text>
-          <Text style={styles.bannerSubtitle}>
-            Book trusted experts near you at the{" "}
-            <Text style={styles.bannerHighlight}>best prices</Text>.
-          </Text>
-          
-          <Pressable 
-            style={styles.exploreBtn}
-            onPress={() => navigation.navigate("UserGuide")}
-          >
-            <Text style={styles.exploreBtnText}>Explore Now 📘</Text>
-            <Ionicons name="arrow-forward" size={14} color="#ffffff" style={{ marginLeft: 4 }} />
-          </Pressable>
-        </View>
-
-        <View style={styles.bannerImageSection}>
-          <Image 
-            source={{ uri: BANNER_MODEL_IMAGE }}
-            style={styles.bannerModelImage} 
+      {/* Search Input Bar with Search Button */}
+      <View style={styles.searchRow}>
+        <View style={styles.searchContainer}>
+          <Ionicons name="search-outline" size={20} color="#94a3b8" style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search for salons, services..."
+            placeholderTextColor="#94a3b8"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            returnKeyType="search"
+            onSubmitEditing={() => Keyboard.dismiss()}
           />
-          {/* Floating Decorative Badges matching exact UI screenshot */}
-          <View style={[styles.floatingBadgeCircle, { top: 12, left: -10, backgroundColor: "#f3e8ff" }]}>
-            <Ionicons name="cut" size={14} color="#7c3aed" />
-          </View>
-          <View style={[styles.floatingBadgeCircle, { top: 44, right: 6, backgroundColor: "#fce8f3" }]}>
-            <Ionicons name="ribbon" size={14} color="#ec4899" />
-          </View>
-          <View style={[styles.floatingBadgeCircle, { bottom: 10, left: 10, backgroundColor: "#f1f5f9" }]}>
-            <Ionicons name="sparkles" size={14} color="#0284c7" />
-          </View>
+          {searchQuery.length > 0 && (
+            <Pressable onPress={() => setSearchQuery("")}>
+              <Ionicons name="close-circle" size={18} color="#94a3b8" style={styles.clearIcon} />
+            </Pressable>
+          )}
         </View>
+        <Pressable style={styles.searchSubmitButton} onPress={() => Keyboard.dismiss()}>
+          <Ionicons name="search" size={20} color="#ffffff" />
+        </Pressable>
       </View>
 
-      {/* Categories Grid (2x2 Cards matching exact UI layout) */}
+      {!isSearching && (
+        <>
+          {/* Promo Banner Card */}
+      <Pressable 
+        style={styles.bannerContainer}
+        onPress={() => navigation.navigate("UserGuide")}
+      >
+        <Image 
+          source={{ uri: BANNER_MODEL_IMAGE }}
+          style={styles.bannerBackgroundImage} 
+        />
+        <LinearGradient
+          colors={["rgba(109, 40, 217, 0.85)", "rgba(15, 23, 42, 0.45)"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={StyleSheet.absoluteFillObject}
+        />
+        
+        <View style={styles.bannerTextSection}>
+          <Text style={styles.bannerTitle}>Look Good. Feel Great.</Text>
+          <Text style={styles.bannerSubtitle}>
+            Book trusted experts near you at the best prices.
+          </Text>
+        </View>
+
+        <View style={styles.exploreBtn}>
+          <Text style={styles.exploreBtnText}>Explore</Text>
+          <Ionicons name="arrow-forward" size={11} color="#7c3aed" style={{ marginLeft: 4 }} />
+        </View>
+      </Pressable>
+
+      {/* Categories Grid (3 columns side by side) */}
       <View style={styles.categoriesGrid}>
         {/* Barber Card */}
         <Pressable 
           style={[styles.categoryCard, styles.barberCard]}
           onPress={() => navigation.navigate("BarberList")}
         >
-          <View style={styles.categoryInfo}>
-            <Text style={styles.categoryTitle}>Barber</Text>
-            <Text style={[styles.categoryDesc, { color: "#475569" }]}>Sharp look,{"\n"}every time</Text>
+          <View style={[styles.categoryIconCircle, { backgroundColor: "#ede9fe" }]}>
+            <Ionicons name="cut" size={18} color="#7c3aed" />
           </View>
-          <View style={[styles.categoryArrowCircle, { backgroundColor: "#818cf8" }]}>
-            <Ionicons name="arrow-forward" size={14} color="#ffffff" />
+          <Text style={styles.categoryTitle}>Barber</Text>
+          <Text style={styles.categoryDesc} numberOfLines={2}>Sharp look, every time</Text>
+          <View style={[styles.categoryArrowCircle, { backgroundColor: "#7c3aed" }]}>
+            <Ionicons name="arrow-forward" size={12} color="#ffffff" />
           </View>
           <Image 
             source={require("../../assets/virat.png")} 
-            style={[styles.categoryImage, { width: 110, height: 130, right: -12, bottom: -5 }]} 
+            style={[styles.categoryImage, { width: 75, height: 85, right: -8, bottom: -6 }]} 
           />
         </Pressable>
 
         {/* Beauty Parlor Card */}
         <Pressable 
           style={[styles.categoryCard, styles.beautyCard]}
-          onPress={() => navigation.navigate("BeautyParlourList")}
+          onPress={() => navigation.navigate("BeautyParlorList")}
         >
-          <View style={styles.categoryInfo}>
-            <Text style={styles.categoryTitle}>Beauty{"\n"}Parlour</Text>
-            <Text style={[styles.categoryDesc, { color: "#475569" }]}>Enhance your{"\n"}natural beauty</Text>
+          <View style={[styles.categoryIconCircle, { backgroundColor: "#fce8f3" }]}>
+            <Ionicons name="woman" size={18} color="#ec4899" />
           </View>
-          <View style={[styles.categoryArrowCircle, { backgroundColor: "#f472b6" }]}>
-            <Ionicons name="arrow-forward" size={14} color="#ffffff" />
+          <Text style={styles.categoryTitle}>Beauty{"\n"}Parlour</Text>
+          <Text style={styles.categoryDesc} numberOfLines={2}>Enhance natural beauty</Text>
+          <View style={[styles.categoryArrowCircle, { backgroundColor: "#ec4899" }]}>
+            <Ionicons name="arrow-forward" size={12} color="#ffffff" />
           </View>
           <Image 
             source={require("../../assets/beauty parlor.png")} 
-            style={[styles.categoryImage, { width: 130, height: 145, right: -15, bottom: -15, resizeMode: "contain" }]} 
+            style={[styles.categoryImage, { width: 85, height: 95, right: -10, bottom: -10, resizeMode: "contain" }]} 
           />
         </Pressable>
 
@@ -404,34 +486,18 @@ export function HomeScreen({ navigation, route }) {
           style={[styles.categoryCard, styles.stitchingCard]}
           onPress={() => navigation.navigate("TailorList")}
         >
-          <View style={styles.categoryInfo}>
-            <Text style={styles.categoryTitle}>Tailor</Text>
-            <Text style={[styles.categoryDesc, { color: "#475569" }]}>Perfect stitching{"\n"}just for you</Text>
+          <View style={[styles.categoryIconCircle, { backgroundColor: "#e6f7f2" }]}>
+            <Ionicons name="shirt" size={18} color="#10b981" />
           </View>
-          <View style={[styles.categoryArrowCircle, { backgroundColor: "#34d399" }]}>
-            <Ionicons name="arrow-forward" size={14} color="#ffffff" />
+          <Text style={styles.categoryTitle}>Tailor</Text>
+          <Text style={styles.categoryDesc} numberOfLines={2}>Perfect stitching for you</Text>
+          <View style={[styles.categoryArrowCircle, { backgroundColor: "#10b981" }]}>
+            <Ionicons name="arrow-forward" size={12} color="#ffffff" />
           </View>
           <Image 
             source={require("../../assets/tailor.png")} 
-            style={[styles.categoryImage, { width: 110, height: 110, right: -8, bottom: -8, resizeMode: "contain" }]} 
+            style={[styles.categoryImage, { width: 80, height: 80, right: -8, bottom: -8, resizeMode: "contain" }]} 
           />
-        </Pressable>
-
-        {/* More Services Card */}
-        <Pressable 
-          style={[styles.categoryCard, styles.moreCard]}
-          onPress={() => navigation.navigate("ComingSoon")}
-        >
-          <View style={styles.categoryInfo}>
-            <Text style={[styles.categoryTitle, { color: "#1e1b4b" }]}>More{"\n"}Services</Text>
-            <Text style={[styles.categoryDesc, { color: "#475569" }]}>Upcoming{"\n"}features</Text>
-          </View>
-          <View style={[styles.categoryArrowCircle, { backgroundColor: "#a78bfa" }]}>
-            <Ionicons name="arrow-forward" size={14} color="#ffffff" />
-          </View>
-          <View style={styles.categoryGridIconContainer}>
-            <Ionicons name="sparkles-outline" size={26} color="#7c3aed" />
-          </View>
         </Pressable>
       </View>
 
@@ -448,75 +514,90 @@ export function HomeScreen({ navigation, route }) {
         showsHorizontalScrollIndicator={false} 
         contentContainerStyle={styles.carouselContainer}
       >
-        {items.slice(0, 5).map((item, idx) => (
-          <Pressable 
-            key={`feat-${item.id}`} 
-            style={styles.carouselCard}
-            onPress={() => navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName })}
-          >
-            <View style={styles.carouselImageWrapper}>
-              <Image 
-                source={{ uri: getShopThumbnail(item, idx) }} 
-                style={styles.carouselImage} 
-              />
-              
-              {/* Discount Tag */}
-              <View style={styles.discountBadge}>
-                <Text style={styles.discountBadgeText}>20% OFF</Text>
-              </View>
+        {items.slice(0, 5).map((item, idx) => {
+          const accentColor = getCardAccentColor(idx);
+          return (
+            <Pressable 
+              key={`feat-${item.id}`} 
+              style={styles.carouselCard}
+              onPress={() => {
+                const cat = (item.businessCategory || "").toLowerCase();
+                if (cat.includes("tailor") || cat.includes("stitching") || cat.includes("center")) {
+                  navigation.navigate("TailorDetail", { tailorId: item.id, shopName: item.shopName });
+                } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour")) {
+                  navigation.navigate("BeautyParlorDetail", { barberId: item.id, shopName: item.shopName });
+                } else {
+                  navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName });
+                }
+              }}
+            >
+              <View style={styles.carouselImageWrapper}>
+                <Image 
+                  source={{ uri: getShopThumbnail(item, idx) }} 
+                  style={styles.carouselImage} 
+                />
+                
+                {/* Rating Badge */}
+                <View style={[styles.ratingBadge, { backgroundColor: accentColor }]}>
+                  <Ionicons name="star" size={10} color="#ffffff" />
+                  <Text style={styles.ratingText}>{item.averageRating && parseFloat(item.averageRating) > 0 ? item.averageRating : "4.8"}</Text>
+                </View>
 
-              {/* Rating Badge */}
-              <View style={styles.ratingBadge}>
-                <Ionicons name="star" size={12} color="#f59e0b" />
-                <Text style={styles.ratingText}>{item.averageRating || "4.8"}</Text>
-              </View>
-            </View>
-
-            <View style={styles.carouselInfo}>
-              <Text style={styles.carouselShopName} numberOfLines={1}>
-                {item.shopName || (idx === 0 ? "The Men's Zone" : idx === 1 ? "Glow Beauty Studio" : "Stitch & Style")}
-              </Text>
-              
-              <Text style={styles.carouselServicesText} numberOfLines={1}>
-                {item.businessCategory === "tailor" ? "Tailoring • Alteration" : item.businessCategory === "beauty" ? "Makeup • Hair • Skin" : "Hair Cut • Beard • Styling"}
-              </Text>
-              
-              <View style={styles.locationRow}>
-                <Ionicons name="location-sharp" size={13} color="#7c3aed" />
-                <Text style={styles.carouselLocText} numberOfLines={1}>
-                  {item.address?.line1 ? `${item.address.line1}, ` : ""}{item.address?.city || (idx === 0 ? "Gomti Nagar, Lucknow" : idx === 1 ? "Hazratganj, Lucknow" : "Aliganj, Lucknow")}
-                </Text>
-              </View>
-
-              <View style={styles.carouselCardFooter}>
+                {/* Heart Button */}
                 <Pressable 
-                  style={styles.bookBtn}
-                  onPress={() => navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName })}
-                >
-                  <Text style={styles.bookBtnText}>Book Now</Text>
-                </Pressable>
-
-                <Pressable 
-                  style={styles.heartBtnCircle}
+                  style={styles.carouselHeartBtn}
                   onPress={(e) => { e.stopPropagation(); toggleFavorite(item.id); }}
                 >
                   <Ionicons 
                     name={favorites.includes(item.id) ? "heart" : "heart-outline"} 
-                    size={18} 
-                    color={favorites.includes(item.id) ? "#ef4444" : "#64748b"} 
+                    size={16} 
+                    color={favorites.includes(item.id) ? "#ef4444" : "#ffffff"} 
                   />
                 </Pressable>
               </View>
-            </View>
-          </Pressable>
-        ))}
+
+              <View style={styles.carouselInfo}>
+                <Text style={styles.carouselShopName} numberOfLines={1}>
+                  {item.shopName || "Premium Salon"}
+                </Text>
+                
+                <Text style={styles.carouselServicesText} numberOfLines={1}>
+                  {item.businessCategory === "tailor" ? "Tailoring & Custom" : item.businessCategory === "beauty" ? "Beauty Parlour" : "Barber Shop"}
+                </Text>
+                
+                <View style={styles.locationRow}>
+                  <Ionicons name="location-sharp" size={11} color={accentColor} />
+                  <Text style={styles.carouselLocText} numberOfLines={1}>
+                    {item.address?.line1 ? `${item.address.line1}, ` : ""}{item.address?.city || "Lucknow"}
+                  </Text>
+                </View>
+
+                <Pressable 
+                  style={[styles.bookBtn, { backgroundColor: accentColor }]}
+                  onPress={() => {
+                    const cat = (item.businessCategory || "").toLowerCase();
+                    if (cat.includes("tailor") || cat.includes("stitching") || cat.includes("center")) {
+                      navigation.navigate("TailorDetail", { tailorId: item.id, shopName: item.shopName });
+                    } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour")) {
+                      navigation.navigate("BeautyParlorDetail", { barberId: item.id, shopName: item.shopName });
+                    } else {
+                      navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName });
+                    }
+                  }}
+                >
+                  <Text style={styles.bookBtnText}>Book Now</Text>
+                </Pressable>
+              </View>
+            </Pressable>
+          );
+        })}
       </ScrollView>
 
       {/* Feature Badges Footer Banner */}
       <View style={styles.featureBanner}>
         <View style={styles.featureItem}>
           <View style={[styles.featureIconBox, { backgroundColor: "#f3e8ff" }]}>
-            <Ionicons name="calendar-outline" size={16} color="#7c3aed" />
+            <Ionicons name="calendar-outline" size={12} color="#7c3aed" />
           </View>
           <View style={styles.featureTexts}>
             <Text style={styles.featureTitle}>Easy Booking</Text>
@@ -526,7 +607,7 @@ export function HomeScreen({ navigation, route }) {
 
         <View style={styles.featureItem}>
           <View style={[styles.featureIconBox, { backgroundColor: "#e0e7ff" }]}>
-            <Ionicons name="shield-checkmark-outline" size={16} color="#4f46e5" />
+            <Ionicons name="shield-checkmark-outline" size={12} color="#4f46e5" />
           </View>
           <View style={styles.featureTexts}>
             <Text style={styles.featureTitle}>Verified Experts</Text>
@@ -536,29 +617,23 @@ export function HomeScreen({ navigation, route }) {
 
         <View style={styles.featureItem}>
           <View style={[styles.featureIconBox, { backgroundColor: "#fce8f3" }]}>
-            <Ionicons name="pricetag-outline" size={16} color="#ec4899" />
+            <Ionicons name="pricetag-outline" size={12} color="#ec4899" />
           </View>
           <View style={styles.featureTexts}>
             <Text style={styles.featureTitle}>Best Prices</Text>
             <Text style={styles.featureSub}>Affordable deals</Text>
           </View>
         </View>
-
-        <View style={styles.featureItem}>
-          <View style={[styles.featureIconBox, { backgroundColor: "#f3e8ff" }]}>
-            <Ionicons name="lock-closed-outline" size={16} color="#7c3aed" />
-          </View>
-          <View style={styles.featureTexts}>
-            <Text style={styles.featureTitle}>Secure Payments</Text>
-            <Text style={styles.featureSub}>Safe & reliable</Text>
-          </View>
-        </View>
       </View>
+      </>
+      )}
 
       {/* All Salons Header */}
       <View style={[styles.sectionHeader, { marginTop: 12, marginBottom: 12 }]}>
         <Text style={styles.sectionTitle}>
-          {selectedFilter === "Popular"
+          {isSearching
+            ? "🔍 Search Results"
+            : selectedFilter === "Popular"
             ? "🔥 Most Popular Shops"
             : selectedFilter === "Offers"
             ? "🏷️ Best Offers & Prices"
@@ -568,23 +643,43 @@ export function HomeScreen({ navigation, route }) {
         </Text>
       </View>
     </View>
-  );
+    );
+  };
 
   return (
     <View style={[styles.container, { paddingTop: Math.max(insets.top, 10) }]}>
       <FlatList
         data={filteredItems}
+        extraData={selectedFilter}
         keyExtractor={(item) => item.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#7c3aed" />}
         ListHeaderComponent={renderHeader()}
+        ListEmptyComponent={
+          isSearching ? (
+            <View style={styles.emptyContainer}>
+              <View style={styles.emptyIconCircle}>
+                <Ionicons name="search-outline" size={40} color="#cbd5e1" />
+              </View>
+              <Text style={styles.emptyTitle}>No salons found</Text>
+              <Text style={styles.emptyText}>We couldn't find any salons matching "{searchQuery}"</Text>
+            </View>
+          ) : null
+        }
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
         renderItem={({ item, index }) => (
           <Pressable
             style={styles.salonRowCard}
-            onPress={() =>
-              navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName })
-            }
+            onPress={() => {
+              const cat = (item.businessCategory || "").toLowerCase();
+              if (cat.includes("tailor") || cat.includes("stitching") || cat.includes("center")) {
+                navigation.navigate("TailorDetail", { tailorId: item.id, shopName: item.shopName });
+              } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour")) {
+                navigation.navigate("BeautyParlorDetail", { barberId: item.id, shopName: item.shopName });
+              } else {
+                navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName });
+              }
+            }}
           >
             <View style={styles.rowMainContent}>
               <Image 
@@ -617,16 +712,39 @@ export function HomeScreen({ navigation, route }) {
                   {item.businessCategory || "Hair & Beauty Services"}
                 </Text>
 
-                  <View style={styles.rowFooter}>
-                    <View style={styles.rowLocationContainer}>
-                      <Ionicons name="location-sharp" size={13} color="#7c3aed" />
-                      <Text style={styles.rowAddress} numberOfLines={1}>
-                        {item.address?.city || "Nearby"}
-                        {item.distance !== undefined && item.distance !== null && item.distance !== Infinity
-                          ? ` • ${item.distance.toFixed(1)} km away`
-                          : ""}
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <Ionicons name="star" size={12} color="#f59e0b" style={{ marginRight: 2 }} />
+                    {item.ratingCount && item.ratingCount > 0 ? (
+                      <>
+                        <Text style={{ fontSize: 11, fontWeight: "700", color: "#334155" }}>
+                          {item.averageRating || (item.ratingSum / item.ratingCount).toFixed(1)}
+                        </Text>
+                        <Text style={{ fontSize: 10, color: "#64748b", marginLeft: 2 }}>
+                          ({item.ratingCount})
+                        </Text>
+                      </>
+                    ) : (
+                      <Text style={{ fontSize: 11, fontWeight: "700", color: "#64748b" }}>
+                        New
                       </Text>
-                    </View>
+                    )}
+                  </View>
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: "#0f172a" }}>
+                    • Starts from ₹{item.minPrice || 120}
+                  </Text>
+                </View>
+
+                <View style={styles.rowFooter}>
+                  <View style={styles.rowLocationContainer}>
+                    <Ionicons name="location-sharp" size={13} color="#7c3aed" />
+                    <Text style={styles.rowAddress} numberOfLines={1}>
+                      {item.address?.city || "Nearby"}
+                      {item.distance !== undefined && item.distance !== null && item.distance !== Infinity
+                        ? ` • ${item.distance.toFixed(1)} km away`
+                        : ""}
+                    </Text>
+                  </View>
                   <View style={styles.rowBookBtn}>
                     <Text style={styles.rowBookText}>Book Now</Text>
                   </View>
@@ -646,27 +764,54 @@ export function HomeScreen({ navigation, route }) {
         }
       />
 
+
+
       {/* Notifications Modal */}
       <Modal visible={notifModalVisible} transparent animationType="slide" onRequestClose={() => setNotifModalVisible(false)}>
         <View style={styles.modalBg}>
           <View style={styles.modalSheet}>
             <View style={styles.modalSheetHeader}>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Ionicons name="notifications" size={22} color="#7c3aed" style={{ marginRight: 8 }} />
-                <Text style={styles.modalSheetTitle}>Notifications 🔔</Text>
-              </View>
-              <Pressable onPress={() => setNotifModalVisible(false)}>
-                <Ionicons name="close-circle" size={26} color="#94a3b8" />
-              </Pressable>
+              {selectionMode ? (
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flex: 1 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <Pressable onPress={() => { setSelectionMode(false); setSelectedNotifIds([]); }} style={{ padding: 4, marginRight: 10 }}>
+                      <Ionicons name="close" size={24} color="#334155" />
+                    </Pressable>
+                    <Text style={[styles.modalSheetTitle, { fontSize: 16 }]}>{selectedNotifIds.length} Selected</Text>
+                  </View>
+                  
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+                    <Pressable onPress={toggleSelectAll} style={{ paddingVertical: 4, paddingHorizontal: 8, backgroundColor: "#f1f5f9", borderRadius: 8 }}>
+                      <Text style={{ fontSize: 11, fontWeight: "800", color: "#475569" }}>
+                        {selectedNotifIds.length === notifications.length ? "Deselect All" : "Select All"}
+                      </Text>
+                    </Pressable>
+
+                    <Pressable onPress={deleteSelectedNotifications} style={{ padding: 4 }}>
+                      <Ionicons name="trash" size={22} color="#ef4444" />
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flex: 1 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <Ionicons name="notifications" size={22} color="#7c3aed" style={{ marginRight: 8 }} />
+                    <Text style={styles.modalSheetTitle}>Notifications 🔔</Text>
+                  </View>
+                  <Pressable onPress={() => setNotifModalVisible(false)}>
+                    <Ionicons name="close-circle" size={26} color="#94a3b8" />
+                  </Pressable>
+                </View>
+              )}
             </View>
 
-            {unreadCount > 0 && (
+            {!selectionMode && unreadCount > 0 && (
               <Pressable style={{ paddingHorizontal: 18, paddingVertical: 8, alignSelf: "flex-end" }} onPress={markAllRead}>
                 <Text style={{ fontSize: 12, fontWeight: "800", color: "#7c3aed" }}>Mark all as read ✓</Text>
               </Pressable>
             )}
 
-            <ScrollView style={{ maxHeight: 400, paddingHorizontal: 18 }} showsVerticalScrollIndicator={false}>
+            <ScrollView style={{ maxHeight: 400, paddingHorizontal: 18, marginTop: selectionMode ? 10 : 0 }} showsVerticalScrollIndicator={false}>
               {loadingNotifs ? (
                 <ActivityIndicator color="#7c3aed" style={{ marginVertical: 30 }} />
               ) : notifications.length === 0 ? (
@@ -676,27 +821,57 @@ export function HomeScreen({ navigation, route }) {
                   <Text style={{ fontSize: 12, color: "#64748b", textAlign: "center", marginTop: 4, lineHeight: 18 }}>You will receive updates here when your bookings or orders progress!</Text>
                 </View>
               ) : (
-                notifications.map((item) => (
-                  <View 
-                    key={item._id} 
-                    style={{ 
-                      backgroundColor: item.isRead ? "#f8fafc" : "#f3e8ff", 
-                      padding: 14, 
-                      borderRadius: 14, 
-                      marginBottom: 10, 
-                      borderWidth: 1, 
-                      borderColor: item.isRead ? "#e2e8f0" : "#d8b4fe" 
-                    }}
-                  >
-                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                      <Text style={{ fontSize: 13, fontWeight: "800", color: "#0f172a", flex: 1 }}>{item.title}</Text>
-                      <Text style={{ fontSize: 10, color: "#94a3b8", fontWeight: "600" }}>
-                        {new Date(item.createdAt).toLocaleDateString([], { month: "short", day: "numeric" })}
-                      </Text>
-                    </View>
-                    <Text style={{ fontSize: 12, color: "#475569", lineHeight: 17 }}>{item.body}</Text>
-                  </View>
-                ))
+                notifications.map((item) => {
+                  const isSelected = selectedNotifIds.includes(item._id);
+                  return (
+                    <Pressable 
+                      key={item._id} 
+                      onPress={() => {
+                        if (selectionMode) {
+                          toggleSelectNotification(item._id);
+                        } else {
+                          confirmDeleteNotification(item._id);
+                        }
+                      }}
+                      onLongPress={() => {
+                        if (!selectionMode) {
+                          startSelectionMode(item._id);
+                        }
+                      }}
+                      style={({ pressed }) => ({ 
+                        backgroundColor: isSelected ? "#e0e7ff" : (item.isRead ? "#f8fafc" : "#f3e8ff"), 
+                        padding: 14, 
+                        borderRadius: 14, 
+                        marginBottom: 10, 
+                        borderWidth: 1, 
+                        borderColor: isSelected ? "#4f46e5" : (item.isRead ? "#e2e8f0" : "#d8b4fe"),
+                        flexDirection: "row",
+                        alignItems: "center",
+                        opacity: pressed ? 0.7 : 1
+                      })}
+                    >
+                      {selectionMode && (
+                        <View style={{ marginRight: 12 }}>
+                          {isSelected ? (
+                            <Ionicons name="checkbox" size={20} color="#7c3aed" />
+                          ) : (
+                            <Ionicons name="square-outline" size={20} color="#94a3b8" />
+                          )}
+                        </View>
+                      )}
+                      
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                          <Text style={{ fontSize: 13, fontWeight: "800", color: "#0f172a", flex: 1 }}>{item.title}</Text>
+                          <Text style={{ fontSize: 10, color: "#94a3b8", fontWeight: "600" }}>
+                            {new Date(item.createdAt).toLocaleDateString([], { month: "short", day: "numeric" })}
+                          </Text>
+                        </View>
+                        <Text style={{ fontSize: 12, color: "#475569", lineHeight: 17 }}>{item.body}</Text>
+                      </View>
+                    </Pressable>
+                  );
+                })
               )}
             </ScrollView>
 
@@ -723,32 +898,43 @@ export function HomeScreen({ navigation, route }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fafafc" },
-  centered: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#fafafc" },
-  listContent: { paddingBottom: 100 },
+  container: { flex: 1, backgroundColor: "#ffffff" },
+  centered: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#ffffff" },
+  listContent: { paddingBottom: 160 },
   headerSection: { paddingTop: 4 },
   
   topBar: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 20,
-    marginBottom: 16,
+    paddingHorizontal: 16,
+    marginBottom: 10,
   },
-  userInfoTop: { flex: 1 },
-  greetSubtitle: { fontSize: 13, color: "#64748b", fontWeight: "500" },
-  greetTitle: { fontSize: 24, fontWeight: "800", color: "#0f172a", marginTop: 2 },
-  topActions: { flexDirection: "row", alignItems: "center", gap: 10 },
+  leftHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flexShrink: 1,
+  },
+  menuBtn: {
+    padding: 4,
+  },
+  userInfoTop: { 
+    justifyContent: "center",
+  },
+  greetSubtitle: { fontSize: 11.5, color: "#64748b", fontWeight: "500" },
+  greetTitle: { fontSize: 19, fontWeight: "900", color: "#0f172a", marginTop: 0 },
+  topActions: { flexDirection: "row", alignItems: "center", gap: 8 },
   
   locationSelector: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f3e8ff",
+    backgroundColor: "#f5f3ff",
     paddingVertical: 7,
-    paddingHorizontal: 12,
+    paddingHorizontal: 8,
     borderRadius: 20,
   },
-  locationText: { fontSize: 12, fontWeight: "700", color: "#1e1b4b", marginHorizontal: 4, maxWidth: 95 },
+  locationText: { fontSize: 12, fontWeight: "700", color: "#1e1b4b", marginHorizontal: 3, maxWidth: 80 },
   chevron: { marginTop: 1 },
   
   iconButton: {
@@ -760,20 +946,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
+    shadowOpacity: 0.05,
     shadowRadius: 6,
     elevation: 3,
     borderWidth: 1,
     borderColor: "#f1f5f9",
+    position: "relative",
   },
   notificationBadge: {
     position: "absolute",
-    top: -2,
-    right: -2,
+    top: 0,
+    right: 0,
     width: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: "#ef4444",
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 2,
@@ -781,144 +967,118 @@ const styles = StyleSheet.create({
   },
   notificationBadgeText: { color: "#ffffff", fontSize: 10, fontWeight: "800" },
 
+  searchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: 20,
+    marginBottom: 12,
+    gap: 12,
+  },
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#ffffff",
     borderRadius: 18,
     paddingHorizontal: 16,
-    marginHorizontal: 20,
-    height: 52,
+    flex: 1,
+    height: 48,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.04,
     shadowRadius: 8,
     elevation: 2,
-    marginBottom: 16,
     borderWidth: 1,
     borderColor: "#e2e8f0",
   },
   searchIcon: { marginRight: 10 },
   searchInput: { flex: 1, height: "100%", fontSize: 14, fontWeight: "500", color: "#0f172a" },
   clearIcon: { padding: 4 },
-  filterIcon: { paddingLeft: 8, borderLeftWidth: 1, borderLeftColor: "#e2e8f0" },
-
-  filterRowContainer: { paddingLeft: 20, paddingRight: 8, paddingBottom: 16, gap: 10 },
-  filterPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#ffffff",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    gap: 6,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  filterPillActive: { borderColor: "#7c3aed", backgroundColor: "#f3e8ff" },
-  filterPillText: { fontSize: 13, fontWeight: "600", color: "#334155" },
-  filterPillTextActive: { color: "#7c3aed", fontWeight: "700" },
-
-  bannerContainer: {
-    flexDirection: "row",
-    backgroundColor: "#f4e8ff",
-    borderRadius: 24,
-    marginHorizontal: 20,
-    marginBottom: 24,
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-    height: 160,
-    overflow: "hidden",
-    alignItems: "center",
-  },
-  bannerTextSection: { flex: 1, zIndex: 2, justifyContent: "center" },
-  bannerTitle: { fontSize: 22, fontWeight: "900", color: "#0f172a", lineHeight: 26 },
-  bannerSubtitle: { fontSize: 11, color: "#475569", marginTop: 6, lineHeight: 15, fontWeight: "500" },
-  bannerHighlight: { color: "#7c3aed", fontWeight: "800" },
-  exploreBtn: {
-    flexDirection: "row",
-    alignItems: "center",
+  searchSubmitButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 18,
     backgroundColor: "#7c3aed",
-    paddingHorizontal: 16,
-    paddingVertical: 9,
-    borderRadius: 20,
-    alignSelf: "flex-start",
-    marginTop: 12,
-  },
-  exploreBtnText: { color: "#ffffff", fontSize: 12, fontWeight: "700" },
-  
-  bannerImageSection: { width: 120, height: 160, justifyContent: "center", alignItems: "center", position: "relative" },
-  bannerModelImage: { width: 110, height: 140, borderRadius: 20, resizeMode: "cover" },
-  floatingBadgeCircle: {
-    position: "absolute",
-    width: 28,
-    height: 28,
-    borderRadius: 14,
     justifyContent: "center",
     alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowColor: "#7c3aed",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
     elevation: 3,
   },
 
+  bannerContainer: {
+    position: "relative",
+    flexDirection: "row",
+    borderRadius: 20,
+    marginHorizontal: 20,
+    marginBottom: 24,
+    paddingHorizontal: 16,
+    height: 105,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  bannerBackgroundImage: {
+    ...StyleSheet.absoluteFillObject,
+    resizeMode: "cover",
+  },
+  bannerTextSection: { flex: 1, marginRight: 16, zIndex: 2, justifyContent: "center" },
+  bannerTitle: { fontSize: 18, fontWeight: "900", color: "#ffffff", lineHeight: 22 },
+  bannerSubtitle: { fontSize: 10.5, color: "rgba(255, 255, 255, 0.9)", marginTop: 4, lineHeight: 14, fontWeight: "600" },
+  exploreBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 18,
+    zIndex: 2,
+  },
+  exploreBtnText: { color: "#7c3aed", fontSize: 11, fontWeight: "800" },
+
   categoriesGrid: {
     flexDirection: "row",
-    flexWrap: "wrap",
     justifyContent: "space-between",
     paddingHorizontal: 20,
     marginBottom: 24,
+    width: "100%",
   },
   categoryCard: {
-    width: "48%",
-    height: 140,
+    width: "31.3%",
+    height: 175,
     borderRadius: 20,
-    padding: 16,
-    marginBottom: 16,
+    paddingHorizontal: 10,
+    paddingTop: 4,
+    paddingBottom: 10,
     position: "relative",
     overflow: "hidden",
   },
-  barberCard: { backgroundColor: "#ebf3fe" },
-  beautyCard: { backgroundColor: "#fce8f3" },
-  stitchingCard: { backgroundColor: "#e6f7f2" },
-  moreCard: { backgroundColor: "#f3e8ff" },
-  categoryInfo: { zIndex: 2, maxWidth: "60%" },
-  categoryTitle: { fontSize: 16, fontWeight: "800", color: "#0f172a", lineHeight: 20 },
-  categoryDesc: { fontSize: 11, fontWeight: "500", lineHeight: 15, marginTop: 4 },
+  barberCard: { backgroundColor: "#f3f0ff" },
+  beautyCard: { backgroundColor: "#fdf2f8" },
+  stitchingCard: { backgroundColor: "#ecfdf5" },
+  categoryIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 0,
+  },
+  categoryTitle: { fontSize: 16, fontWeight: "900", color: "#0f172a", lineHeight: 19 },
+  categoryDesc: { fontSize: 10.5, fontWeight: "500", color: "#64748b", marginTop: 0, lineHeight: 14 },
   categoryArrowCircle: {
     position: "absolute",
-    bottom: 14,
-    left: 14,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    bottom: 12,
+    left: 12,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     justifyContent: "center",
     alignItems: "center",
     zIndex: 3,
   },
   categoryImage: { position: "absolute" },
-  categoryGridIconContainer: {
-    position: "absolute",
-    bottom: 14,
-    right: 14,
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: "#ffffff",
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#7c3aed",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 6,
-    elevation: 2,
-  },
 
   sectionHeader: {
     flexDirection: "row",
@@ -927,15 +1087,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     marginBottom: 16,
   },
-  sectionTitle: { fontSize: 19, fontWeight: "800", color: "#0f172a" },
+  sectionTitle: { fontSize: 19, fontWeight: "900", color: "#0f172a" },
   viewAllText: { fontSize: 13, fontWeight: "700", color: "#7c3aed" },
 
-  carouselContainer: { paddingLeft: 20, paddingRight: 8, paddingBottom: 24 },
+  carouselContainer: { paddingLeft: 20, paddingRight: 20, paddingBottom: 24 },
   carouselCard: {
-    width: 250,
+    width: CAROUSEL_CARD_WIDTH,
     backgroundColor: "#ffffff",
     borderRadius: 20,
-    marginRight: 16,
+    marginRight: 12,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.05,
@@ -944,80 +1104,63 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#f1f5f9",
     overflow: "hidden",
+    paddingBottom: 10,
   },
-  carouselImageWrapper: { width: "100%", height: 140, position: "relative" },
+  carouselImageWrapper: { width: "100%", height: 120, position: "relative" },
   carouselImage: { width: "100%", height: "100%", backgroundColor: "#f1f5f9" },
-  discountBadge: {
+  carouselHeartBtn: {
     position: "absolute",
-    top: 10,
-    left: 10,
-    backgroundColor: "#7c3aed",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  discountBadgeText: { color: "#ffffff", fontSize: 10, fontWeight: "800" },
-  ratingBadge: {
-    position: "absolute",
-    top: 10,
-    right: 10,
-    backgroundColor: "#ffffff",
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  ratingText: { fontSize: 11, fontWeight: "800", color: "#0f172a", marginLeft: 3 },
-  
-  carouselInfo: { padding: 14 },
-  carouselShopName: { fontSize: 16, fontWeight: "800", color: "#0f172a" },
-  carouselServicesText: { fontSize: 12, color: "#64748b", marginTop: 2, fontWeight: "500" },
-  locationRow: { flexDirection: "row", alignItems: "center", marginTop: 6 },
-  carouselLocText: { fontSize: 11, fontWeight: "500", color: "#64748b", marginLeft: 4, flex: 1 },
-  
-  carouselCardFooter: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 12,
-  },
-  bookBtn: {
-    backgroundColor: "#7c3aed",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 14,
-    flex: 1,
-    marginRight: 10,
-    alignItems: "center",
-  },
-  bookBtnText: { color: "#ffffff", fontSize: 12, fontWeight: "700" },
-  heartBtnCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#f8fafc",
+    top: 8,
+    right: 8,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "rgba(15, 23, 42, 0.4)",
     justifyContent: "center",
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
+    zIndex: 2,
   },
+  ratingBadge: {
+    position: "absolute",
+    top: 8,
+    left: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  ratingText: { fontSize: 9, fontWeight: "800", color: "#ffffff", marginLeft: 2 },
+  
+  carouselInfo: { paddingHorizontal: 10, paddingTop: 6 },
+  carouselShopName: { fontSize: 14.5, fontWeight: "800", color: "#0f172a" },
+  carouselServicesText: { fontSize: 11, color: "#64748b", marginTop: 1, fontWeight: "600" },
+  locationRow: { flexDirection: "row", alignItems: "center", marginTop: 6 },
+  carouselLocText: { fontSize: 10, fontWeight: "500", color: "#64748b", marginLeft: 3, flex: 1 },
+  bookBtn: {
+    paddingVertical: 7,
+    borderRadius: 10,
+    alignItems: "center",
+    marginTop: 8,
+    width: "100%",
+  },
+  bookBtnText: { color: "#ffffff", fontSize: 12, fontWeight: "800" },
 
   featureBanner: {
     flexDirection: "row",
-    flexWrap: "wrap",
     backgroundColor: "#ffffff",
-    borderRadius: 16,
+    borderRadius: 12,
     marginHorizontal: 20,
-    marginBottom: 24,
-    paddingVertical: 16,
-    paddingHorizontal: 16,
+    marginBottom: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 6,
     justifyContent: "space-between",
+    alignItems: "center",
     borderWidth: 1,
     borderColor: "#f1f5f9",
     shadowColor: "#000",
@@ -1029,14 +1172,23 @@ const styles = StyleSheet.create({
   featureItem: { 
     flexDirection: "row", 
     alignItems: "center", 
-    gap: 8, 
-    width: "47%", 
-    marginVertical: 6,
+    width: "33.3%",
+    paddingHorizontal: 2,
+    justifyContent: "center",
   },
-  featureIconBox: { width: 28, height: 28, borderRadius: 14, justifyContent: "center", alignItems: "center" },
-  featureTexts: { flex: 1 },
+  featureIconBox: { 
+    width: 24, 
+    height: 24, 
+    borderRadius: 12, 
+    justifyContent: "center", 
+    alignItems: "center",
+  },
+  featureTexts: { 
+    marginLeft: 6,
+    flex: 1,
+  },
   featureTitle: { fontSize: 11, fontWeight: "800", color: "#0f172a" },
-  featureSub: { fontSize: 9, color: "#64748b", fontWeight: "500", marginTop: 1 },
+  featureSub: { fontSize: 8.5, color: "#64748b", fontWeight: "500", marginTop: 2 },
 
   salonRowCard: {
     backgroundColor: "#ffffff",
@@ -1088,6 +1240,70 @@ const styles = StyleSheet.create({
   emptyIconCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: "#f1f5f9", justifyContent: "center", alignItems: "center", marginBottom: 16 },
   emptyTitle: { fontSize: 18, fontWeight: "800", color: "#334155", textAlign: "center" },
   emptyText: { fontSize: 14, color: "#64748b", marginTop: 8, textAlign: "center", lineHeight: 22 },
+
+  offerBanner: {
+    position: "absolute",
+    bottom: 20,
+    left: 20,
+    right: 20,
+    backgroundColor: "#ede9fe",
+    borderRadius: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderWidth: 1.5,
+    borderColor: "#c084fc",
+    borderStyle: "dashed",
+    shadowColor: "#7c3aed",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  offerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    marginRight: 10,
+  },
+  offerIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#ffffff",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  offerTexts: {
+    flex: 1,
+  },
+  offerTitle: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#5b21b6",
+  },
+  offerSubtitle: {
+    fontSize: 9,
+    color: "#6d28d9",
+    fontWeight: "600",
+    marginTop: 1,
+  },
+  claimBtn: {
+    backgroundColor: "#7c3aed",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  claimBtnText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "900",
+  },
 
   modalBg: {
     flex: 1,

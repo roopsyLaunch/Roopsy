@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delete Account - Roopsy</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: rgba(30, 41, 59, 0.7);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --primary: #ef4444;
+            --primary-hover: #f87171;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent-glow: rgba(239, 68, 68, 0.15);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            line-height: 1.6;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(239, 68, 68, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(239, 68, 68, 0.05) 0%, transparent 40%);
+            padding: 2rem 1rem;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 500px;
+            animation: slideUp 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
+            border-radius: 24px;
+            padding: 2.5rem;
+            box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5), 0 0 50px 0 var(--accent-glow);
+            text-align: center;
+        }
+
+        .logo {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.05em;
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            margin-bottom: 2rem;
+        }
+
+        .form-group {
+            text-align: left;
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        input[type="text"],
+        input[type="email"],
+        input[type="tel"],
+        select {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            color: var(--text-main);
+            font-family: inherit;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            text-align: left;
+            margin-bottom: 2rem;
+        }
+
+        .checkbox-group input {
+            margin-top: 0.25rem;
+            accent-color: var(--primary);
+        }
+
+        .checkbox-group label {
+            text-transform: none;
+            font-size: 0.9rem;
+            letter-spacing: normal;
+            cursor: pointer;
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 1rem;
+            background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease, opacity 0.2s ease;
+        }
+
+        .submit-btn:hover {
+            opacity: 0.95;
+        }
+
+        .submit-btn:active {
+            transform: scale(0.98);
+        }
+
+        /* Success Message styling */
+        .success-box {
+            display: none;
+            animation: fadeIn 0.5s ease-out forwards;
+        }
+
+        .success-icon {
+            width: 70px;
+            height: 70px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 2px solid var(--primary);
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0 auto 1.5rem auto;
+            color: var(--primary);
+            font-size: 2rem;
+            font-weight: bold;
+        }
+
+        .success-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-main);
+            margin-bottom: 1rem;
+        }
+
+        .success-text {
+            color: var(--text-muted);
+            font-size: 1rem;
+            line-height: 1.6;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div class="card" id="card-content">
+            <!-- Form Block -->
+            <div id="delete-form-block">
+                <div class="logo">Roopsy</div>
+                <h2>Delete Account Request</h2>
+                <p class="subtitle">Please fill out the form below to request the deletion of your account and associated data.</p>
+                
+                <form id="delete-account-form" onsubmit="handleSubmit(event)">
+                    <div class="form-group">
+                        <label for="name">Full Name</label>
+                        <input type="text" id="name" required placeholder="Enter your full name">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="email">Registered Email Address</label>
+                        <input type="email" id="email" required placeholder="Enter your email address">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="phone">Registered Phone Number</label>
+                        <input type="tel" id="phone" required placeholder="Enter your mobile number">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="reason">Reason for deletion (Optional)</label>
+                        <select id="reason">
+                            <option value="">Select a reason</option>
+                            <option value="not-using">I don't use this app anymore</option>
+                            <option value="privacy">Privacy concerns</option>
+                            <option value="bugs">Too many bugs/errors</option>
+                            <option value="other">Other reason</option>
+                        </select>
+                    </div>
+
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="confirm" required>
+                        <label for="confirm">I confirm that I want to delete my account and erase all my booking history, preferences, and details.</label>
+                    </div>
+
+                    <button type="submit" class="submit-btn">Request Account Deletion</button>
+                </form>
+            </div>
+
+            <!-- Success Block -->
+            <div class="success-box" id="success-block">
+                <div class="success-icon">✓</div>
+                <div class="success-title">Request Submitted</div>
+                <div class="success-text">
+                    Your account deletion request has been submitted successfully. 
+                    <br><strong style="color: #ef4444; display: block; margin-top: 8px;">Your data will be deleted within 72 hours.</strong>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function handleSubmit(event) {
+            event.preventDefault();
+            
+            // Collect form details
+            const name = document.getElementById('name').value;
+            const email = document.getElementById('email').value;
+            const phone = document.getElementById('phone').value;
+            const reason = document.getElementById('reason').value;
+
+            // In a real application, you'd send an API request here:
+            // fetch('/api/auth/delete-request', { method: 'POST', body: JSON.stringify({ name, email, phone, reason }) })
+
+            // Hide the form and show the success message
+            document.getElementById('delete-form-block').style.display = 'none';
+            document.getElementById('success-block').style.display = 'block';
+        }
+    </script>
+</body>
+</html>

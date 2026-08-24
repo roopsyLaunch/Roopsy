@@ -179,7 +179,16 @@ export function ExploreScreen({ navigation, route }) {
           renderItem={({ item, index }) => (
             <Pressable
               style={styles.card}
-              onPress={() => navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName })}
+              onPress={() => {
+                const cat = (item.businessCategory || "").toLowerCase();
+                if (cat.includes("tailor") || cat.includes("stitching") || cat.includes("center")) {
+                  navigation.navigate("TailorDetail", { tailorId: item.id, shopName: item.shopName });
+                } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour")) {
+                  navigation.navigate("BeautyParlorDetail", { barberId: item.id, shopName: item.shopName });
+                } else {
+                  navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName });
+                }
+              }}
             >
               <Image source={{ uri: item.shopPosterUrl || getFallback(index) }} style={styles.cardImage} />
               
@@ -201,7 +210,14 @@ export function ExploreScreen({ navigation, route }) {
                 <View style={styles.ratingRow}>
                   <Ionicons name="star" size={12} color="#f59e0b" />
                   <Text style={styles.ratingText}>
-                    {item.averageRating || "0.0"} <Text style={styles.ratingCount}>({item.ratingCount || 0})</Text>
+                    {item.ratingCount && item.ratingCount > 0 ? (
+                      <>
+                        {item.averageRating || (item.ratingSum / item.ratingCount).toFixed(1)}{" "}
+                        <Text style={styles.ratingCount}>({item.ratingCount})</Text>
+                      </>
+                    ) : (
+                      <Text style={styles.ratingCount}>New</Text>
+                    )}
                   </Text>
                 </View>
 

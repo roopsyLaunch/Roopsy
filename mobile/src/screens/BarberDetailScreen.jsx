@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -79,7 +79,20 @@ export function BarberDetailScreen({ route, navigation }) {
   };
 
   const [zoomModalVisible, setZoomModalVisible] = useState(false);
-  const [zoomImageUrl, setZoomImageUrl] = useState("");
+  const [zoomImagesList, setZoomImagesList] = useState([]);
+  const [zoomImageIndex, setZoomImageIndex] = useState(0);
+  const zoomScrollRef = useRef(null);
+
+  useEffect(() => {
+    if (zoomModalVisible && zoomScrollRef.current) {
+      setTimeout(() => {
+        zoomScrollRef.current?.scrollTo({
+          x: zoomImageIndex * Dimensions.get("window").width,
+          animated: false,
+        });
+      }, 50);
+    }
+  }, [zoomModalVisible, zoomImageIndex]);
 
   // Hide default header for custom full-bleed UI
   useEffect(() => {
@@ -234,7 +247,7 @@ export function BarberDetailScreen({ route, navigation }) {
   async function executeBooking() {
     if (selectedServiceIds.length === 0) return;
     if (!isHomeServiceSelected && liveSeats.length > 0 && selectedChairIndex === null) {
-      Alert.alert("Required", "Please select a chair to book.");
+      Alert.alert("Chair Selection Required", "Please select your preferred styling chair to complete your booking.");
       return;
     }
     setBookingBusy(true);
@@ -247,8 +260,8 @@ export function BarberDetailScreen({ route, navigation }) {
 
     if (isHomeServiceSelected && !homeLocation) {
       Alert.alert(
-        "Location Required",
-        "Please allow location permission and turn on GPS so the barber can navigate to your home service location."
+        "Location Access Required",
+        "Please enable GPS/location permissions so our stylist can navigate to your delivery address."
       );
       setBookingBusy(false);
       return;
@@ -268,7 +281,7 @@ export function BarberDetailScreen({ route, navigation }) {
         seatIndex: !isHomeServiceSelected && selectedChairIndex !== null ? selectedChairIndex : undefined,
       });
       setConfirmModalVisible(false);
-      Alert.alert("Success", "Your appointment is booked successfully!", [
+      Alert.alert("Booking Confirmed 🎉", "Your appointment has been successfully scheduled! You can review details in the bookings panel.", [
         { text: "View Bookings", onPress: () => navigation.getParent()?.navigate("MyBookings") },
       ]);
     } catch (e) {
@@ -276,12 +289,12 @@ export function BarberDetailScreen({ route, navigation }) {
       if (e?.response?.status === 409) {
         setConfirmModalVisible(false);
         Alert.alert(
-          "Slot Unavailable", 
-          (typeof err === "string" ? err : "This slot was just taken.") + "\n\nWe will now find you some alternatives.",
-          [{ text: "Show Alternatives", onPress: () => handleBookedSlotPress(selectedSlot) }]
+          "Time Slot Unavailable", 
+          (typeof err === "string" ? err : "This time slot is no longer available.") + "\n\nLet's check alternative options for you.",
+          [{ text: "View Alternatives", onPress: () => handleBookedSlotPress(selectedSlot) }]
         );
       } else {
-        Alert.alert("Booking failed", typeof err === "string" ? err : JSON.stringify(err || e.message));
+        Alert.alert("Booking Request Failed", typeof err === "string" ? err : "An error occurred while confirming your appointment. Please try again.");
       }
     } finally {
       setBookingBusy(false);
@@ -295,7 +308,7 @@ export function BarberDetailScreen({ route, navigation }) {
     } catch (e) {
       const err = e?.response?.data?.error;
       if (e?.response?.status === 409) {
-        Alert.alert("Slot Unavailable", err || "This slot is currently being held by another customer.");
+        Alert.alert("Time Slot Locked", err || "This time slot is temporarily held by another customer. Please select another slot.");
         setSelectedSlot(null);
       }
     }
@@ -414,7 +427,7 @@ export function BarberDetailScreen({ route, navigation }) {
             scrollEventThrottle={16}
           >
             {heroImages.map((img, i) => (
-              <Pressable key={i} onPress={() => { setZoomImageUrl(img); setZoomModalVisible(true); }}>
+              <Pressable key={i} onPress={() => { setZoomImagesList(heroImages); setZoomImageIndex(i); setZoomModalVisible(true); }}>
                 <Image 
                   source={{ uri: img }} 
                   style={[styles.heroImage, { width: screenWidth }]} 
@@ -433,6 +446,12 @@ export function BarberDetailScreen({ route, navigation }) {
               ))}
             </View>
           )}
+          
+          {/* Hero Image Watermarks */}
+          <View style={styles.heroWatermarkContainer} pointerEvents="none">
+            <Text style={styles.heroWatermarkLeft}>Tap to zoom</Text>
+            <Text style={styles.heroWatermarkRight}>Roopsy</Text>
+          </View>
           
           {/* Custom Nav Bar */}
           <View style={[styles.navBar, { top: Math.max(insets.top, 20) }]}>
@@ -461,7 +480,11 @@ export function BarberDetailScreen({ route, navigation }) {
             <View style={styles.ratingBadge}>
               <Ionicons name="star" size={14} color="#fbbf24" />
               <Text style={styles.ratingText}>
-                {b.averageRating || "0.0"} ({b.ratingCount || 0})
+                {b.ratingCount && b.ratingCount > 0 ? (
+                  `${b.averageRating || (b.ratingSum / b.ratingCount).toFixed(1)} (${b.ratingCount})`
+                ) : (
+                  "New"
+                )}
               </Text>
             </View>
           </View>
@@ -618,7 +641,7 @@ export function BarberDetailScreen({ route, navigation }) {
                             {s.images && s.images.length > 0 && (
                               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.svcImagesScroll}>
                                 {s.images.map((imgUrl, i) => (
-                                  <Pressable key={i} onPress={() => { setZoomImageUrl(imgUrl); setZoomModalVisible(true); }}>
+                                  <Pressable key={i} onPress={() => { setZoomImagesList(s.images); setZoomImageIndex(i); setZoomModalVisible(true); }}>
                                     <Image source={{ uri: imgUrl }} style={styles.svcImageThumb} resizeMode="cover" />
                                   </Pressable>
                                 ))}
@@ -824,7 +847,17 @@ export function BarberDetailScreen({ route, navigation }) {
                       if (rec.isSameShop) {
                         setDateStr(rec.time.split('T')[0]);
                       } else {
-                        navigation.push("BarberDetail", { barberId: rec.barber.id, shopName: rec.barber.shopName });
+                        const bObj = rec.barber || {};
+                        const cat = (bObj.businessCategory || "").toLowerCase();
+                        const bId = bObj.id || bObj._id;
+                        const sName = bObj.shopName || "";
+                        if (cat.includes("tailor") || cat.includes("stitching") || cat.includes("center")) {
+                          navigation.push("TailorDetail", { tailorId: bId, shopName: sName });
+                        } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour")) {
+                          navigation.push("BeautyParlorDetail", { barberId: bId, shopName: sName });
+                        } else {
+                          navigation.push("BarberDetail", { barberId: bId, shopName: sName });
+                        }
                       }
                     }}
                   >
@@ -1058,13 +1091,33 @@ export function BarberDetailScreen({ route, navigation }) {
             <Ionicons name="close" size={28} color="#ffffff" />
           </Pressable>
           <ScrollView
-            minimumZoomScale={1}
-            maximumZoomScale={5}
+            ref={zoomScrollRef}
+            horizontal
+            pagingEnabled
             showsHorizontalScrollIndicator={false}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.zoomScrollContent}
+            style={{ width: "100%", height: "100%" }}
           >
-            <Image source={{ uri: zoomImageUrl }} style={styles.zoomImage} resizeMode="contain" />
+            {zoomImagesList.map((imgUrl, idx) => (
+              <View key={idx} style={{ width: Dimensions.get("window").width, height: "100%", justifyContent: "center", alignItems: "center" }}>
+                <View style={styles.zoomImageWrapper}>
+                  <ScrollView
+                    minimumZoomScale={1}
+                    maximumZoomScale={5}
+                    showsHorizontalScrollIndicator={false}
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={styles.zoomScrollContent}
+                  >
+                    <Image source={{ uri: imgUrl }} style={styles.zoomImage} resizeMode="contain" />
+                  </ScrollView>
+                  
+                  {/* Watermarks Container directly on the image box */}
+                  <View style={styles.watermarkContainer}>
+                    <Text style={styles.watermarkLeft}>Tap to zoom</Text>
+                    <Text style={styles.watermarkRight}>Roopsy</Text>
+                  </View>
+                </View>
+              </View>
+            ))}
           </ScrollView>
         </View>
       </Modal>
@@ -1083,7 +1136,7 @@ const styles = StyleSheet.create({
   heroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.15)" },
   zoomModalBg: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.95)",
+    backgroundColor: "rgba(0, 0, 0, 0.95)",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -1105,6 +1158,41 @@ const styles = StyleSheet.create({
     width: Dimensions.get("window").width,
     height: Dimensions.get("window").height * 0.75,
   },
+  zoomImageWrapper: {
+    width: Dimensions.get("window").width,
+    height: Dimensions.get("window").height * 0.75,
+    position: "relative",
+    justifyContent: "center",
+  },
+  watermarkContainer: {
+    position: "absolute",
+    bottom: 12,
+    left: 16,
+    right: 16,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    zIndex: 999,
+  },
+  watermarkLeft: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "rgba(255, 255, 255, 0.45)",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    textShadowColor: "rgba(0, 0, 0, 0.5)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  watermarkRight: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "rgba(255, 255, 255, 0.6)",
+    letterSpacing: 1,
+    textShadowColor: "rgba(0, 0, 0, 0.5)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
   paginationContainer: {
     position: "absolute",
     bottom: 40,
@@ -1123,6 +1211,35 @@ const styles = StyleSheet.create({
   activeDot: {
     width: 20,
     backgroundColor: "#ffffff",
+  },
+  heroWatermarkContainer: {
+    position: "absolute",
+    bottom: 54,
+    left: 20,
+    right: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    zIndex: 10,
+  },
+  heroWatermarkLeft: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "rgba(255, 255, 255, 0.7)",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    textShadowColor: "rgba(0, 0, 0, 0.6)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  heroWatermarkRight: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(255, 255, 255, 0.8)",
+    letterSpacing: 1.5,
+    textShadowColor: "rgba(0, 0, 0, 0.6)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   
   navBar: {

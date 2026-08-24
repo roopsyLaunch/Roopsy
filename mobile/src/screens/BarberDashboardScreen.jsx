@@ -24,6 +24,7 @@ import { uploadImageAsync } from "../api/upload";
 import * as ImagePicker from "expo-image-picker";
 import { useAuth } from "../context/AuthContext";
 import { TailorServicesScreen } from "./tailor/TailorServicesScreen";
+import { getSocket } from "../api/socket";
 
 const BACKEND_CATEGORIES = ["haircut", "beard", "massage", "facial", "makeup", "waxing", "manicure", "pedicure", "threading", "suit_stitching", "blouse_stitching", "kurta_stitching", "alteration", "combo", "other"];
 
@@ -112,7 +113,7 @@ export function BarberDashboardScreen() {
       const rangeParam = rangeVal.toLowerCase();
       const statsRes = await api.get(`/barbers/analytics?range=${rangeParam}&t=${Date.now()}`);
       setAnalyticsData(statsRes.data);
-      
+
       const profileRes = await api.get(`/barbers/me?t=${Date.now()}`);
       if (profileRes.data?.barber?.id) {
         const revRes = await api.get(`/reviews/barber/${profileRes.data.barber.id}`);
@@ -127,7 +128,7 @@ export function BarberDashboardScreen() {
     setSelectedRange(range);
     await loadAnalytics(range);
   };
-  
+
   // Shop Setup Form State
   const [form, setForm] = useState({
     shopName: "",
@@ -154,7 +155,7 @@ export function BarberDashboardScreen() {
 
   const [serviceFilter, setServiceFilter] = useState("All");
   const [activeToggleStates, setActiveToggleStates] = useState({});
-  
+
   // Modals
   const [serviceModalVisible, setServiceModalVisible] = useState(false);
   const [editingServiceId, setEditingServiceId] = useState(null);
@@ -182,7 +183,7 @@ export function BarberDashboardScreen() {
     try {
       const res = await api.get(`/barbers/me?t=${Date.now()}`);
       const bId = String(res.data.barber.id);
-      
+
       await api.post("/services", {
         barberId: bId,
         name: customServiceName.trim(),
@@ -197,8 +198,8 @@ export function BarberDashboardScreen() {
       setCustomServicePrice("");
       setCustomServiceDuration("");
       fetchData(); // refresh the main dashboard list
-    } catch(e) {
-       Alert.alert("Error", "Failed to add custom service");
+    } catch (e) {
+      Alert.alert("Error", "Failed to add custom service");
     }
   };
 
@@ -235,7 +236,7 @@ export function BarberDashboardScreen() {
       } else {
         const res = await api.get(`/barbers/me?t=${Date.now()}`);
         const barberId = String(res.data.barber.id);
-        
+
         for (const svc of selectedParlorServices) {
           await api.post("/services", {
             barberId,
@@ -248,7 +249,7 @@ export function BarberDashboardScreen() {
           });
         }
       }
-      
+
       setBeautyParlorModalVisible(false);
       setSelectedParlorServices([]);
       await load();
@@ -287,8 +288,8 @@ export function BarberDashboardScreen() {
       }
 
       navigation.setOptions({
-        title: detectedCategory === "Beauty Parlor" ? "Beauty Parlor Dashboard" : 
-               detectedCategory === "Tailor" ? "Tailor Dashboard" : "Shop Dashboard"
+        title: detectedCategory === "Beauty Parlor" ? "Beauty Parlor Dashboard" :
+          detectedCategory === "Tailor" ? "Tailor Dashboard" : "Shop Dashboard"
       });
 
       setForm({
@@ -315,8 +316,8 @@ export function BarberDashboardScreen() {
         else if (s.category === "beard") mappedCat = "🧔 Beard";
         else if (s.category === "facial") mappedCat = "💆 Face";
         else if (s.category === "massage") mappedCat = "💆 Massage";
-        return { 
-          ...s, 
+        return {
+          ...s,
           category: mappedCat,
           originalPrice: s.originalPrice || s.price || 0,
           discountAmount: s.discountAmount || 0
@@ -351,6 +352,25 @@ export function BarberDashboardScreen() {
     })();
   }, [load]);
 
+  useEffect(() => {
+    const barberId = barber?.id || barber?._id;
+    if (!barberId) return;
+    const socket = getSocket();
+    if (socket) {
+      socket.emit("joinBarberRoom", barberId);
+      socket.on("slotsUpdated", load);
+      socket.on("queueUpdated", load);
+      socket.on("bookingUpdated", load);
+
+      return () => {
+        socket.emit("leaveBarberRoom", barberId);
+        socket.off("slotsUpdated", load);
+        socket.off("queueUpdated", load);
+        socket.off("bookingUpdated", load);
+      };
+    }
+  }, [barber, load]);
+
   async function onRefresh() {
     setRefreshing(true);
     try {
@@ -384,7 +404,7 @@ export function BarberDashboardScreen() {
         offersHomeService: form.offersHomeService,
         workingHours: form.workingHours,
       });
-      
+
       await refreshMe();
       Alert.alert("Success", "Your profile has been updated!");
     } catch (e) {
@@ -531,9 +551,9 @@ export function BarberDashboardScreen() {
             { type: "Tailor", icon: "shirt-outline", color: "#0ea5e9", bg: "#e0f2fe", desc: "Tailoring & Design" },
             { type: "Other Services", icon: "apps-outline", color: "#10b981", bg: "#d1fae5", desc: "Spa, Massage, etc." },
           ].map((item) => (
-            <Pressable 
+            <Pressable
               key={item.type}
-              style={[styles.onboardCard, form.categoryType === item.type && styles.onboardCardSelected]} 
+              style={[styles.onboardCard, form.categoryType === item.type && styles.onboardCardSelected]}
               onPress={() => handleChooseBusinessType(item.type)}
             >
               <View style={[styles.onboardIconBg, { backgroundColor: item.bg }]}>
@@ -552,8 +572,8 @@ export function BarberDashboardScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.mainContainer}>
-      
+    <View style={styles.mainContainer}>
+
       {/* Top Header */}
       <View style={styles.headerTitleContainer}>
         <Text style={styles.headerTitleText}>Manage Shop</Text>
@@ -562,16 +582,16 @@ export function BarberDashboardScreen() {
       {barber?.approvalStatus === "pending" && (
         <View style={{ backgroundColor: "#fef3c7", padding: 12, marginHorizontal: 20, marginBottom: 16, borderRadius: 12, borderWidth: 1, borderColor: "#fde68a" }}>
           <Text style={{ color: "#92400e", fontWeight: "700", fontSize: 14, marginBottom: 4 }}>
-             Verification Pending
+            Verification Pending
           </Text>
           <Text style={{ color: "#b45309", fontSize: 12 }}>
-             You can configure your shop here, but it will not appear to customers until an admin verifies your details.
+            You can configure your shop here, but it will not appear to customers until an admin verifies your details.
           </Text>
         </View>
       )}
 
       {/* Segmented Control */}
-      <View style={{ marginBottom: 20 }}>
+      <View style={{ marginBottom: 10 }}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }}>
           <View style={[styles.segmentedControl, { marginHorizontal: 0 }]}>
             {["Overview", "Shop Services", "Home Services", "Shop Setup"].map((tab) => {
@@ -675,22 +695,22 @@ export function BarberDashboardScreen() {
           {/* Export Report */}
           {form.categoryType !== "Barber / Salon" && (
             <Pressable style={styles.exportBtn} onPress={async () => {
-               try {
-                 const res = await api.get("/barbers/export?format=csv", { responseType: 'text' });
-                 const csvData = res.data;
-                 
-                 const fileUri = FileSystem.documentDirectory + "report.csv";
-                 await FileSystem.writeAsStringAsync(fileUri, csvData, { encoding: FileSystem.EncodingType.UTF8 });
-                 
-                 if (await Sharing.isAvailableAsync()) {
-                   await Sharing.shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: 'Share Bookings Report' });
-                 } else {
-                   Alert.alert("Success", "Report downloaded, but sharing is not available on this device.");
-                 }
-               } catch (e) {
-                 console.error(e);
-                 Alert.alert("Error", "Failed to export report");
-               }
+              try {
+                const res = await api.get("/barbers/export?format=csv", { responseType: 'text' });
+                const csvData = res.data;
+
+                const fileUri = FileSystem.documentDirectory + "report.csv";
+                await FileSystem.writeAsStringAsync(fileUri, csvData, { encoding: FileSystem.EncodingType.UTF8 });
+
+                if (await Sharing.isAvailableAsync()) {
+                  await Sharing.shareAsync(fileUri, { mimeType: 'text/csv', dialogTitle: 'Share Bookings Report' });
+                } else {
+                  Alert.alert("Success", "Report downloaded, but sharing is not available on this device.");
+                }
+              } catch (e) {
+                console.error(e);
+                Alert.alert("Error", "Failed to export report");
+              }
             }}>
               <Ionicons name="download" size={18} color="#ffffff" />
               <Text style={styles.exportBtnText}>Export Report (CSV)</Text>
@@ -704,8 +724,8 @@ export function BarberDashboardScreen() {
               <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                 <Ionicons name="star" size={16} color="#fbbf24" />
                 <Text style={{ fontSize: 14, fontWeight: "700", color: "#475569" }}>
-                  {reviews.length > 0 
-                    ? (reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length).toFixed(1) 
+                  {reviews.length > 0
+                    ? (reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length).toFixed(1)
                     : "0.0"} ({reviews.length})
                 </Text>
               </View>
@@ -726,11 +746,11 @@ export function BarberDashboardScreen() {
                       </Text>
                       <View style={{ flexDirection: "row", gap: 2 }}>
                         {[1, 2, 3, 4, 5].map((star) => (
-                          <Ionicons 
-                            key={star} 
-                            name={rev.rating >= star ? "star" : "star-outline"} 
-                            size={12} 
-                            color="#fbbf24" 
+                          <Ionicons
+                            key={star}
+                            name={rev.rating >= star ? "star" : "star-outline"}
+                            size={12}
+                            color="#fbbf24"
                           />
                         ))}
                       </View>
@@ -757,26 +777,26 @@ export function BarberDashboardScreen() {
         // SERVICES TAB
         <View style={{ flex: 1 }}>
           {activeTab === "Home Services" && (
-             <View style={[styles.switchRow, { backgroundColor: "#fff", marginHorizontal: 20, marginTop: 10, borderRadius: 12, padding: 12 }]}>
-               <View style={{ flex: 1 }}>
-                 <Text style={styles.switchTitle}>{form.categoryType === "Tailor" || user?.role === "tailor" ? "Accepting Premium Bookings" : "Accepting Home Bookings"}</Text>
-                 <Text style={[styles.switchSub, { fontSize: 11 }]}>{form.offersHomeService ? "ON - Customers can book" : `OFF - ${form.categoryType === "Tailor" || user?.role === "tailor" ? "Premium" : "Home"} services disabled`}</Text>
-               </View>
-               <Switch
-                 value={form.offersHomeService}
-                 onValueChange={async (val) => {
-                   setForm((prev) => ({ ...prev, offersHomeService: val }));
-                   try {
-                     await api.patch("/barbers/me", { offersHomeService: val });
-                   } catch (e) {
-                     Alert.alert("Error", "Could not update status.");
-                     setForm((prev) => ({ ...prev, offersHomeService: !val }));
-                   }
-                 }}
-                 thumbColor="#ffffff"
-                 trackColor={{ false: "#e2e8f0", true: "#6d28d9" }}
-               />
-             </View>
+            <View style={[styles.switchRow, { backgroundColor: "#fff", marginHorizontal: 20, marginTop: 10, borderRadius: 12, padding: 12 }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.switchTitle}>{form.categoryType === "Tailor" || user?.role === "tailor" ? "Accepting Premium Bookings" : "Accepting Home Bookings"}</Text>
+                <Text style={[styles.switchSub, { fontSize: 11 }]}>{form.offersHomeService ? "ON - Customers can book" : `OFF - ${form.categoryType === "Tailor" || user?.role === "tailor" ? "Premium" : "Home"} services disabled`}</Text>
+              </View>
+              <Switch
+                value={form.offersHomeService}
+                onValueChange={async (val) => {
+                  setForm((prev) => ({ ...prev, offersHomeService: val }));
+                  try {
+                    await api.patch("/barbers/me", { offersHomeService: val });
+                  } catch (e) {
+                    Alert.alert("Error", "Could not update status.");
+                    setForm((prev) => ({ ...prev, offersHomeService: !val }));
+                  }
+                }}
+                thumbColor="#ffffff"
+                trackColor={{ false: "#e2e8f0", true: "#6d28d9" }}
+              />
+            </View>
           )}
           <View style={styles.servicesToolbar}>
             <View style={styles.subFilters}>
@@ -792,7 +812,7 @@ export function BarberDashboardScreen() {
             </View>
             <Pressable style={styles.addServiceBtn} onPress={handleOpenAddService}>
               <Ionicons name="add" size={18} color="#ffffff" />
-              <Text style={styles.addServiceBtnText}>New</Text>
+              <Text style={styles.addServiceBtnText}>Add Service</Text>
             </Pressable>
           </View>
 
@@ -808,9 +828,9 @@ export function BarberDashboardScreen() {
                     {item.category?.includes("💇") || item.category?.includes("🧔") || item.category?.includes("💆") ? (
                       <Text style={{ fontSize: 20 }}>{item.category.split(" ")[0]}</Text>
                     ) : (
-                      <Ionicons 
-                        name={item.category === "haircut" ? "cut" : item.category === "beard" ? "sparkles" : "grid"} 
-                        size={20} color="#6d28d9" 
+                      <Ionicons
+                        name={item.category === "haircut" ? "cut" : item.category === "beard" ? "sparkles" : "grid"}
+                        size={20} color="#6d28d9"
                       />
                     )}
                   </View>
@@ -837,7 +857,7 @@ export function BarberDashboardScreen() {
                     style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
                   />
                 </View>
-                
+
                 <View style={styles.svcFooter}>
                   <Pressable style={styles.svcFtBtn} onPress={() => handleOpenEditService(item)}>
                     <Ionicons name="pencil" size={14} color="#64748b" />
@@ -898,7 +918,7 @@ export function BarberDashboardScreen() {
             </Text>
 
             <View style={styles.sectionDivider} />
-            
+
             <View style={styles.switchRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.switchTitle}>Shop Status</Text>
@@ -949,14 +969,14 @@ export function BarberDashboardScreen() {
             </View>
 
             <View style={styles.sectionDivider} />
-            
+
             <View style={styles.whHeaderRow}>
               <Text style={styles.sectionHeaderTxt}>Working Hours</Text>
               <Pressable onPress={() => navigation.navigate("BarberProfileEdit")}>
                 <Text style={styles.whEditText}>Edit</Text>
               </Pressable>
             </View>
-            
+
             <View style={styles.workingHoursContainer}>
               {DAYS.map((day) => {
                 const d = form.workingHours[day.key];
@@ -1028,8 +1048,8 @@ export function BarberDashboardScreen() {
                   {serviceForm.images.map((uri, index) => (
                     <View key={index} style={styles.galleryItemBox}>
                       <Image source={{ uri }} style={styles.galleryImage} />
-                      <Pressable 
-                        style={styles.removeBtn} 
+                      <Pressable
+                        style={styles.removeBtn}
                         onPress={() => {
                           const newImages = [...serviceForm.images];
                           newImages.splice(index, 1);
@@ -1041,8 +1061,8 @@ export function BarberDashboardScreen() {
                     </View>
                   ))}
                   {serviceForm.images.length < 5 && (
-                    <Pressable 
-                      style={styles.addGalleryBtn} 
+                    <Pressable
+                      style={styles.addGalleryBtn}
                       onPress={async () => {
                         const result = await ImagePicker.launchImageLibraryAsync({
                           mediaTypes: ['images'],
@@ -1187,14 +1207,14 @@ export function BarberDashboardScreen() {
 
             <ScrollView contentContainerStyle={styles.sheetContent}>
               <Text style={{ fontSize: 14, color: "#64748b", marginBottom: 20 }}>Select services from categories below to add them to your profile.</Text>
-              
+
               {(form.categoryType === "Tailor" || user?.role === "tailor" ? TAILOR_CATEGORIES : BEAUTY_PARLOR_CATEGORIES).map((cat) => (
                 <View key={cat.name} style={styles.accordionContainer}>
                   <Pressable style={styles.accordionHeader} onPress={() => toggleCategory(cat.name)}>
                     <Text style={styles.accordionTitle}>{cat.name}</Text>
                     <Ionicons name={expandedCategory === cat.name ? "chevron-up" : "chevron-down"} size={20} color="#6d28d9" />
                   </Pressable>
-                  
+
                   {expandedCategory === cat.name && (
                     <View style={styles.accordionContent}>
                       {cat.services.map(svcName => {
@@ -1202,10 +1222,10 @@ export function BarberDashboardScreen() {
                         return (
                           <View key={svcName} style={styles.parlorServiceItem}>
                             <Pressable style={styles.checkboxContainer} onPress={() => handleToggleParlorService(svcName, cat.name)}>
-                              <Ionicons 
-                                name={isSelected ? "checkbox" : "square-outline"} 
-                                size={24} 
-                                color={isSelected ? "#6d28d9" : "#cbd5e1"} 
+                              <Ionicons
+                                name={isSelected ? "checkbox" : "square-outline"}
+                                size={24}
+                                color={isSelected ? "#6d28d9" : "#cbd5e1"}
                               />
                               <Text style={styles.parlorServiceName}>{svcName}</Text>
                             </Pressable>
@@ -1214,8 +1234,8 @@ export function BarberDashboardScreen() {
                               <View style={styles.parlorServiceInputs}>
                                 <View style={styles.inputGroup}>
                                   <Text style={styles.inputLabel}>Price (₹)</Text>
-                                  <TextInput 
-                                    style={styles.smallInput} 
+                                  <TextInput
+                                    style={styles.smallInput}
                                     value={isSelected.price}
                                     keyboardType="number-pad"
                                     onChangeText={(val) => updateParlorService(svcName, 'price', val)}
@@ -1224,8 +1244,8 @@ export function BarberDashboardScreen() {
                                 {!(form.categoryType === "Tailor" || user?.role === "tailor") && (
                                   <View style={styles.inputGroup}>
                                     <Text style={styles.inputLabel}>Time (Mins)</Text>
-                                    <TextInput 
-                                      style={styles.smallInput} 
+                                    <TextInput
+                                      style={styles.smallInput}
                                       value={isSelected.durationMinutes}
                                       keyboardType="number-pad"
                                       onChangeText={(val) => updateParlorService(svcName, 'durationMinutes', val)}
@@ -1246,18 +1266,18 @@ export function BarberDashboardScreen() {
                 <Text style={{ fontSize: 16, fontWeight: "700", color: "#334155", marginBottom: 12 }}>Add Custom Service</Text>
                 <View style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>Service Name (e.g., Full Makeup)</Text>
-                  <TextInput 
-                    style={styles.smallInput} 
+                  <TextInput
+                    style={styles.smallInput}
                     placeholder="Enter service name"
                     value={customServiceName}
                     onChangeText={setCustomServiceName}
                   />
                 </View>
-                <View style={{flexDirection: "row", gap: 12}}>
-                  <View style={[styles.inputGroup, {flex:1}]}>
+                <View style={{ flexDirection: "row", gap: 12 }}>
+                  <View style={[styles.inputGroup, { flex: 1 }]}>
                     <Text style={styles.inputLabel}>Price (₹)</Text>
-                    <TextInput 
-                      style={styles.smallInput} 
+                    <TextInput
+                      style={styles.smallInput}
                       value={customServicePrice}
                       keyboardType="number-pad"
                       onChangeText={setCustomServicePrice}
@@ -1265,10 +1285,10 @@ export function BarberDashboardScreen() {
                     />
                   </View>
                   {!(form.categoryType === "Tailor" || user?.role === "tailor") && (
-                    <View style={[styles.inputGroup, {flex:1}]}>
+                    <View style={[styles.inputGroup, { flex: 1 }]}>
                       <Text style={styles.inputLabel}>Time (Mins)</Text>
-                      <TextInput 
-                        style={styles.smallInput} 
+                      <TextInput
+                        style={styles.smallInput}
                         value={customServiceDuration}
                         keyboardType="number-pad"
                         onChangeText={setCustomServiceDuration}
@@ -1290,24 +1310,24 @@ export function BarberDashboardScreen() {
         </View>
       </Modal>
 
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   mainContainer: { flex: 1, backgroundColor: "#f8fafc" },
   centered: { flex: 1, justifyContent: "center", alignItems: "center" },
-  
-  headerTitleContainer: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 16 },
+
+  headerTitleContainer: { paddingHorizontal: 20, paddingTop: 0, paddingBottom: 4 },
   headerTitleText: { fontSize: 28, fontWeight: "900", color: "#0f172a" },
-  
+
   segmentedControl: {
     flexDirection: "row",
     backgroundColor: "#e2e8f0",
     borderRadius: 12,
     marginHorizontal: 20,
     padding: 4,
-    marginBottom: 20,
+    marginBottom: 0,
   },
   segmentBtn: { flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: "center" },
   segmentBtnActive: { backgroundColor: "#ffffff", shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 2 },
@@ -1321,7 +1341,7 @@ const styles = StyleSheet.create({
   subFilterBtnActive: { backgroundColor: "#0f172a", borderColor: "#0f172a" },
   subFilterText: { fontSize: 12, fontWeight: "600", color: "#64748b" },
   subFilterTextActive: { color: "#ffffff" },
-  
+
   addServiceBtn: { flexDirection: "row", alignItems: "center", backgroundColor: "#6d28d9", paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20 },
   addServiceBtnText: { fontSize: 13, fontWeight: "700", color: "#ffffff", marginLeft: 4 },
 
@@ -1344,7 +1364,7 @@ const styles = StyleSheet.create({
   svcInfo: { flex: 1, marginLeft: 14 },
   svcNameText: { fontSize: 16, fontWeight: "800", color: "#0f172a" },
   svcMetaText: { fontSize: 13, color: "#64748b", fontWeight: "600", marginTop: 4 },
-  
+
   svcFooter: { flexDirection: "row", borderTopWidth: 1, borderTopColor: "#f1f5f9", backgroundColor: "#fafafa" },
   svcFtBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 12 },
   svcFtDivider: { width: 1, backgroundColor: "#f1f5f9" },
@@ -1361,7 +1381,7 @@ const styles = StyleSheet.create({
   coverOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.3)" },
   changeCoverBadge: { position: "absolute", top: 16, right: 16, backgroundColor: "#ffffff", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, flexDirection: "row", alignItems: "center", shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4, elevation: 4 },
   changeCoverText: { fontSize: 13, fontWeight: "700", color: "#0f172a", marginLeft: 6 },
-  
+
   formCard: {
     backgroundColor: "#ffffff",
     borderTopLeftRadius: 30,
@@ -1376,7 +1396,7 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 4,
   },
-  
+
   profileHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 },
   profileShopName: { fontSize: 24, fontWeight: "900", color: "#0f172a" },
   profileCategoryText: { fontSize: 14, color: "#6d28d9", fontWeight: "700", marginTop: 4 },
@@ -1406,20 +1426,20 @@ const styles = StyleSheet.create({
   statLabel: { fontSize: 12, fontWeight: "600", color: "#64748b", textAlign: "center" },
   exportBtn: { flexDirection: "row", backgroundColor: "#0f172a", paddingVertical: 14, borderRadius: 12, alignItems: "center", justifyContent: "center", marginTop: 12 },
   exportBtnText: { color: "#ffffff", fontSize: 15, fontWeight: "700", marginLeft: 8 },
-  
+
   sectionDivider: { height: 1, backgroundColor: "#e2e8f0", marginVertical: 20 },
-  
+
   whHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
   sectionHeaderTxt: { fontSize: 18, fontWeight: "800", color: "#0f172a" },
   whEditText: { fontSize: 14, fontWeight: "700", color: "#6d28d9" },
-  
+
   workingHoursContainer: { backgroundColor: "#f8fafc", borderRadius: 16, padding: 16, borderWidth: 1, borderColor: "#f1f5f9" },
   whDisplayRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "#f1f5f9" },
   whDisplayDay: { fontSize: 14, fontWeight: "600", color: "#475569", width: 50 },
   whTimeText: { fontSize: 14, color: "#0f172a", fontWeight: "700" },
   whClosedDisplay: { fontSize: 14, color: "#ef4444", fontWeight: "700" },
 
-  primarySolidBtn: { backgroundColor: "#6d28d9", borderRadius: 16, height: 56, alignItems: "center", justifyContent: "center", marginTop: 10 },
+  primarySolidBtn: { backgroundColor: "#6d28d9", borderRadius: 16, height: 56, paddingHorizontal: 24, alignItems: "center", justifyContent: "center", marginTop: 10 },
   primarySolidBtnText: { color: "#ffffff", fontSize: 16, fontWeight: "700" },
 
   // ONBOARDING
@@ -1447,13 +1467,13 @@ const styles = StyleSheet.create({
   sheetHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 24, borderBottomWidth: 1, borderBottomColor: "#f1f5f9" },
   sheetTitle: { fontSize: 20, fontWeight: "800", color: "#0f172a" },
   sheetContent: { padding: 24 },
-  
+
   tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   tagBtn: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12, backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#e2e8f0" },
   tagBtnActive: { backgroundColor: "#f3e8ff", borderColor: "#d8b4fe" },
   tagBtnText: { fontSize: 13, fontWeight: "600", color: "#64748b" },
   tagBtnTextActive: { color: "#7c3aed" },
-  
+
   galleryGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 4 },
   galleryItemBox: { width: 80, height: 80, borderRadius: 12, overflow: "hidden" },
   galleryImage: { width: "100%", height: "100%" },

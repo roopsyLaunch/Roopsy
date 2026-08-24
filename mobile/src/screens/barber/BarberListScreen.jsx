@@ -5,6 +5,7 @@ import { api } from "../../api/client";
 
 import { Alert } from "react-native";
 import { getCurrentGPSLocation } from "../../services/locationService";
+import { LinearGradient } from "expo-linear-gradient";
 
 const { width } = Dimensions.get("window");
 const FALLBACK_IMAGE = "https://images.unsplash.com/photo-1585747860715-2ba37e788b70?w=500&auto=format&fit=crop&q=80";
@@ -80,9 +81,20 @@ export function BarberListScreen({ navigation }) {
     let matchesCategory = true;
     if (selectedCategory === "Open Now") {
       matchesCategory = barber.isShopOpen;
+    } else if (selectedCategory === "Top Rated") {
+      const ratingVal = parseFloat(barber.averageRating || barber.rating || 4.5);
+      matchesCategory = ratingVal >= 4.0;
     }
     return matchesSearch && matchesCategory;
   });
+
+  if (selectedCategory === "Top Rated") {
+    filteredBarbers.sort((a, b) => {
+      const ratingA = parseFloat(a.averageRating || a.rating || 4.5);
+      const ratingB = parseFloat(b.averageRating || b.rating || 4.5);
+      return ratingB - ratingA;
+    });
+  }
 
   const renderHeader = () => (
     <View style={styles.header}>
@@ -162,15 +174,21 @@ export function BarberListScreen({ navigation }) {
   const renderBanner = () => (
     <View style={styles.bannerContainer}>
       <Image source={{ uri: BANNER_IMAGE }} style={styles.bannerImage} />
-      <View style={styles.bannerOverlay}>
-        <Text style={styles.bannerTitle}>Expert Haircuts & Styling</Text>
-        <Text style={styles.bannerSubtitle}>Sharp Look. Every Time.</Text>
-        <Text style={styles.bannerDesc}>Book trusted barbers for haircuts, beard styling & grooming.</Text>
+      <LinearGradient
+        colors={["rgba(37, 99, 235, 0.85)", "rgba(37, 99, 235, 0.4)"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={styles.bannerOverlay}
+      >
+        <View style={styles.bannerTextSection}>
+          <Text style={styles.bannerTitle}>Expert Haircuts & Styling</Text>
+          <Text style={styles.bannerSubtitle}>Sharp Look. Every Time.</Text>
+        </View>
         <Pressable style={styles.bannerBtn}>
           <Text style={styles.bannerBtnText}>Book Now</Text>
-          <Ionicons name="arrow-forward" size={16} color="#fff" />
+          <Ionicons name="arrow-forward" size={14} color="#2563eb" />
         </Pressable>
-      </View>
+      </LinearGradient>
     </View>
   );
 
@@ -270,7 +288,14 @@ export function BarberListScreen({ navigation }) {
                   <View style={styles.ratingRow}>
                     <Ionicons name="star" size={14} color="#f59e0b" />
                     <Text style={styles.ratingText}>
-                      {item.averageRating || item.rating || "4.8"} <Text style={styles.ratingCount}>({item.ratingCount || "120"})</Text>
+                      {item.ratingCount && item.ratingCount > 0 ? (
+                        <>
+                          {item.averageRating || (item.ratingSum / item.ratingCount).toFixed(1)}{" "}
+                          <Text style={styles.ratingCount}>({item.ratingCount})</Text>
+                        </>
+                      ) : (
+                        <Text style={styles.ratingCount}>New</Text>
+                      )}
                     </Text>
                     <Text style={styles.dot}>•</Text>
                     <Text style={styles.distanceText}>
@@ -351,14 +376,14 @@ const styles = StyleSheet.create({
   
   listContent: { paddingBottom: 100 },
   
-  bannerContainer: { marginHorizontal: 20, marginBottom: 24, borderRadius: 16, overflow: "hidden", height: 160 },
-  bannerImage: { width: "100%", height: "100%" },
-  bannerOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(37, 99, 235, 0.85)", padding: 20, justifyContent: "center" },
-  bannerTitle: { fontSize: 20, fontWeight: "800", color: "#ffffff", marginBottom: 4 },
-  bannerSubtitle: { fontSize: 14, fontWeight: "700", color: "#ffffff", marginBottom: 8 },
-  bannerDesc: { fontSize: 12, color: "rgba(255,255,255,0.9)", width: "70%", marginBottom: 12, lineHeight: 18 },
-  bannerBtn: { flexDirection: "row", alignItems: "center", backgroundColor: "#1d4ed8", alignSelf: "flex-start", paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
-  bannerBtnText: { color: "#ffffff", fontSize: 13, fontWeight: "700", marginRight: 6 },
+  bannerContainer: { marginHorizontal: 20, marginBottom: 24, borderRadius: 16, overflow: "hidden", height: 95 },
+  bannerImage: { width: "100%", height: "100%", position: "absolute" },
+  bannerOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  bannerTextSection: { flex: 1, marginRight: 12 },
+  bannerTitle: { fontSize: 16, fontWeight: "800", color: "#ffffff", marginBottom: 2 },
+  bannerSubtitle: { fontSize: 11, fontWeight: "600", color: "rgba(255,255,255,0.9)" },
+  bannerBtn: { flexDirection: "row", alignItems: "center", backgroundColor: "#ffffff", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  bannerBtnText: { color: "#2563eb", fontSize: 12, fontWeight: "700", marginRight: 4 },
   
   sectionTitleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 20, marginBottom: 16 },
   sectionTitle: { fontSize: 16, fontWeight: "800", color: "#0f172a" },

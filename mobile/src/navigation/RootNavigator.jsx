@@ -5,8 +5,8 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
-import { LoginScreen } from "../screens/LoginScreen";
-import { RegisterScreen } from "../screens/RegisterScreen";
+import { LoginScreen, RegisterScreen } from "../screens/LoginScreen";
+import { ForgotPasswordScreen } from "../screens/ForgotPasswordScreen";
 import { SearchScreen } from "../screens/SearchScreen";
 import { HomeScreen } from "../screens/HomeScreen";
 import { BarberDetailScreen } from "../screens/BarberDetailScreen";
@@ -411,8 +411,9 @@ function AuthNavigator() {
         contentStyle: { backgroundColor: "#f8fafc" },
       }}
     >
-      <AuthStack.Screen name="Login" component={LoginScreen} options={{ title: "Sign in" }} />
-      <AuthStack.Screen name="Register" component={RegisterScreen} options={{ title: "Register" }} />
+      <AuthStack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+      <AuthStack.Screen name="Register" component={RegisterScreen} options={{ headerShown: false }} />
+      <AuthStack.Screen name="ForgotPassword" component={ForgotPasswordScreen} options={{ headerShown: false }} />
     </AuthStack.Navigator>
   );
 }
