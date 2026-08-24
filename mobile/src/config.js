@@ -16,7 +16,27 @@ function getHostIp() {
 
 /** Android emulator: 10.0.2.2 = host machine. Physical device: dynamically resolves from Expo hostUri or EXPO_PUBLIC_API_URL */
 export function getApiBaseUrl() {
-  const url = "http://10.35.125.5:5000";
+  // 1. Check Expo Constants extra config
+  let url = Constants.expoConfig?.extra?.apiUrl;
+  
+  // 2. Check process.env directly
+  if (!url) {
+    url = process.env.EXPO_PUBLIC_API_URL;
+  }
+  
+  // 3. Dynamic Host IP fallback
+  if (!url) {
+    const hostIp = getHostIp();
+    if (hostIp) {
+      url = `http://${hostIp}:5000`;
+    }
+  }
+  
+  // 4. Final static fallback
+  if (!url) {
+    url = "http://10.35.125.5:5000";
+  }
+  
   console.log("[Mobile Config] Resolved API URL:", url);
   return url;
 }
