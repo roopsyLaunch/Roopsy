@@ -1,7 +1,7 @@
 const axios = require("axios");
 
 /**
- * Check MSG91 configuration.
+ * MSG91 configuration check.
  */
 function getMsg91Config() {
   const authKey = process.env.MSG91_AUTH_KEY;
@@ -17,12 +17,15 @@ function getMsg91Config() {
 
   return {
     authKey: String(authKey).trim(),
-    widgetId: String(widgetId).trim()
+    widgetId: String(widgetId).trim(),
   };
 }
 
 /**
  * Format Indian mobile number.
+ * Example:
+ * 9876543210   -> 919876543210
+ * +919876543210 -> 919876543210
  */
 function formatMobile(phone) {
   if (!phone) {
@@ -31,12 +34,10 @@ function formatMobile(phone) {
 
   let mobile = String(phone).replace(/\D/g, "");
 
-  // If number has 10 digits, add India country code
   if (mobile.length === 10) {
     mobile = `91${mobile}`;
   }
 
-  // Handle +91 or already formatted numbers
   if (mobile.length !== 12 || !mobile.startsWith("91")) {
     throw new Error("Invalid Indian mobile number");
   }
@@ -52,35 +53,39 @@ async function sendOtpSms(phone) {
     const { authKey, widgetId } = getMsg91Config();
     const identifier = formatMobile(phone);
 
-    console.log(
-      `[SMS Service] Sending OTP to ${identifier}`
-    );
+    console.log(`[SMS Service] Sending OTP to ${identifier}`);
 
     const response = await axios.post(
-      "https://control.msg91.com/api/v5/widget/sendOtp",
+      "https://api.msg91.com/api/v5/widget/sendOtp",
       {
         widgetId,
-        identifier
+        identifier,
       },
       {
         headers: {
           authkey: authKey,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
         },
-        timeout: 15000
+        timeout: 15000,
       }
     );
 
     console.log(
       "[SMS Service] MSG91 Send response:",
-      response.data
+      JSON.stringify(response.data)
     );
 
-    return response.data;
+    // reqId must be returned and used later for verification
+    if (!response.data?.reqId && !response.data?.request_id) {
+      console.warn(
+        "[SMS Service] WARNING: MSG91 response does not contain reqId:",
+        response.data
+      );
+    }
 
+    return response.data;
   } catch (error) {
-    const errorData =
-      error?.response?.data || error?.message;
+    const errorData = error?.response?.data || error?.message;
 
     console.error(
       "[SMS Service] Failed to send OTP:",
@@ -106,42 +111,42 @@ async function verifyOtpSms(reqId, otp) {
       throw new Error("OTP is required");
     }
 
+    const cleanReqId = String(reqId).trim();
     const cleanOtp = String(otp).trim();
 
     console.log(
-      `[SMS Service] Verifying OTP for request ID: ${reqId}`
+      `[SMS Service] Verifying OTP. reqId: ${cleanReqId}`
     );
 
     const response = await axios.post(
-      "https://control.msg91.com/api/v5/widget/verifyOtp",
+      "https://api.msg91.com/api/v5/widget/verifyOtp",
       {
         widgetId,
-        reqId,
-        otp: cleanOtp
+        reqId: cleanReqId,
+        otp: cleanOtp,
       },
       {
         headers: {
           authkey: authKey,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
         },
-        timeout: 15000
+        timeout: 15000,
       }
     );
 
     console.log(
       "[SMS Service] MSG91 Verify response:",
-      response.data
+      JSON.stringify(response.data)
     );
 
+    // MSG91 success response
     return response.data?.type === "success";
-
   } catch (error) {
-    const errorData =
-      error?.response?.data || error?.message;
+    const errorData = error?.response?.data || error?.message;
 
     console.error(
       "[SMS Service] Failed to verify OTP:",
-      errorData
+      JSON.stringify(errorData)
     );
 
     return false;
@@ -159,6 +164,7 @@ async function sendCustomSms(phone, otp) {
     console.warn(
       "[SMS Service] Transactional SMS configuration missing"
     );
+
     return false;
   }
 
@@ -168,28 +174,27 @@ async function sendCustomSms(phone, otp) {
     const response = await axios.post(
       "https://control.msg91.com/api/v5/otp",
       {
-        otp: String(otp)
+        otp: String(otp).trim(),
       },
       {
         params: {
           template_id: String(templateId).trim(),
           mobile,
-          authkey: String(authKey).trim()
+          authkey: String(authKey).trim(),
         },
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
         },
-        timeout: 15000
+        timeout: 15000,
       }
     );
 
     console.log(
       "[SMS Service] Transactional SMS response:",
-      response.data
+      JSON.stringify(response.data)
     );
 
     return true;
-
   } catch (error) {
     console.error(
       "[SMS Service] Failed to send transactional SMS:",
@@ -203,5 +208,5 @@ async function sendCustomSms(phone, otp) {
 module.exports = {
   sendOtpSms,
   verifyOtpSms,
-  sendCustomSms
+  sendCustomSms,
 };
