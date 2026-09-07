@@ -34,7 +34,7 @@ export function getApiBaseUrl() {
   
   // 4. Final static fallback
   if (!url) {
-    url = "http://10.35.125.5:5000";
+    url = "http://10.158.131.5:5000";
   }
   
   console.log("[Mobile Config] Resolved API URL:", url);

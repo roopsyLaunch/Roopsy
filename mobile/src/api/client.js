@@ -11,7 +11,7 @@ export const api = axios.create({
     "Content-Type": "application/json",
     "Bypass-Tunnel-Reminder": "true"
   },
-  timeout: 15000,
+  timeout: 60000, // Increased to 60s to handle Render free-tier cold starts
 });
 
 api.interceptors.request.use(async (config) => {

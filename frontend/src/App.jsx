@@ -29,8 +29,8 @@ const API_BASE = import.meta.env.VITE_API_BASE || "https://roopsy.onrender.com/a
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("admin@demo.com");
+  const [password, setPassword] = useState("password123");
   const [error, setError] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
 
