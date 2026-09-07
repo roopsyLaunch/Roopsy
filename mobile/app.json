@@ -2,7 +2,7 @@
   "expo": {
     "name": "ROOPSY",
     "slug": "roopsy",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/logo.png",
     "userInterfaceStyle": "light",
@@ -19,12 +19,12 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.roopsy.app",
-      "buildNumber": "2"
+      "buildNumber": "3"
     },
     "android": {
       "package": "com.roopsy.app",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 2,
+      "versionCode": 3,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
