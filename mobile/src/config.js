@@ -34,7 +34,12 @@ export function getApiBaseUrl() {
   
   // 4. Final static fallback
   if (!url) {
-    url = "http://10.158.131.5:5000";
+    url = "https://roopsy.onrender.com";
+  }
+
+  // Remove trailing slash if present
+  if (url && typeof url === "string" && url.endsWith("/")) {
+    url = url.slice(0, -1);
   }
   
   console.log("[Mobile Config] Resolved API URL:", url);
