@@ -19,6 +19,7 @@ const path = require("path");
 const adminPanelRoutes  = require("./routes/adminPanelRoutes");
 
 const app = express();
+app.set("trust proxy", 1);
 
 app.use(helmet({
   contentSecurityPolicy: false, // Turn off CSP for easy inline style loading of privacy page if needed

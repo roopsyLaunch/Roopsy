@@ -10,9 +10,30 @@ const axios = require("axios");
 const DEFAULT_AUTH_KEY = "563311AlTNjGVdvD6a89a4ccP1";
 const DEFAULT_WIDGET_ID = "3668766c5145323235363431";
 
+function cleanEnvValue(val) {
+  if (!val) return "";
+  return String(val).replace(/['"]+/g, "").trim();
+}
+
+function getWidgetId() {
+  const envVal = cleanEnvValue(process.env.MSG91_WIDGET_ID);
+  if (envVal && envVal.length === 24 && !envVal.includes("your_")) {
+    return envVal;
+  }
+  return DEFAULT_WIDGET_ID;
+}
+
+function getAuthKey() {
+  const envVal = cleanEnvValue(process.env.MSG91_AUTH_KEY);
+  if (envVal && envVal.length >= 20 && !envVal.includes("your_")) {
+    return envVal;
+  }
+  return DEFAULT_AUTH_KEY;
+}
+
 async function sendOtpSms(phone) {
-  const authKey = process.env.MSG91_AUTH_KEY || DEFAULT_AUTH_KEY;
-  const widgetId = process.env.MSG91_WIDGET_ID || DEFAULT_WIDGET_ID;
+  const authKey = getAuthKey();
+  const widgetId = getWidgetId();
 
   let formattedMobile = phone.replace(/\D/g, "");
   if (formattedMobile.length === 10) {
@@ -48,8 +69,8 @@ async function sendOtpSms(phone) {
  * @returns {Promise<boolean>} True if verified successfully.
  */
 async function verifyOtpSms(reqId, otp) {
-  const authKey = process.env.MSG91_AUTH_KEY || DEFAULT_AUTH_KEY;
-  const widgetId = process.env.MSG91_WIDGET_ID || DEFAULT_WIDGET_ID;
+  const authKey = getAuthKey();
+  const widgetId = getWidgetId();
 
   try {
     const response = await axios.post("https://control.msg91.com/api/v5/widget/verifyOtp", {
