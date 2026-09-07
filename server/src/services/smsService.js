@@ -7,9 +7,12 @@ const axios = require("axios");
  * @param {string} phone - The recipient's mobile number.
  * @returns {Promise<object>} The MSG91 response containing request_id.
  */
+const DEFAULT_AUTH_KEY = "563311AlTNjGVdvD6a89a4ccP1";
+const DEFAULT_WIDGET_ID = "3668766c5145323235363431";
+
 async function sendOtpSms(phone) {
-  const authKey = process.env.MSG91_AUTH_KEY;
-  const widgetId = process.env.MSG91_WIDGET_ID;
+  const authKey = process.env.MSG91_AUTH_KEY || DEFAULT_AUTH_KEY;
+  const widgetId = process.env.MSG91_WIDGET_ID || DEFAULT_WIDGET_ID;
 
   let formattedMobile = phone.replace(/\D/g, "");
   if (formattedMobile.length === 10) {
@@ -45,8 +48,8 @@ async function sendOtpSms(phone) {
  * @returns {Promise<boolean>} True if verified successfully.
  */
 async function verifyOtpSms(reqId, otp) {
-  const authKey = process.env.MSG91_AUTH_KEY;
-  const widgetId = process.env.MSG91_WIDGET_ID;
+  const authKey = process.env.MSG91_AUTH_KEY || DEFAULT_AUTH_KEY;
+  const widgetId = process.env.MSG91_WIDGET_ID || DEFAULT_WIDGET_ID;
 
   try {
     const response = await axios.post("https://control.msg91.com/api/v5/widget/verifyOtp", {

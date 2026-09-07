@@ -19,10 +19,13 @@ function getErrorMessage(err) {
   const data = err?.response?.data;
   if (typeof data?.error === "string") return data.error;
   if (data?.error && typeof data.error === "object") return JSON.stringify(data.error);
-  if (err?.code === "ERR_NETWORK" || err?.message?.includes("Network Error")) {
-    return `Server se connect nahi ho pa raha: ${getApiBaseUrl()}\n\nKripya check karein ki phone aur PC dono ek hi Wi-Fi network par hain.`;
+  if (err?.code === "ECONNABORTED" || err?.message?.includes("timeout")) {
+    return "Connection timed out. Please check your internet connection and try again.";
   }
-  return err?.message || "Reset failed";
+  if (err?.code === "ERR_NETWORK" || err?.message?.includes("Network Error")) {
+    return "Unable to connect to the server. Please check your internet connection and try again.";
+  }
+  return err?.message || "Password reset failed. Please try again.";
 }
 
 export function ForgotPasswordScreen({ navigation }) {
@@ -77,22 +80,22 @@ export function ForgotPasswordScreen({ navigation }) {
         return;
       }
       
-      // If widget returns a CORS/Web requests allowed error or disabled, fallback to server mock mode
-      console.warn("[Mobile Client] MSG91 widget send failed, falling back to server mock mode:", data.message);
+      // Server fallback
+      console.warn("[Mobile Client] MSG91 widget send failed, falling back to server mode:", data.message);
       await api.post("/auth/forgot-password", { phone: phone.trim() });
       setRequestId("");
       setOtpSent(true);
-      Alert.alert("Mock OTP Generated 📲", "Check your backend server terminal console log for the reset code.");
+      Alert.alert("Verification Code Sent", "A password reset code has been sent to your mobile number.");
     } catch (e) {
-      // Fallback to backend server mock mode if fetch fails
+      // Fallback to backend server mode if fetch fails
       try {
-        console.warn("[Mobile Client] Network error calling MSG91 widget, falling back to server mock mode:", e.message);
+        console.warn("[Mobile Client] Network error calling MSG91 widget, falling back to server mode:", e.message);
         await api.post("/auth/forgot-password", { phone: phone.trim() });
         setRequestId("");
         setOtpSent(true);
-        Alert.alert("Mock OTP Generated 📲", "Check your backend server terminal console log for the reset code.");
+        Alert.alert("Verification Code Sent", "A password reset code has been sent to your mobile number.");
       } catch (err) {
-        Alert.alert("Failed to Send OTP", getErrorMessage(err) || "We couldn't dispatch the verification code. Please try again.");
+        Alert.alert("Unable to Send OTP", getErrorMessage(err) || "We couldn't dispatch the verification code. Please try again.");
       }
     } finally {
       setSendingOtp(false);
@@ -105,6 +108,37 @@ export function ForgotPasswordScreen({ navigation }) {
     setVerifyingOtp(true);
     setVerificationError("");
     try {
+      if (requestId) {
+        try {
+          const verifyRes = await fetch("https://control.msg91.com/api/v5/widget/verifyOtp", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "authkey": "563311AlTNjGVdvD6a89a4ccP1",
+            },
+            body: JSON.stringify({
+              widgetId: "3668766c5145323235363431",
+              reqId: requestId,
+              otp: code.trim(),
+            }),
+          });
+          const verifyData = await verifyRes.json();
+          console.log("[Mobile Client] MSG91 Verify response:", verifyData);
+          if (verifyData.type === "success") {
+            setIsOtpVerified(true);
+            Alert.alert("OTP Verified ✅", "Verification successful! You can now choose a new password.");
+            passwordInputRef.current?.focus();
+            return;
+          } else if (verifyData.message && typeof verifyData.message === "string" && verifyData.message.toLowerCase().includes("invalid")) {
+            setVerificationError("Invalid OTP code. Please enter the correct 4-digit code.");
+            setIsOtpVerified(false);
+            return;
+          }
+        } catch (msgErr) {
+          console.warn("[Mobile Client] Direct verify error, falling back to server:", msgErr);
+        }
+      }
+
       const res = await api.post("/auth/verify-otp", {
         phone: phone.trim(),
         otp: code.trim(),

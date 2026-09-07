@@ -28,10 +28,13 @@ function getErrorMessage(err) {
   const data = err?.response?.data;
   if (typeof data?.error === "string") return data.error;
   if (data?.error && typeof data.error === "object") return JSON.stringify(data.error);
-  if (err?.code === "ERR_NETWORK" || err?.message?.includes("Network Error")) {
-    return `Server se connect nahi ho pa raha: ${getApiBaseUrl()}\n\nKripya check karein ki phone aur PC dono ek hi Wi-Fi network par hain.`;
+  if (err?.code === "ECONNABORTED" || err?.message?.includes("timeout")) {
+    return "Connection timed out. Please check your internet connection and try again.";
   }
-  return err?.message || "Registration failed";
+  if (err?.code === "ERR_NETWORK" || err?.message?.includes("Network Error")) {
+    return "Unable to connect to the server. Please check your internet connection and try again.";
+  }
+  return err?.message || "Registration failed. Please try again.";
 }
 
 const PetalBackground = () => (
@@ -104,28 +107,28 @@ export function RegisterScreen({ navigation }) {
       if (data.type === "success" && (data.request_id || data.message)) {
         setRequestId(data.request_id || data.message);
         setOtpSent(true);
-        Alert.alert("Verification Code Sent 📲", "A 4-digit code has been sent to your mobile number.");
+        Alert.alert("Verification Code Sent", "A 4-digit verification code has been sent to your mobile number.");
         setTimeout(() => otpInputRef.current?.focus(), 150);
         return;
       }
 
-      // Fallback to server mock mode
-      console.warn("[Mobile Client] MSG91 widget send failed, falling back to server mock mode:", data.message);
+      // Fallback to server mode
+      console.warn("[Mobile Client] MSG91 widget send failed, falling back to server mode:", data.message);
       await api.post("/auth/send-otp", { phone: phone.trim() });
       setRequestId("");
       setOtpSent(true);
-      Alert.alert("Mock OTP Generated 📲", "Check your backend server terminal console log for the verification code.");
+      Alert.alert("Verification Code Sent", "A verification code has been sent to your mobile number.");
       setTimeout(() => otpInputRef.current?.focus(), 150);
     } catch (e) {
       try {
-        console.warn("[Mobile Client] Network error calling MSG91 widget, falling back to server mock mode:", e.message);
+        console.warn("[Mobile Client] Network error calling MSG91 widget, falling back to server mode:", e.message);
         await api.post("/auth/send-otp", { phone: phone.trim() });
         setRequestId("");
         setOtpSent(true);
-        Alert.alert("Mock OTP Generated 📲", "Check your backend server terminal console log for the verification code.");
+        Alert.alert("Verification Code Sent", "A verification code has been sent to your mobile number.");
         setTimeout(() => otpInputRef.current?.focus(), 150);
       } catch (err) {
-        Alert.alert("Failed to Send OTP", getErrorMessage(err) || "We couldn't dispatch the verification code. Please try again.");
+        Alert.alert("Unable to Send OTP", getErrorMessage(err) || "We couldn't dispatch the verification code. Please try again.");
       }
     } finally {
       setSendingOtp(false);
@@ -138,11 +141,41 @@ export function RegisterScreen({ navigation }) {
     setVerifyingOtp(true);
     setVerificationError("");
     try {
+      let isPreVerified = false;
+      if (requestId) {
+        try {
+          const verifyRes = await fetch("https://control.msg91.com/api/v5/widget/verifyOtp", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "authkey": "563311AlTNjGVdvD6a89a4ccP1",
+            },
+            body: JSON.stringify({
+              widgetId: "3668766c5145323235363431",
+              reqId: requestId,
+              otp: code.trim(),
+            }),
+          });
+          const verifyData = await verifyRes.json();
+          console.log("[Mobile Client] MSG91 Verify response:", verifyData);
+          if (verifyData.type === "success") {
+            isPreVerified = true;
+          } else if (verifyData.message && typeof verifyData.message === "string" && verifyData.message.toLowerCase().includes("invalid")) {
+            setVerificationError("Invalid OTP code. Please enter the correct 4-digit code.");
+            setVerifyingOtp(false);
+            return;
+          }
+        } catch (msgErr) {
+          console.warn("[Mobile Client] Direct verification network warning, falling back to server:", msgErr);
+        }
+      }
+
       const payload = {
         name: name.trim(),
         phone: phone.trim(),
         otp: code.trim(),
         requestId: requestId || undefined,
+        isOtpVerified: isPreVerified,
         password,
         role: "customer",
       };

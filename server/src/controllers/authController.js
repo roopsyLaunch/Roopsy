@@ -42,6 +42,7 @@ const registerSchema = z.object({
   role: z.enum(["customer", "barber"]).optional(),
   application: applicationSchema.optional(),
   requestId: z.string().optional(),
+  isOtpVerified: z.boolean().optional(),
 });
 
 const loginSchema = z.object({
@@ -104,7 +105,9 @@ async function register(req, res) {
     // Check if OTP was already verified, or verify it on the fly
     let otpRecord = await Otp.findOne({ phone });
     if (!otpRecord || !otpRecord.isVerified) {
-      if (requestId && otp) {
+      if (req.body.isOtpVerified === true) {
+        // Pre-verified by client directly via MSG91 widget
+      } else if (requestId && otp) {
         const { verifyOtpSms } = require("../services/smsService");
         const success = await verifyOtpSms(requestId, otp);
         if (!success) {
