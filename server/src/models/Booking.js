@@ -34,6 +34,11 @@ const bookingSchema = new mongoose.Schema(
     noShowAt: { type: Date },
     isOtpVerified: { type: Boolean, default: false },
     otpVerifiedAt: { type: Date },
+    otpExpiresAt: { type: Date },
+    completionPin: { type: String, default: "" },
+    isCompletionOtpVerified: { type: Boolean, default: false },
+    completionOtpVerifiedAt: { type: Date },
+    completionRequestedAt: { type: Date },
     delayMinutes: { type: Number, default: 0 },
     paymentStatus: { type: String, enum: ["pending", "advance_paid", "paid", "refunded"], default: "pending" },
     cancellationReason: { type: String, default: "" },
@@ -42,6 +47,11 @@ const bookingSchema = new mongoose.Schema(
     customerETA: { type: Number, default: null }, // Added for ETA (in minutes)
     barberETA: { type: Number, default: null }, // ETA for barber arriving at customer's home
     barberArrivalTime: { type: Date, default: null }, // Exact time barber is expected to arrive
+    // Rating & Review
+    rating: { type: Number, min: 1, max: 5 },
+    reviewComment: { type: String, default: "" },
+    isRated: { type: Boolean, default: false },
+    ratedAt: { type: Date },
   },
   { timestamps: true }
 );

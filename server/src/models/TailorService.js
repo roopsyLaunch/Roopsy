@@ -6,7 +6,10 @@ const tailorServiceSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     description: { type: String, default: "" },
     price: { type: Number, required: true, min: 0 },
+    originalPrice: { type: Number, default: 0 },
+    discountAmount: { type: Number, default: 0 },
     estimatedDays: { type: Number, default: 1, min: 1 }, // Delivery time estimate
+    completionTime: { type: String, default: "" }, // e.g. "24 Hours", "2 Days"
     category: { type: String, default: "Custom Stitching" }, // e.g., Alteration, Custom Stitching
     serviceMode: {
       type: String,

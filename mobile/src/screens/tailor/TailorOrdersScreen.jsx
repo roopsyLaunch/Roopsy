@@ -1,14 +1,111 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, Pressable, RefreshControl, Alert, Modal, TextInput, ScrollView } from "react-native";
+import {
+  View, Text, StyleSheet, FlatList, ActivityIndicator, Pressable,
+  RefreshControl, Alert, Modal, TextInput, ScrollView, Linking, Platform
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "../../api/client";
 import { getSocket } from "../../api/socket";
+import { useAuth } from "../../context/AuthContext";
+import { useFocusEffect } from "@react-navigation/native";
 
-export function TailorOrdersScreen() {
+const formatDateOnly = (d) => {
+  if (!d) return "N/A";
+  const date = new Date(d);
+  return date.toLocaleDateString("en-IN", {
+    weekday: "short",
+    day: "numeric",
+    month: "short"
+  });
+};
+
+const formatTime = (timeStr) => {
+  if (!timeStr) return "N/A";
+  const date = new Date(timeStr);
+  if (!isNaN(date.getTime())) {
+    return date.toLocaleTimeString("en-IN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true
+    });
+  }
+  return timeStr;
+};
+
+const getInitials = (name) => {
+  if (!name) return "S";
+  const parts = name.trim().split(" ");
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+};
+
+const getStatusBadge = (status) => {
+  switch (status) {
+    case "confirmed":
+    case "accepted":
+      return { bg: "#e0f2fe", text: "#0369a1", icon: "checkmark-circle" };
+    case "in-progress":
+    case "stitching":
+      return { bg: "#fef3c7", text: "#d97706", icon: "cut" };
+    case "ready":
+      return { bg: "#ecfdf5", text: "#059669", icon: "shirt" };
+    case "completed":
+      return { bg: "#dcfce7", text: "#15803d", icon: "checkmark-done-circle" };
+    case "cancelled":
+    case "declined":
+    case "rejected":
+    case "expired":
+      return { bg: "#fee2e2", text: "#b91c1c", icon: "close-circle" };
+    default:
+      return { bg: "#f1f5f9", text: "#475569", icon: "time" };
+  }
+};
+
+const LiveCountdown = ({ targetDate }) => {
+  const [timeLeft, setTimeLeft] = useState("");
+  useEffect(() => {
+    const update = () => {
+      if (!targetDate) return;
+      const diff = new Date(targetDate).getTime() - new Date().getTime();
+      if (diff <= 0) {
+        setTimeLeft("Late");
+        return;
+      }
+      const mins = Math.floor(diff / 60000);
+      const hrs = Math.floor(mins / 60);
+      const remMins = mins % 60;
+      if (hrs > 0) {
+        setTimeLeft(`${hrs}h ${remMins}m`);
+      } else {
+        setTimeLeft(`${mins}m`);
+      }
+    };
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [targetDate]);
+
+  if (!timeLeft) return null;
+
+  return (
+    <View style={styles.countdownBadge}>
+      <Text style={styles.countdownText}>
+        {timeLeft === "Late" ? "Overdue" : `In ${timeLeft}`}
+      </Text>
+    </View>
+  );
+};
+
+export function TailorOrdersScreen({ navigation, route }) {
+  const { user } = useAuth();
+  const [viewMode, setViewMode] = useState(route?.params?.initialTab || "Shop Queue"); // "Shop Queue", "My Appointments"
+
+  // ----------------- Shop Queue State (Tailor Partner's Orders) -----------------
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [filterTab, setFilterTab] = useState("all"); // "all", "pending", "active", "completed"
 
   // Accept Order Modal state
   const [acceptModalVisible, setAcceptModalVisible] = useState(false);
@@ -23,6 +120,37 @@ export function TailorOrdersScreen() {
   const [otpOrderId, setOtpOrderId] = useState(null);
   const [verifyingOtp, setVerifyingOtp] = useState(false);
 
+  // Delivery OTP Verification state
+  const [deliveryOtpModalVisible, setDeliveryOtpModalVisible] = useState(false);
+  const [deliveryOtpInput, setDeliveryOtpInput] = useState("");
+  const [deliveryOrderId, setDeliveryOrderId] = useState(null);
+  const [generatingDeliveryOtp, setGeneratingDeliveryOtp] = useState(false);
+  const [verifyingDeliveryOtp, setVerifyingDeliveryOtp] = useState(false);
+  const [directConfirmingId, setDirectConfirmingId] = useState(null);
+
+  // ----------------- My Appointments State (Personal Customer Bookings) -----------------
+  const [customerAppointments, setCustomerAppointments] = useState([]);
+  const [customerLoading, setCustomerLoading] = useState(false);
+  const [customerTab, setCustomerTab] = useState("all"); // "all", "pending", "active", "history"
+  const [serviceTypeFilter, setServiceTypeFilter] = useState("all"); // "all", "beauty", "tailor", "barber"
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Customer Review Modal state
+  const [reviewModalVisible, setReviewModalVisible] = useState(false);
+  const [reviewBookingId, setReviewBookingId] = useState(null);
+  const [reviewBarberId, setReviewBarberId] = useState(null);
+  const [rating, setRating] = useState(5);
+  const [comment, setComment] = useState("");
+  const [submittingReview, setSubmittingReview] = useState(false);
+
+  // Customer Tailor Rating Modal state
+  const [tailorRatingModalVisible, setTailorRatingModalVisible] = useState(false);
+  const [tailorRatingOrder, setTailorRatingOrder] = useState(null);
+  const [tailorRating, setTailorRating] = useState(5);
+  const [tailorComment, setTailorComment] = useState("");
+  const [submittingTailorRating, setSubmittingTailorRating] = useState(false);
+
+  // ----------------- Data Loaders -----------------
   const loadOrders = useCallback(async () => {
     try {
       const res = await api.get("/tailors/me/orders");
@@ -32,40 +160,80 @@ export function TailorOrdersScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    loadOrders().finally(() => setLoading(false));
+  const loadCustomerAppointments = useCallback(async () => {
+    try {
+      setCustomerLoading(true);
+      const [barberRes, tailorRes] = await Promise.all([
+        api.get("/bookings/me").catch(() => ({ data: { bookings: [] } })),
+        api.get("/tailors/me/orders/customer").catch(() => ({ data: { orders: [] } }))
+      ]);
+      const barberBookings = (barberRes.data?.bookings || []).map(b => ({ ...b, isTailorOrder: false }));
+      const tailorOrdersList = (tailorRes.data?.orders || []).map(o => ({ ...o, isTailorOrder: true }));
+      const combined = [...barberBookings, ...tailorOrdersList].sort((a, b) => {
+        const dateA = new Date(a.startTime || a.createdAt).getTime();
+        const dateB = new Date(b.startTime || b.createdAt).getTime();
+        return dateB - dateA;
+      });
+      setCustomerAppointments(combined);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setCustomerLoading(false);
+    }
+  }, []);
 
-    const socket = getSocket();
-    const handleNewOrder = () => {
-      Alert.alert("New Tailor Booking ✂️", "A customer has placed a new booking request!");
-      loadOrders();
-    };
-    const handleOrderUpdated = () => {
-      loadOrders();
-    };
+  useFocusEffect(
+    useCallback(() => {
+      loadOrders().finally(() => setLoading(false));
+      loadCustomerAppointments();
 
-    socket.on("tailorNewOrder", handleNewOrder);
-    socket.on("bookingUpdated", handleOrderUpdated);
+      const socket = getSocket();
+      if (user?.id) {
+        socket.emit("joinUserRoom", user.id);
+      }
 
-    return () => {
-      socket.off("tailorNewOrder", handleNewOrder);
-      socket.off("bookingUpdated", handleOrderUpdated);
-    };
-  }, [loadOrders]);
+      const handleNewOrder = () => {
+        Alert.alert("New Tailor Booking ✂️", "A customer has placed a new booking request!");
+        loadOrders();
+      };
+      const handleOrderUpdated = () => {
+        loadOrders();
+        loadCustomerAppointments();
+      };
+      const handleTailorCompleted = (data) => {
+        loadCustomerAppointments();
+        if (data && data.orderId) {
+          api.get(`/tailors/orders/${data.orderId}`).then(res => {
+            if (res.data?.order) {
+              setTailorRatingOrder(res.data.order);
+              setTailorRating(5);
+              setTailorComment("");
+              setTailorRatingModalVisible(true);
+            }
+          }).catch(() => {});
+        }
+      };
+
+      socket.on("tailorNewOrder", handleNewOrder);
+      socket.on("bookingUpdated", handleOrderUpdated);
+      socket.on("tailorOrderCompleted", handleTailorCompleted);
+
+      return () => {
+        if (user?.id) socket.emit("leaveUserRoom", user.id);
+        socket.off("tailorNewOrder", handleNewOrder);
+        socket.off("bookingUpdated", handleOrderUpdated);
+        socket.off("tailorOrderCompleted", handleTailorCompleted);
+      };
+    }, [loadOrders, loadCustomerAppointments, user?.id])
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadOrders();
+    await Promise.all([loadOrders(), loadCustomerAppointments()]);
     setRefreshing(false);
   };
 
-  // Delivery OTP Verification state
-  const [deliveryOtpModalVisible, setDeliveryOtpModalVisible] = useState(false);
-  const [deliveryOtpInput, setDeliveryOtpInput] = useState("");
-  const [deliveryOrderId, setDeliveryOrderId] = useState(null);
-  const [generatingDeliveryOtp, setGeneratingDeliveryOtp] = useState(false);
-  const [verifyingDeliveryOtp, setVerifyingDeliveryOtp] = useState(false);
-
+  // ----------------- Shop Queue Handlers -----------------
   const handleOpenDeliveryOtpModal = (orderId) => {
     setDeliveryOrderId(orderId);
     setDeliveryOtpInput("");
@@ -75,7 +243,7 @@ export function TailorOrdersScreen() {
   const handleGenerateDeliveryOtp = async (orderId) => {
     setGeneratingDeliveryOtp(true);
     try {
-      const res = await api.post(`/tailors/orders/${orderId}/generate-delivery-otp`);
+      await api.post(`/tailors/orders/${orderId}/generate-delivery-otp`);
       setDeliveryOrderId(orderId);
       setDeliveryOtpInput("");
       setDeliveryOtpModalVisible(true);
@@ -111,7 +279,23 @@ export function TailorOrdersScreen() {
 
   const handleOpenAcceptModal = (order) => {
     setSelectedOrder(order);
-    setEstDays(String(order.estimatedDays || 3));
+    const isPrem = Boolean(
+      order.isPremiumService ||
+      (order.services || []).some(s => s.serviceMode === "premium" || s.isPremium || (s.name && /premium|vip/i.test(s.name)))
+    );
+    const pSvc = (order.services || []).find(s => s.serviceMode === "premium" || s.isPremium || (s.name && /premium|vip/i.test(s.name)) || s.completionTime);
+    const compTime = order.completionTime || pSvc?.completionTime || (isPrem ? "12 Hours" : "");
+    let defaultDays = order.estimatedDays;
+    if (isPrem) {
+      if (compTime) {
+        const matchHours = compTime.match(/(\d+)\s*(?:hour|hr)/i);
+        if (matchHours) {
+          defaultDays = Math.max(1, Math.ceil(parseInt(matchHours[1], 10) / 24));
+        }
+      }
+      if (!defaultDays || defaultDays > 1) defaultDays = 1;
+    }
+    setEstDays(String(defaultDays || (isPrem ? 1 : 3)));
     setCustomVisitFee(String(order.visitFee || 0));
     setAcceptModalVisible(true);
   };
@@ -128,14 +312,31 @@ export function TailorOrdersScreen() {
       return Alert.alert("Required", "Please enter a valid delivery charge.");
     }
 
+    const isPrem = Boolean(
+      selectedOrder.isPremiumService ||
+      (selectedOrder.services || []).some(s => s.serviceMode === "premium" || s.isPremium || (s.name && /premium|vip/i.test(s.name)))
+    );
+    const pSvc = (selectedOrder.services || []).find(s => s.serviceMode === "premium" || s.isPremium || (s.name && /premium|vip/i.test(s.name)) || s.completionTime);
+    const compTime = selectedOrder.completionTime || pSvc?.completionTime || (isPrem ? "12 Hours" : "");
+
     setSubmittingAccept(true);
     try {
-      const deliveryDate = new Date();
-      deliveryDate.setDate(deliveryDate.getDate() + daysNum);
+      let deliveryDate = new Date();
+      if (isPrem && compTime) {
+        const matchHours = compTime.match(/(\d+)\s*(?:hour|hr)/i);
+        if (matchHours) {
+          deliveryDate = new Date(Date.now() + parseInt(matchHours[1], 10) * 60 * 60 * 1000);
+        } else {
+          deliveryDate.setDate(deliveryDate.getDate() + daysNum);
+        }
+      } else {
+        deliveryDate.setDate(deliveryDate.getDate() + daysNum);
+      }
 
       await api.patch(`/tailors/orders/${selectedOrder._id}/status`, {
         status: "accepted",
         estimatedDays: daysNum,
+        completionTime: compTime || `${daysNum} Days`,
         deliveryDate: deliveryDate.toISOString(),
         ...(selectedOrder.isHomeService ? { visitFee: feeNum } : {})
       });
@@ -143,12 +344,58 @@ export function TailorOrdersScreen() {
       setAcceptModalVisible(false);
       setSelectedOrder(null);
       await loadOrders();
-      Alert.alert("Order Accepted", `Order accepted! Completion set for ${daysNum} days.`);
+      Alert.alert("Order Accepted", `Order accepted! Completion set for ${compTime || `${daysNum} Days`}.`);
     } catch (err) {
       console.error(err);
       Alert.alert("Error", "Could not accept order.");
     } finally {
       setSubmittingAccept(false);
+    }
+  };
+
+  const handleDirectConfirmPremium = async (order) => {
+    setDirectConfirmingId(order._id);
+    try {
+      const pSvc = (order.services || []).find(s => s.serviceMode === "premium" || s.isPremium || (s.name && /premium|vip/i.test(s.name)) || s.completionTime);
+      const compTime = (order.completionTime || pSvc?.completionTime || "12 Hours").trim();
+
+      let daysNum = 1;
+      let deliveryDate = new Date();
+
+      if (compTime) {
+        const matchHours = compTime.match(/(\d+)\s*(?:hour|hr)/i);
+        const matchDays = compTime.match(/(\d+)\s*(?:day)/i);
+        if (matchHours) {
+          const hours = parseInt(matchHours[1], 10);
+          daysNum = Math.max(1, Math.ceil(hours / 24));
+          deliveryDate = new Date(Date.now() + hours * 60 * 60 * 1000);
+        } else if (matchDays) {
+          const days = parseInt(matchDays[1], 10);
+          daysNum = Math.max(1, days);
+          deliveryDate = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+        }
+      } else {
+        deliveryDate = new Date(Date.now() + 12 * 60 * 60 * 1000);
+      }
+
+      await api.patch(`/tailors/orders/${order._id}/status`, {
+        status: "accepted",
+        estimatedDays: daysNum,
+        completionTime: compTime,
+        deliveryDate: deliveryDate.toISOString(),
+        ...(order.isHomeService ? { visitFee: order.visitFee || 0 } : {})
+      });
+
+      await loadOrders();
+      Alert.alert(
+        "👑 VIP Booking Confirmed!",
+        `Premium VIP booking confirmed instantly!\n\nDelivery timeline: ${compTime} (${deliveryDate.toLocaleDateString("en-IN", { day: "numeric", month: "short" })}).\nCustomer has been notified with verification OTP.`
+      );
+    } catch (err) {
+      console.error(err);
+      Alert.alert("Error", err?.response?.data?.error || "Could not confirm VIP order.");
+    } finally {
+      setDirectConfirmingId(null);
     }
   };
 
@@ -220,7 +467,15 @@ export function TailorOrdersScreen() {
     }
   };
 
-  const [filterTab, setFilterTab] = useState("all"); // "all", "pending", "active", "completed"
+  const calcTargetDate = (d) => {
+    const num = parseInt(d, 10);
+    if (isNaN(num) || num <= 0) return "";
+    const dt = new Date();
+    dt.setDate(dt.getDate() + num);
+    return dt.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+  };
+
+  const pendingCount = orders.filter(o => o.status === "pending").length;
 
   const filteredOrders = orders.filter(o => {
     if (filterTab === "pending") return o.status === "pending";
@@ -229,18 +484,176 @@ export function TailorOrdersScreen() {
     return true;
   });
 
+  // ----------------- Customer Appointments Handlers & Modals -----------------
+  const cancelCustomerBooking = (bookingId) => {
+    Alert.alert("Cancel Appointment", "Are you sure you want to cancel this booking?", [
+      { text: "No", style: "cancel" },
+      {
+        text: "Yes, Cancel",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await api.patch(`/bookings/${bookingId}`, { status: "cancelled" });
+            Alert.alert("Cancelled", "Your appointment has been cancelled.");
+            await loadCustomerAppointments();
+          } catch (e) {
+            Alert.alert("Error", e?.response?.data?.error || "Failed to cancel booking");
+          }
+        }
+      }
+    ]);
+  };
+
+  const cancelCustomerTailorOrder = (orderId) => {
+    Alert.alert("Cancel Booking Request", "Are you sure you want to cancel this tailor booking?", [
+      { text: "No", style: "cancel" },
+      {
+        text: "Yes, Cancel",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await api.patch(`/tailors/orders/${orderId}/cancel`, { cancellationReason: "Cancelled by customer" });
+            Alert.alert("Booking Cancelled", "Your tailor booking request has been successfully cancelled.");
+            await loadCustomerAppointments();
+          } catch (e) {
+            Alert.alert("Cancellation Failed", e?.response?.data?.error || "Failed to cancel order");
+          }
+        }
+      }
+    ]);
+  };
+
+  const submitReview = async () => {
+    if (!reviewBookingId) return;
+    setSubmittingReview(true);
+    try {
+      await api.post("/reviews", {
+        bookingId: reviewBookingId,
+        barberId: reviewBarberId,
+        rating,
+        comment
+      });
+      setReviewModalVisible(false);
+      setReviewBookingId(null);
+      Alert.alert("Thank You!", "Your review has been submitted.");
+      await loadCustomerAppointments();
+    } catch (e) {
+      Alert.alert("Error", e?.response?.data?.error || "Failed to submit review");
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
+  const handleSubmittingTailorRating = async () => {
+    if (!tailorRatingOrder) return;
+    setSubmittingTailorRating(true);
+    try {
+      const orderId = tailorRatingOrder._id || tailorRatingOrder.id;
+      const res = await api.post(`/tailors/orders/${orderId}/rate`, {
+        rating: Number(tailorRating) || 5,
+        comment: (tailorComment || "").trim()
+      });
+      Alert.alert("Thank You! ⭐️", res.data?.message || "Your tailor rating & review has been saved successfully.");
+      setTailorRatingModalVisible(false);
+      setTailorRatingOrder(null);
+      await loadCustomerAppointments();
+    } catch (err) {
+      Alert.alert("Submission Failed", err?.response?.data?.error || "Failed to submit tailor rating");
+    } finally {
+      setSubmittingTailorRating(false);
+    }
+  };
+
+  const getBookingType = (item) => {
+    if (item.isTailorOrder) return "tailor";
+    const cat = (item.barber?.businessCategory || item.barber?.shopType || item.barberId?.businessCategory || "").toLowerCase();
+    if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour")) return "beauty";
+    return "barber";
+  };
+
+  // Customer items filter
+  const customerCounts = {
+    all: customerAppointments.length,
+    pending: customerAppointments.filter(i => i.status === "pending").length,
+    active: customerAppointments.filter(i => ["confirmed", "arrived", "in-progress", "accepted", "stitching", "ready", "fitting"].includes(i.status)).length,
+    history: customerAppointments.filter(i => ["completed", "cancelled", "declined", "rejected", "expired"].includes(i.status)).length
+  };
+
+  const filteredCustomerAppointments = customerAppointments.filter(item => {
+    const status = item.status;
+    const bType = getBookingType(item);
+
+    // Status filter
+    if (customerTab === "pending" && status !== "pending") return false;
+    if (customerTab === "active" && !["confirmed", "arrived", "in-progress", "accepted", "stitching", "ready", "fitting"].includes(status)) return false;
+    if (customerTab === "history" && !["completed", "cancelled", "declined", "rejected", "expired"].includes(status)) return false;
+
+    // Service filter
+    if (serviceTypeFilter !== "all" && bType !== serviceTypeFilter) return false;
+
+    // Search query filter
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      const shopName = (item.isTailorOrder ? item.tailorId?.shopName : item.barber?.shopName) || "";
+      const services = (item.services || []).map(s => s.name).join(" ");
+      const idStr = item.id || item._id || "";
+      return shopName.toLowerCase().includes(q) || services.toLowerCase().includes(q) || idStr.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const activeOtpBooking = customerAppointments.find(item =>
+    (
+      (item.status === "confirmed" || item.status === "accepted" || item.status === "ready") &&
+      (item.otp || item.deliveryOtp || item.verificationPin) &&
+      (!item.isOtpVerified || (item.deliveryOtp && !item.isDeliveryOtpVerified))
+    )
+  );
+
+  // ----------------- Render Items -----------------
   const renderItem = ({ item }) => {
     const isHome = item.isHomeService;
+    const isPremium = Boolean(
+      item.isPremiumService ||
+      (item.services || []).some(s => s.serviceMode === "premium" || s.isPremium || (s.name && /premium|vip/i.test(s.name)))
+    );
     const expDate = item.deliveryDate ? new Date(item.deliveryDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : null;
 
+    const pSvc = (item.services || []).find(s => s.serviceMode === "premium" || s.isPremium || (s.name && /premium|vip/i.test(s.name)) || s.completionTime);
+    const displayTurnaround = item.completionTime 
+      || pSvc?.completionTime 
+      || (isPremium ? "12 Hours" : (item.estimatedDays ? `${item.estimatedDays} Days` : ""));
+
     return (
-      <View style={styles.card}>
+      <View style={[styles.card, isPremium && styles.cardVIP]}>
+        {/* VIP Premium Alert Banner */}
+        {isPremium && (
+          <View style={styles.vipOrderBanner}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
+              <Ionicons name="sparkles" size={16} color="#fbbf24" />
+              <Text style={styles.vipOrderBannerText}>👑 PREMIUM VIP BOOKING — EXPRESS</Text>
+            </View>
+            <View style={styles.vipBadgePill}>
+              <Text style={styles.vipBadgePillText}>VIP FAST-TRACK</Text>
+            </View>
+          </View>
+        )}
+
         {/* Pending Request Alert Banner */}
-        {item.status === "pending" && (
+        {item.status === "pending" && !isPremium && (
           <View style={{ backgroundColor: "#fef3c7", padding: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: "#fde68a", flexDirection: "row", alignItems: "center" }}>
             <Ionicons name="notifications" size={18} color="#d97706" style={{ marginRight: 8 }} />
             <Text style={{ fontSize: 13, fontWeight: "800", color: "#b45309", flex: 1 }}>
               NEW BOOKING REQUEST — Action Required
+            </Text>
+          </View>
+        )}
+
+        {item.status === "pending" && isPremium && (
+          <View style={{ backgroundColor: "#faf5ff", padding: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: "#e9d5ff", flexDirection: "row", alignItems: "center" }}>
+            <Ionicons name="flash" size={18} color="#9333ea" style={{ marginRight: 8 }} />
+            <Text style={{ fontSize: 13, fontWeight: "800", color: "#7e22ce", flex: 1 }}>
+              ⚡ VIP EXPRESS BOOKING — 1-Tap Direct Confirm Available!
             </Text>
           </View>
         )}
@@ -257,6 +670,15 @@ export function TailorOrdersScreen() {
 
         {/* Service Mode Badge */}
         <View style={styles.modeBadgeRow}>
+          {isPremium && (
+            <View style={[styles.modeBadge, { backgroundColor: "#f3e8ff", borderColor: "#c084fc", borderWidth: 1 }]}>
+              <Ionicons name="ribbon" size={14} color="#7e22ce" />
+              <Text style={[styles.modeBadgeText, { color: "#7e22ce", fontWeight: "800" }]}>
+                👑 VIP Premium
+              </Text>
+            </View>
+          )}
+
           <View style={[styles.modeBadge, { backgroundColor: isHome ? "#ede9fe" : "#e0f2fe" }]}>
             <Ionicons name={isHome ? "home" : "storefront"} size={14} color={isHome ? "#6d28d9" : "#0369a1"} />
             <Text style={[styles.modeBadgeText, { color: isHome ? "#6d28d9" : "#0369a1" }]}>
@@ -264,15 +686,48 @@ export function TailorOrdersScreen() {
             </Text>
           </View>
 
-          {item.estimatedDays ? (
-            <View style={styles.timelineBadge}>
-              <Ionicons name="time-outline" size={14} color="#059669" />
-              <Text style={styles.timelineBadgeText}>
-                {item.estimatedDays} Days{expDate ? ` (${expDate})` : ""}
+          {displayTurnaround ? (
+            <View style={[styles.timelineBadge, isPremium && { backgroundColor: "#f3e8ff", borderColor: "#c084fc", borderWidth: 1 }]}>
+              <Ionicons name="time-outline" size={14} color={isPremium ? "#7e22ce" : "#059669"} />
+              <Text style={[styles.timelineBadgeText, isPremium && { color: "#7e22ce", fontWeight: "800" }]}>
+                {displayTurnaround}{expDate ? ` (${expDate})` : ""}
               </Text>
             </View>
           ) : null}
         </View>
+
+        {/* Customer Address & Contact Info */}
+        {item.homeServiceAddress ? (
+          <View style={{ backgroundColor: "#f0fdfa", padding: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: "#ccfbf1" }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <Ionicons name="location-sharp" size={14} color="#0d9488" style={{ marginRight: 4 }} />
+                <Text style={{ fontSize: 12, fontWeight: "700", color: "#0f766e" }}>
+                  {isHome ? "Doorstep Visit Address:" : "Customer Address:"}
+                </Text>
+              </View>
+              {item.customerId?.phone && (
+                <Pressable onPress={() => Linking.openURL(`tel:${item.customerId.phone}`)} style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Ionicons name="call" size={12} color="#0d9488" style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 12, color: "#0d9488", fontWeight: "700", textDecorationLine: "underline" }}>{item.customerId.phone}</Text>
+                </Pressable>
+              )}
+            </View>
+            <Text style={{ fontSize: 12, color: "#134e4a", fontWeight: "500" }}>
+              {item.homeServiceAddress}
+            </Text>
+          </View>
+        ) : item.customerId?.phone ? (
+          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10, backgroundColor: "#f8fafc", padding: 8, borderRadius: 8, borderWidth: 1, borderColor: "#e2e8f0" }}>
+            <Ionicons name="call" size={13} color="#0d9488" style={{ marginRight: 6 }} />
+            <Text style={{ fontSize: 12, color: "#64748b", marginRight: 4 }}>Customer Contact:</Text>
+            <Pressable onPress={() => Linking.openURL(`tel:${item.customerId.phone}`)}>
+              <Text style={{ fontSize: 12, color: "#0d9488", fontWeight: "700", textDecorationLine: "underline" }}>
+                {item.customerId.phone}
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         {/* Initial OTP Verification Badge */}
         {item.status !== "pending" && (
@@ -329,9 +784,19 @@ export function TailorOrdersScreen() {
         )}
 
         <View style={styles.servicesBox}>
-          {item.services.map((s, i) => (
-            <Text key={i} style={styles.serviceText}>• {s.name} (x{s.quantity})</Text>
-          ))}
+          {item.services.map((s, i) => {
+            const isSvcVip = isPremium || s.serviceMode === "premium" || (s.name && /premium|vip/i.test(s.name));
+            return (
+              <View key={i} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginVertical: 2 }}>
+                <Text style={styles.serviceText}>• {s.name} (x{s.quantity})</Text>
+                {isSvcVip && (
+                  <View style={styles.serviceVipTag}>
+                    <Text style={styles.serviceVipTagText}>👑 VIP</Text>
+                  </View>
+                )}
+              </View>
+            );
+          })}
         </View>
 
         <View style={styles.footerRow}>
@@ -342,9 +807,26 @@ export function TailorOrdersScreen() {
                 <Pressable style={[styles.btn, styles.declineBtn]} onPress={() => updateStatus(item._id, "declined")}>
                   <Text style={styles.declineText}>Decline</Text>
                 </Pressable>
-                <Pressable style={[styles.btn, styles.acceptBtn]} onPress={() => handleOpenAcceptModal(item)}>
-                  <Text style={styles.acceptText}>Confirm Booking ✅</Text>
-                </Pressable>
+                {isPremium ? (
+                  <Pressable
+                    style={[styles.btn, styles.acceptBtnVIP]}
+                    onPress={() => handleDirectConfirmPremium(item)}
+                    disabled={directConfirmingId === item._id}
+                  >
+                    {directConfirmingId === item._id ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <Ionicons name="flash" size={15} color="#fbbf24" />
+                        <Text style={styles.acceptText}>Direct Confirm ⚡</Text>
+                      </View>
+                    )}
+                  </Pressable>
+                ) : (
+                  <Pressable style={[styles.btn, styles.acceptBtn]} onPress={() => handleOpenAcceptModal(item)}>
+                    <Text style={styles.acceptText}>Confirm Booking ✅</Text>
+                  </Pressable>
+                )}
               </>
             )}
             {item.status !== "pending" && item.status !== "cancelled" && item.status !== "completed" && item.status !== "declined" && (
@@ -382,7 +864,273 @@ export function TailorOrdersScreen() {
     );
   };
 
-  if (loading && orders.length === 0) {
+  const renderCustomerCard = (item) => {
+    const statusStyle = getStatusBadge(item.status);
+    const isBeauty = getBookingType(item) === "beauty";
+    return (
+      <View style={styles.customerCard}>
+        <View style={styles.cardHeader}>
+          <View style={styles.cardHeaderLeft}>
+            <View style={[styles.avatarCircle, { backgroundColor: isBeauty ? "#fce7f3" : "#e0e7ff", borderColor: isBeauty ? "#fbcfe8" : "#c7d2fe" }]}>
+              <Text style={[styles.avatarText, { color: isBeauty ? "#be185d" : "#4f46e5" }]}>{isBeauty ? "💄" : getInitials(item.barber?.shopName)}</Text>
+            </View>
+            <View style={styles.cardHeaderInfo}>
+              <Text style={styles.shopName} numberOfLines={1}>{item.barber?.shopName || (isBeauty ? "Beauty Parlor" : "Barber Shop")}</Text>
+              <Text style={styles.bookingIdText}>{isBeauty ? "💄 BEAUTY • " : "💈 SALON • "}ID: {(item.id || item._id || "").slice(-6).toUpperCase()}</Text>
+            </View>
+          </View>
+          <View style={[styles.badge, { backgroundColor: statusStyle.bg }]}>
+            <Ionicons name={statusStyle.icon} size={12} color={statusStyle.text} style={{ marginRight: 4 }} />
+            <Text style={[styles.badgeText, { color: statusStyle.text }]}>{item.status}</Text>
+          </View>
+        </View>
+
+        <View style={styles.cardDivider} />
+
+        {/* Live Queue Position */}
+        {["pending", "confirmed", "arrived"].includes(item.status) && item.queuePosition > 0 && (
+          <View style={{ backgroundColor: "#ffedd5", padding: 12, borderRadius: 12, marginBottom: 16, flexDirection: "row", alignItems: "center" }}>
+            <Ionicons name="people" size={20} color="#ea580c" style={{ marginRight: 8 }} />
+            <View>
+              <Text style={{ color: "#c2410c", fontWeight: "700", fontSize: 14 }}>Queue Position: #{item.queuePosition}</Text>
+              <Text style={{ color: "#ea580c", fontSize: 12 }}>Customers ahead of you: {item.queuePosition - 1}</Text>
+            </View>
+          </View>
+        )}
+
+        <View style={styles.detailsGrid}>
+          <View style={styles.detailBlock}>
+            <Text style={styles.detailLabel}>Date</Text>
+            <Text style={styles.detailValue}>{formatDateOnly(item.arrivalTime || item.startTime)}</Text>
+          </View>
+          <View style={styles.detailBlock}>
+            <Text style={styles.detailLabel}>Time</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Text style={styles.detailValue}>{formatTime(item.arrivalTime || item.startTime)}</Text>
+              {!item.isHomeService && (item.status === 'pending' || item.status === 'confirmed') && (
+                <LiveCountdown targetDate={item.arrivalTime || item.startTime} />
+              )}
+            </View>
+          </View>
+        </View>
+
+        {item.services?.length ? (
+          <View style={styles.svcContainer}>
+            <Text style={styles.svcTitle}>Services Requested:</Text>
+            <View style={styles.svcTags}>
+              {item.services.map((s, i) => (
+                <View key={i} style={styles.svcTag}>
+                  <Text style={styles.svcTagText}>{s.name} - ₹{s.price || 0}</Text>
+                </View>
+              ))}
+            </View>
+            <Text style={{ fontSize: 13, fontWeight: "700", color: "#334155", marginTop: 8 }}>
+              Total: ₹{item.services.reduce((sum, s) => sum + (s.price || 0), 0)}
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Pending Confirmation Banner */}
+        {item.status === "pending" && (
+          <View style={{ backgroundColor: "#fffbeb", padding: 12, borderRadius: 12, marginVertical: 10, borderWidth: 1, borderColor: "#fef08a", flexDirection: "row", alignItems: "center" }}>
+            <Ionicons name="time" size={20} color="#d97706" style={{ marginRight: 10 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontWeight: "800", color: "#b45309" }}>Pending Confirmation</Text>
+              <Text style={{ fontSize: 12, color: "#d97706", marginTop: 2 }}>
+                Waiting for barber partner to confirm. OTP will be generated immediately once confirmed.
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* Check-in OTP Box */}
+        {item.status === "confirmed" && !item.isOtpVerified && item.verificationPin && (
+          <View style={{
+            backgroundColor: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#fef2f2" : "#fef3c7",
+            padding: 14,
+            borderRadius: 14,
+            marginVertical: 12,
+            borderWidth: 1,
+            borderColor: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#fca5a5" : "#fde68a",
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between"
+          }}>
+            <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+              <Ionicons
+                name={(item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "alert-circle" : "key"}
+                size={24}
+                color={(item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#dc2626" : "#d97706"}
+                style={{ marginRight: 10 }}
+              />
+              <View>
+                <Text style={{
+                  fontSize: 11,
+                  fontWeight: "800",
+                  color: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#991b1b" : "#b45309",
+                  textTransform: "uppercase"
+                }}>
+                  {(item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "OTP Expired ❌" : "Check-in OTP (Valid 12h)"}
+                </Text>
+                <Text style={{
+                  fontSize: 24,
+                  fontWeight: "900",
+                  color: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#dc2626" : "#92400e",
+                  letterSpacing: 4,
+                  marginTop: 2,
+                  textDecorationLine: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "line-through" : "none"
+                }}>
+                  {item.verificationPin}
+                </Text>
+              </View>
+            </View>
+            <View style={{
+              backgroundColor: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#fee2e2" : "#d97706",
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              borderRadius: 8
+            }}>
+              <Text style={{
+                color: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#dc2626" : "#ffffff",
+                fontWeight: "800",
+                fontSize: 11
+              }}>
+                {(item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "Expired" : "Show Stylist"}
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* Actions for customer */}
+        {(item.status === "pending" || item.status === "confirmed") && (
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+            <Pressable style={styles.cancelBookingBtn} onPress={() => cancelCustomerBooking(item.id || item._id)}>
+              <Text style={styles.cancelBookingBtnText}>Cancel Booking</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {item.status === "completed" && (
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+            <Pressable
+              style={[styles.cancelBookingBtn, { backgroundColor: "#fef08a" }]}
+              onPress={() => {
+                setReviewBookingId(item.id || item._id);
+                setReviewBarberId(item.barber?.id || item.barberId?._id || item.barberId);
+                setRating(5);
+                setComment("");
+                setReviewModalVisible(true);
+              }}
+            >
+              <Text style={[styles.cancelBookingBtnText, { color: "#854d0e" }]}>⭐️ Leave a Review</Text>
+            </Pressable>
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  const renderTailorCard = (item) => {
+    const statusStyle = getStatusBadge(item.status);
+    const shopName = item.tailorId?.shopName || "Tailor Shop";
+    const isTailorVip = Boolean(
+      item.isPremiumService ||
+      (item.services || []).some(s => s.serviceMode === "premium" || (s.name && /premium|vip/i.test(s.name)))
+    );
+
+    return (
+      <View style={[styles.customerCard, isTailorVip && { borderColor: "#c084fc", borderWidth: 1.5, backgroundColor: "#fffdfa" }]}>
+        <View style={styles.cardHeader}>
+          <View style={styles.cardHeaderLeft}>
+            <View style={[styles.avatarCircle, { backgroundColor: "#f3e8ff", borderColor: "#d8b4fe" }]}>
+              <Text style={[styles.avatarText, { color: "#6d28d9" }]}>✂️</Text>
+            </View>
+            <View style={styles.cardHeaderInfo}>
+              <Text style={styles.shopName} numberOfLines={1}>{shopName}</Text>
+              <Text style={styles.bookingIdText}>ORDER: #{item._id.slice(-6).toUpperCase()}</Text>
+            </View>
+          </View>
+          <View style={[styles.badge, { backgroundColor: statusStyle.bg }]}>
+            <Ionicons name={statusStyle.icon} size={12} color={statusStyle.text} style={{ marginRight: 4 }} />
+            <Text style={[styles.badgeText, { color: statusStyle.text }]}>{(item.status || "pending").toUpperCase()}</Text>
+          </View>
+        </View>
+
+        <View style={styles.cardDivider} />
+
+        {/* Delivery / Completion Date Banner */}
+        {item.deliveryDate ? (
+          <View style={{ backgroundColor: "#f3e8ff", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: "#d8b4fe" }}>
+            <Text style={{ fontSize: 11, fontWeight: "800", color: "#6d28d9", textTransform: "uppercase" }}>Est. Completion</Text>
+            <Text style={{ fontSize: 14, fontWeight: "900", color: "#4c1d95", marginTop: 2 }}>
+              Your order will be completed by {new Date(item.deliveryDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Customer OTP Card */}
+        {item.otp && (
+          <View style={{ backgroundColor: item.isOtpVerified ? "#ecfdf5" : "#fef3c7", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: item.isOtpVerified ? "#a7f3d0" : "#fde68a", flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+              <Ionicons name={item.isOtpVerified ? "checkmark-circle" : "key"} size={22} color={item.isOtpVerified ? "#059669" : "#d97706"} style={{ marginRight: 8 }} />
+              <View>
+                <Text style={{ fontSize: 10, fontWeight: "800", color: item.isOtpVerified ? "#065f46" : "#b45309" }}>{item.isOtpVerified ? "IDENTITY VERIFIED ✅" : "SHARE WITH TAILOR ✂️"}</Text>
+                <Text style={{ fontSize: 20, fontWeight: "900", color: item.isOtpVerified ? "#047857" : "#b45309", letterSpacing: 3, marginTop: 1 }}>{item.otp}</Text>
+              </View>
+            </View>
+            <View style={{ backgroundColor: item.isOtpVerified ? "#d1fae5" : "#fef08a", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
+              <Text style={{ fontSize: 10, fontWeight: "800", color: item.isOtpVerified ? "#047857" : "#92400e" }}>{item.isOtpVerified ? "Verified" : "Show Tailor"}</Text>
+            </View>
+          </View>
+        )}
+
+        {/* Delivery OTP Card */}
+        {item.deliveryOtp && (
+          <View style={{ backgroundColor: item.isDeliveryOtpVerified ? "#ecfdf5" : "#e0f2fe", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: item.isDeliveryOtpVerified ? "#a7f3d0" : "#bae6fd", flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+              <Ionicons name={item.isDeliveryOtpVerified ? "checkmark-done-circle" : "cube"} size={22} color={item.isDeliveryOtpVerified ? "#059669" : "#0284c7"} style={{ marginRight: 8 }} />
+              <View>
+                <Text style={{ fontSize: 10, fontWeight: "800", color: item.isDeliveryOtpVerified ? "#065f46" : "#0369a1" }}>{item.isDeliveryOtpVerified ? "ORDER DELIVERED ✅" : "DELIVERY OTP 📦"}</Text>
+                <Text style={{ fontSize: 20, fontWeight: "900", color: item.isDeliveryOtpVerified ? "#047857" : "#0369a1", letterSpacing: 3, marginTop: 1 }}>{item.deliveryOtp}</Text>
+              </View>
+            </View>
+            <View style={{ backgroundColor: item.isDeliveryOtpVerified ? "#d1fae5" : "#e0f2fe", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
+              <Text style={{ fontSize: 10, fontWeight: "800", color: item.isDeliveryOtpVerified ? "#047857" : "#0369a1" }}>{item.isDeliveryOtpVerified ? "Delivered" : "Show Tailor"}</Text>
+            </View>
+          </View>
+        )}
+
+        <View style={styles.servicesBox}>
+          {(item.services || []).map((s, i) => (
+            <Text key={i} style={styles.serviceText}>• {s.name} (₹{s.price || 0})</Text>
+          ))}
+          <Text style={{ fontSize: 14, fontWeight: "800", color: "#0f172a", marginTop: 6 }}>Total: ₹{item.totalAmount}</Text>
+        </View>
+
+        {item.status === "pending" && (
+          <Pressable style={styles.cancelBookingBtn} onPress={() => cancelCustomerTailorOrder(item._id)}>
+            <Text style={styles.cancelBookingBtnText}>Cancel Order</Text>
+          </Pressable>
+        )}
+
+        {item.status === "completed" && (
+          <Pressable
+            style={[styles.cancelBookingBtn, { backgroundColor: "#fef08a" }]}
+            onPress={() => {
+              setTailorRatingOrder(item);
+              setTailorRating(5);
+              setTailorComment("");
+              setTailorRatingModalVisible(true);
+            }}
+          >
+            <Text style={[styles.cancelBookingBtnText, { color: "#854d0e" }]}>⭐️ Rate Tailor Service</Text>
+          </Pressable>
+        )}
+      </View>
+    );
+  };
+
+  if (loading && orders.length === 0 && customerAppointments.length === 0) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color="#6d28d9" />
@@ -390,56 +1138,184 @@ export function TailorOrdersScreen() {
     );
   }
 
-  const calcTargetDate = (d) => {
-    const num = parseInt(d, 10);
-    if (isNaN(num) || num <= 0) return "";
-    const dt = new Date();
-    dt.setDate(dt.getDate() + num);
-    return dt.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
-  };
-
-  const pendingCount = orders.filter(o => o.status === "pending").length;
-
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
-      {/* Filter Tabs */}
-      <View style={{ paddingTop: 8, paddingBottom: 8 }}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, gap: 8 }}>
-          {[
-            { key: "all", label: `All (${orders.length})` },
-            { key: "pending", label: `Pending (${pendingCount})`, badge: pendingCount > 0 },
-            { key: "active", label: "Active" },
-            { key: "completed", label: "History" }
-          ].map(tab => (
-            <Pressable
-              key={tab.key}
-              style={[
-                { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#e2e8f0" },
-                filterTab === tab.key && { backgroundColor: "#6d28d9", borderColor: "#6d28d9" }
-              ]}
-              onPress={() => setFilterTab(tab.key)}
-            >
-              <Text style={[{ fontSize: 13, fontWeight: "700", color: "#64748b" }, filterTab === tab.key && { color: "#ffffff" }]}>
-                {tab.label}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
+      {/* Top Header Title */}
+      <View style={styles.headerContainer}>
+        <Text style={styles.headerTitle}>Orders & Queue</Text>
       </View>
 
-      <FlatList
-        data={filteredOrders}
-        keyExtractor={item => item._id}
-        contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6d28d9" />}
-        renderItem={renderItem}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Ionicons name="document-text-outline" size={48} color="#cbd5e1" />
-            <Text style={styles.emptyText}>No orders found for selected filter.</Text>
+      {/* Top Segmented Control for Tailor Partner */}
+      <View style={styles.primaryToggleWrapper}>
+        <View style={styles.primaryToggle}>
+          {["Shop Queue", "My Appointments"].map((mode) => {
+            const active = viewMode === mode;
+            return (
+              <Pressable
+                key={mode}
+                style={[styles.primaryToggleBtn, active && styles.primaryToggleBtnActive]}
+                onPress={() => setViewMode(mode)}
+              >
+                <Text style={[styles.primaryToggleText, active && styles.primaryToggleTextActive]}>
+                  {mode}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
+      {/* ==================== VIEW MODE 1: SHOP QUEUE ==================== */}
+      {viewMode === "Shop Queue" && (
+        <>
+          {/* Shop Orders Filter Tabs */}
+          <View style={{ paddingTop: 4, paddingBottom: 10 }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, gap: 8 }}>
+              {[
+                { key: "all", label: `All (${orders.length})` },
+                { key: "pending", label: `Pending (${pendingCount})`, badge: pendingCount > 0 },
+                { key: "active", label: "Active" },
+                { key: "completed", label: "History" }
+              ].map(tab => (
+                <Pressable
+                  key={tab.key}
+                  style={[
+                    { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#e2e8f0" },
+                    filterTab === tab.key && { backgroundColor: "#6d28d9", borderColor: "#6d28d9" }
+                  ]}
+                  onPress={() => setFilterTab(tab.key)}
+                >
+                  <Text style={[{ fontSize: 13, fontWeight: "700", color: "#64748b" }, filterTab === tab.key && { color: "#ffffff" }]}>
+                    {tab.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
           </View>
-        }
-      />
+
+          <FlatList
+            data={filteredOrders}
+            keyExtractor={item => item._id}
+            contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6d28d9" />}
+            renderItem={renderItem}
+            ListEmptyComponent={
+              <View style={styles.empty}>
+                <Ionicons name="document-text-outline" size={48} color="#cbd5e1" />
+                <Text style={styles.emptyText}>No orders found in Shop Queue.</Text>
+              </View>
+            }
+          />
+        </>
+      )}
+
+      {/* ==================== VIEW MODE 2: MY APPOINTMENTS ==================== */}
+      {viewMode === "My Appointments" && (
+        <>
+          {/* Status Filter Tabs */}
+          <View style={{ backgroundColor: "#ffffff", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "#f1f5f9" }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 8, marginBottom: 8 }}>
+              {[
+                { key: "all", label: `All (${customerCounts.all})` },
+                { key: "pending", label: `Pending (${customerCounts.pending})` },
+                { key: "active", label: `Active (${customerCounts.active})` },
+                { key: "history", label: `History (${customerCounts.history})` },
+              ].map(tab => (
+                <Pressable
+                  key={tab.key}
+                  style={[
+                    { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: "#f8fafc", borderWidth: 1, borderColor: "#e2e8f0" },
+                    customerTab === tab.key && { backgroundColor: "#6d28d9", borderColor: "#6d28d9" }
+                  ]}
+                  onPress={() => setCustomerTab(tab.key)}
+                >
+                  <Text style={[{ fontSize: 13, fontWeight: "700", color: "#64748b" }, customerTab === tab.key && { color: "#ffffff" }]}>
+                    {tab.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+
+            {/* Service Type Filter Chips */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
+              {[
+                { key: "all", label: "All Services" },
+                { key: "beauty", label: "💄 Beauty Parlor" },
+                { key: "tailor", label: "✂️ Tailor Orders" },
+                { key: "barber", label: "💈 Barber Bookings" },
+              ].map(chip => (
+                <Pressable
+                  key={chip.key}
+                  style={[
+                    { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, backgroundColor: "#f1f5f9" },
+                    serviceTypeFilter === chip.key && { backgroundColor: chip.key === "beauty" ? "#be185d" : "#0f172a" }
+                  ]}
+                  onPress={() => setServiceTypeFilter(chip.key)}
+                >
+                  <Text style={[{ fontSize: 12, fontWeight: "700", color: "#64748b" }, serviceTypeFilter === chip.key && { color: "#ffffff" }]}>
+                    {chip.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+
+          {/* Quick Active OTP Alert Banner */}
+          {activeOtpBooking && (
+            <View style={{ marginHorizontal: 16, marginTop: 10, backgroundColor: "#fef3c7", padding: 12, borderRadius: 14, borderWidth: 1, borderColor: "#fde68a", flexDirection: "row", alignItems: "center" }}>
+              <Ionicons name="key" size={20} color="#d97706" style={{ marginRight: 10 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, fontWeight: "800", color: "#b45309", textTransform: "uppercase" }}>
+                  {activeOtpBooking.deliveryOtp 
+                    ? "📦 Active Delivery OTP Code" 
+                    : activeOtpBooking.isTailorOrder 
+                      ? "✂️ Active Tailor Verification OTP" 
+                      : "💈 Active Barber Check-in OTP (12h Validity)"}
+                </Text>
+                <Text style={{ fontSize: 16, fontWeight: "900", color: "#92400e", letterSpacing: 2, marginTop: 2 }}>
+                  {activeOtpBooking.deliveryOtp || activeOtpBooking.otp || activeOtpBooking.verificationPin}
+                </Text>
+              </View>
+              <View style={{ backgroundColor: "#d97706", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
+                <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 11 }}>
+                  {activeOtpBooking.isTailorOrder ? "Show Tailor" : "Show Barber"}
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* Search Bar */}
+          <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
+            <View style={styles.searchInputWrapper}>
+              <Ionicons name="search" size={18} color="#94a3b8" />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search appointments..."
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholderTextColor="#94a3b8"
+              />
+            </View>
+          </View>
+
+          <FlatList
+            data={filteredCustomerAppointments}
+            keyExtractor={item => item.id || item._id}
+            contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6d28d9" />}
+            renderItem={({ item }) => item.isTailorOrder ? renderTailorCard(item) : renderCustomerCard(item)}
+            ListEmptyComponent={
+              <View style={styles.empty}>
+                <Ionicons name="calendar-outline" size={48} color="#cbd5e1" />
+                <Text style={styles.emptyText}>No Appointments</Text>
+                <Text style={{ fontSize: 13, color: "#94a3b8", textAlign: "center", marginTop: 4 }}>
+                  Your personal salon and tailor appointments will appear here.
+                </Text>
+              </View>
+            }
+          />
+        </>
+      )}
 
       {/* Accept Order & Set Target Date Modal */}
       <Modal visible={acceptModalVisible} transparent animationType="slide" onRequestClose={() => setAcceptModalVisible(false)}>
@@ -595,6 +1471,83 @@ export function TailorOrdersScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Salon/Parlor Review Modal */}
+      <Modal visible={reviewModalVisible} transparent animationType="slide" onRequestClose={() => setReviewModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Rate & Review</Text>
+            <Text style={styles.modalSub}>How was your experience?</Text>
+
+            <View style={{ flexDirection: "row", justifyContent: "center", gap: 10, marginBottom: 20 }}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <Pressable key={star} onPress={() => setRating(star)} style={{ padding: 4 }}>
+                  <Ionicons name={rating >= star ? "star" : "star-outline"} size={36} color="#eab308" />
+                </Pressable>
+              ))}
+            </View>
+
+            <TextInput
+              style={{ backgroundColor: "#f8fafc", borderRadius: 10, borderWidth: 1, borderColor: "#e2e8f0", fontSize: 14, padding: 12, minHeight: 80, marginBottom: 20, textAlignVertical: "top" }}
+              placeholder="Write a review or feedback (Optional)"
+              value={comment}
+              onChangeText={setComment}
+              placeholderTextColor="#94a3b8"
+              multiline
+            />
+
+            <View style={styles.modalActions}>
+              <Pressable style={styles.cancelBtn} onPress={() => setReviewModalVisible(false)} disabled={submittingReview}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={styles.confirmBtn} onPress={submitReview} disabled={submittingReview}>
+                {submittingReview ? <ActivityIndicator color="#fff" /> : <Text style={styles.confirmBtnText}>Submit Review</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Tailor Rating Modal */}
+      <Modal visible={tailorRatingModalVisible} transparent animationType="slide" onRequestClose={() => setTailorRatingModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={{ alignItems: "center", marginBottom: 14 }}>
+              <View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: "#f3e8ff", justifyContent: "center", alignItems: "center", marginBottom: 8, borderWidth: 1, borderColor: "#d8b4fe" }}>
+                <Ionicons name="cut" size={28} color="#6d28d9" />
+              </View>
+              <Text style={styles.modalTitle}>Rate Tailor Service ✂️</Text>
+              <Text style={styles.modalSub}>How was your tailoring & outfit experience?</Text>
+            </View>
+
+            <View style={{ flexDirection: "row", justifyContent: "center", gap: 10, marginBottom: 20 }}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <Pressable key={star} onPress={() => setTailorRating(star)} style={{ padding: 4 }}>
+                  <Ionicons name={tailorRating >= star ? "star" : "star-outline"} size={36} color="#eab308" />
+                </Pressable>
+              ))}
+            </View>
+
+            <TextInput
+              style={{ backgroundColor: "#f8fafc", borderRadius: 10, borderWidth: 1, borderColor: "#e2e8f0", fontSize: 14, padding: 12, minHeight: 80, marginBottom: 20, textAlignVertical: "top" }}
+              placeholder="Leave feedback for tailor (Optional)"
+              value={tailorComment}
+              onChangeText={setTailorComment}
+              placeholderTextColor="#94a3b8"
+              multiline
+            />
+
+            <View style={styles.modalActions}>
+              <Pressable style={styles.cancelBtn} onPress={() => setTailorRatingModalVisible(false)} disabled={submittingTailorRating}>
+                <Text style={styles.cancelBtnText}>Skip / Later</Text>
+              </Pressable>
+              <Pressable style={styles.confirmBtn} onPress={handleSubmittingTailorRating} disabled={submittingTailorRating}>
+                {submittingTailorRating ? <ActivityIndicator color="#fff" /> : <Text style={styles.confirmBtnText}>Submit Rating</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -602,6 +1555,72 @@ export function TailorOrdersScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f8fafc" },
   centered: { flex: 1, justifyContent: "center", alignItems: "center" },
+
+  // Top Header & Primary Toggle
+  headerContainer: {
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === "android" ? 16 : 10,
+    paddingBottom: 10,
+    backgroundColor: "#f8fafc",
+  },
+  headerTitle: {
+    fontSize: 26,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  primaryToggleWrapper: {
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+  },
+  primaryToggle: {
+    flexDirection: "row",
+    backgroundColor: "#e2e8f0",
+    borderRadius: 12,
+    padding: 4,
+  },
+  primaryToggleBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  primaryToggleBtnActive: {
+    backgroundColor: "#ffffff",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  primaryToggleText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  primaryToggleTextActive: {
+    color: "#0f172a",
+    fontWeight: "800",
+  },
+
+  // Search input
+  searchInputWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    height: 42,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 13,
+    color: "#0f172a",
+  },
+
+  // Tailor Order Card styles
   card: { backgroundColor: "#fff", borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: "#e2e8f0" },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 },
   customerInfo: { flex: 1 },
@@ -632,8 +1651,127 @@ const styles = StyleSheet.create({
   nextBtn: { backgroundColor: "#0f172a", paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
   nextBtnText: { color: "#fff", fontWeight: "600", fontSize: 13 },
 
+  cardVIP: {
+    borderWidth: 2,
+    borderColor: "#9333ea",
+    backgroundColor: "#fdf8ff",
+    shadowColor: "#9333ea",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  vipOrderBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#7e22ce",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    marginBottom: 12,
+  },
+  vipOrderBannerText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#ffffff",
+    letterSpacing: 0.5,
+  },
+  vipBadgePill: {
+    backgroundColor: "#facc15",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  vipBadgePillText: {
+    fontSize: 10,
+    fontWeight: "900",
+    color: "#581c87",
+  },
+  acceptBtnVIP: {
+    backgroundColor: "#7e22ce",
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  serviceVipTag: {
+    backgroundColor: "#f3e8ff",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: "#d8b4fe",
+  },
+  serviceVipTagText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#7e22ce",
+  },
+
   empty: { padding: 40, alignItems: "center" },
-  emptyText: { marginTop: 12, fontSize: 15, color: "#64748b", fontWeight: "500" },
+  emptyText: { marginTop: 12, fontSize: 16, color: "#475569", fontWeight: "700" },
+
+  // Customer Card styles
+  customerCard: {
+    backgroundColor: "#ffffff",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  cardHeaderLeft: { flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 },
+  avatarCircle: { width: 42, height: 42, borderRadius: 21, justifyContent: "center", alignItems: "center", borderWidth: 1, marginRight: 10 },
+  avatarText: { fontSize: 16, fontWeight: "800" },
+  cardHeaderInfo: { flex: 1 },
+  shopName: { fontSize: 15, fontWeight: "700", color: "#0f172a" },
+  bookingIdText: { fontSize: 11, color: "#64748b", fontWeight: "600", marginTop: 2 },
+  badge: { flexDirection: "row", alignItems: "center", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  badgeText: { fontSize: 11, fontWeight: "700", textTransform: "capitalize" },
+  cardDivider: { height: 1, backgroundColor: "#f1f5f9", marginVertical: 12 },
+
+  detailsGrid: { flexDirection: "row", gap: 16, marginBottom: 12 },
+  detailBlock: { flex: 1 },
+  detailLabel: { fontSize: 11, color: "#64748b", fontWeight: "600", textTransform: "uppercase" },
+  detailValue: { fontSize: 13, fontWeight: "700", color: "#0f172a", marginTop: 2 },
+
+  countdownBadge: {
+    backgroundColor: "#eff6ff",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#bfdbfe",
+  },
+  countdownText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#1d4ed8",
+  },
+
+  svcContainer: { backgroundColor: "#f8fafc", padding: 10, borderRadius: 10, marginVertical: 8 },
+  svcTitle: { fontSize: 11, fontWeight: "700", color: "#64748b", marginBottom: 6 },
+  svcTags: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  svcTag: { backgroundColor: "#ffffff", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: "#e2e8f0" },
+  svcTagText: { fontSize: 11, fontWeight: "600", color: "#334155" },
+
+  cancelBookingBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: "#fef2f2",
+    alignItems: "center",
+  },
+  cancelBookingBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#dc2626",
+  },
 
   // Modal styles
   modalOverlay: { flex: 1, backgroundColor: "rgba(15, 23, 42, 0.6)", justifyContent: "flex-end" },
@@ -641,7 +1779,6 @@ const styles = StyleSheet.create({
   modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   modalTitle: { fontSize: 18, fontWeight: "800", color: "#0f172a" },
   modalSub: { fontSize: 14, color: "#475569", marginBottom: 16 },
-  modalPrompt: { fontSize: 15, fontWeight: "700", color: "#6d28d9", marginBottom: 16 },
 
   dayPillsContainer: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 16 },
   dayPill: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#cbd5e1" },

@@ -50,6 +50,13 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+function cleanUserName(name) {
+  if (!name || typeof name !== "string") return name;
+  return name.replace(/^(mr\.?|mrs\.?|ms\.?)\s+/i, "").trim() || name.trim();
+}
+
+const { calculateIsShopOpen } = require("../utils/time");
+
 function barberSummary(b) {
   if (!b) return null;
   return {
@@ -63,7 +70,9 @@ function barberSummary(b) {
     address: b.address,
     location: b.location,
     seatCount: b.seatCount,
-    isShopOpen: b.isShopOpen,
+    isShopOpen: calculateIsShopOpen(b),
+    offersHomeService: Boolean(b.offersHomeService),
+    homeServiceFee: b.homeServiceFee || 0,
     hasBankOnFile: !!(b.bank && (b.bank.accountNumber || b.bank.upiId)),
     aadhaarLast4: b.aadhaarLast4 || "",
   };
@@ -81,10 +90,13 @@ function tailorSummary(t) {
     shopPosterUrl: t.shopPosterUrl,
     address: t.address,
     location: t.location,
-    isShopOpen: t.isShopOpen,
+    isShopOpen: calculateIsShopOpen(t),
     offersShopService: t.offersShopService !== false,
     offersHomeService: t.offersHomeService !== false,
     offersPremiumService: t.offersPremiumService !== false,
+    homeServiceFee: t.homeServiceFee || t.visitFee || 0,
+    visitFee: t.visitFee || t.homeServiceFee || 0,
+    premiumServiceFee: t.premiumServiceFee || 0,
     hasBankOnFile: !!(t.bank && (t.bank.accountNumber || t.bank.upiId)),
     aadhaarLast4: t.aadhaarLast4 || "",
   };
@@ -132,11 +144,11 @@ async function register(req, res) {
 
     const email = `user_${phone}_${Date.now()}@roopsy.com`;
     const passwordHash = await bcrypt.hash(password, 10);
-    const userRole = role === "barber" ? "barber" : "customer";
+    const cleanedName = cleanUserName(name);
     const user = await User.create({
       email,
       passwordHash,
-      name,
+      name: cleanedName || name,
       phone,
       role: userRole,
     });
@@ -169,7 +181,7 @@ async function register(req, res) {
       user: {
         id: user._id,
         email: user.email,
-        name: user.name,
+        name: cleanUserName(user.name),
         phone: user.phone,
         role: user.role,
         avatarUrl: user.avatarUrl,
@@ -229,7 +241,7 @@ async function login(req, res) {
       user: {
         id: user._id,
         email: user.email,
-        name: user.name,
+        name: cleanUserName(user.name),
         phone: user.phone,
         role: user.role,
         avatarUrl: user.avatarUrl,
@@ -257,7 +269,7 @@ async function getMe(req, res) {
     user: {
       id: req.user._id,
       email: req.user.email,
-      name: req.user.name,
+      name: cleanUserName(req.user.name),
       phone: req.user.phone,
       role: req.user.role,
       avatarUrl: req.user.avatarUrl,
@@ -294,7 +306,9 @@ async function patchMe(req, res) {
     return res.status(404).json({ error: "User not found" });
   }
 
-  if (name !== undefined) user.name = name;
+  if (name !== undefined) {
+    user.name = cleanUserName(name);
+  }
   if (phone !== undefined) user.phone = phone;
   if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
   if (address !== undefined) user.address = address;
@@ -428,15 +442,13 @@ async function deleteNotification(req, res) {
   try {
     const { id } = req.params;
     const mongoose = require("mongoose");
-    const deleted = await Notification.findOneAndDelete({ 
-      _id: new mongoose.Types.ObjectId(id), 
-      userId: req.user._id 
-    });
-    console.log("Single delete notification result:", deleted);
-    if (!deleted) {
-      return res.status(404).json({ error: "Notification not found" });
-    }
-    res.json({ success: true });
+    const filter = {
+      userId: req.user._id,
+      _id: mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id
+    };
+    const result = await Notification.deleteOne(filter);
+    console.log("Single permanent delete notification result:", result);
+    res.json({ success: true, deletedCount: result.deletedCount });
   } catch (error) {
     console.error("deleteNotification err", error);
     res.status(500).json({ error: "Server error" });
@@ -450,15 +462,26 @@ async function deleteNotificationsBulk(req, res) {
       return res.status(400).json({ error: "Invalid notification IDs" });
     }
     const mongoose = require("mongoose");
-    const objectIds = ids.map(id => new mongoose.Types.ObjectId(id));
+    const objectIds = ids.map(id => mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id);
     const result = await Notification.deleteMany({ 
       _id: { $in: objectIds }, 
       userId: req.user._id 
     });
-    console.log("Bulk delete notifications result:", result);
+    console.log("Bulk permanent delete notifications result:", result);
     res.json({ success: true, deletedCount: result.deletedCount });
   } catch (error) {
     console.error("deleteNotificationsBulk err", error);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+async function clearAllNotifications(req, res) {
+  try {
+    const result = await Notification.deleteMany({ userId: req.user._id });
+    console.log("Clear all notifications for user result:", result);
+    res.json({ success: true, deletedCount: result.deletedCount });
+  } catch (error) {
+    console.error("clearAllNotifications err", error);
     res.status(500).json({ error: "Server error" });
   }
 }
@@ -756,6 +779,7 @@ module.exports = {
   deleteMe,
   deleteNotification,
   deleteNotificationsBulk,
+  clearAllNotifications,
   sendOtp,
   verifyOtpLogin,
   forgotPassword,

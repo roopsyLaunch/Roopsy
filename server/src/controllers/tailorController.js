@@ -4,6 +4,7 @@ const TailorService = require("../models/TailorService");
 const TailorOrder = require("../models/TailorOrder");
 const Notification = require("../models/Notification");
 const { haversineDistance } = require("../utils/distance");
+const { calculateIsShopOpen, normalizeWorkingHours } = require("../utils/time");
 
 exports.registerTailor = async (req, res) => {
   try {
@@ -21,7 +22,7 @@ exports.registerTailor = async (req, res) => {
       mobileNumber,
       address,
       location,
-      workingHours,
+      workingHours: normalizeWorkingHours(workingHours),
       gallery,
       specialties: category ? [category] : [],
       approvalStatus: "pending"
@@ -49,6 +50,7 @@ exports.getTailors = async (req, res) => {
         t.distance = Infinity;
       }
       t.averageRating = t.ratingCount ? (t.ratingSum / t.ratingCount).toFixed(1) : "0.0";
+      t.isShopOpen = calculateIsShopOpen(t);
       return t;
     });
 
@@ -68,6 +70,7 @@ exports.getTailorById = async (req, res) => {
     const tailor = await Tailor.findById(req.params.id).lean();
     if (!tailor) return res.status(404).json({ error: "Tailor not found" });
     tailor.averageRating = tailor.ratingCount ? (tailor.ratingSum / tailor.ratingCount).toFixed(1) : "0.0";
+    tailor.isShopOpen = calculateIsShopOpen(tailor);
     res.json({ tailor });
   } catch (error) {
     console.error(error);
@@ -78,13 +81,48 @@ exports.getTailorById = async (req, res) => {
 exports.updateTailorMe = async (req, res) => {
   try {
     const updates = req.body;
+    if (updates.workingHours !== undefined) {
+      updates.workingHours = normalizeWorkingHours(updates.workingHours);
+    }
+    if (updates.homeServiceFee !== undefined) {
+      const fee = Math.max(0, Number(updates.homeServiceFee) || 0);
+      updates.homeServiceFee = fee;
+      updates.visitFee = fee;
+    } else if (updates.visitFee !== undefined) {
+      const fee = Math.max(0, Number(updates.visitFee) || 0);
+      updates.visitFee = fee;
+      updates.homeServiceFee = fee;
+    }
+    if (updates.premiumServiceFee !== undefined) {
+      updates.premiumServiceFee = Math.max(0, Number(updates.premiumServiceFee) || 0);
+    }
     const tailor = await Tailor.findOneAndUpdate(
       { userId: req.user._id },
       { $set: updates },
       { new: true }
     );
     if (!tailor) return res.status(404).json({ error: "Tailor not found" });
-    res.json({ tailor });
+    const tailorObj = tailor.toObject ? tailor.toObject() : tailor;
+    const computedIsOpen = calculateIsShopOpen(tailorObj);
+    tailorObj.isShopOpen = computedIsOpen;
+
+    if (tailor.isShopOpen !== computedIsOpen) {
+      await Tailor.updateOne({ _id: tailor._id }, { $set: { isShopOpen: computedIsOpen } });
+    }
+
+    // Real-time broadcast: notify all connected customer apps at that exact time!
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("shopStatusUpdated", {
+        tailorId: tailor._id.toString(),
+        shopId: tailor._id.toString(),
+        category: "tailor",
+        isShopOpen: computedIsOpen,
+        shopName: tailorObj.shopName
+      });
+    }
+
+    res.json({ tailor: tailorObj });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Internal server error" });
@@ -124,6 +162,30 @@ exports.createTailorService = async (req, res) => {
   try {
     const tailor = await Tailor.findOne({ userId: req.user._id });
     if (!tailor) return res.status(403).json({ error: "Not a tailor" });
+
+    const trimmedName = (req.body.name || "").trim();
+    const serviceMode = req.body.serviceMode || "shop";
+    const escapeRegex = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const existing = await TailorService.findOne({
+      tailorId: tailor._id,
+      name: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, "i") },
+      serviceMode,
+    });
+    if (existing) {
+      Object.assign(existing, req.body);
+      await existing.save();
+
+      // Clean up any historical duplicates
+      await TailorService.deleteMany({
+        tailorId: tailor._id,
+        name: { $regex: new RegExp(`^${escapeRegex(trimmedName)}$`, "i") },
+        serviceMode,
+        _id: { $ne: existing._id },
+      });
+
+      return res.status(200).json({ service: existing });
+    }
 
     const service = await TailorService.create({
       ...req.body,
@@ -176,11 +238,90 @@ exports.createOrder = async (req, res) => {
       isHomeService, isPremiumService, homeServiceAddress, visitDate, visitFee
     } = req.body;
     
+    const targetTailor = await Tailor.findById(tailorId);
+    if (!targetTailor) return res.status(404).json({ error: "Tailor not found" });
+
+    const tailorOwnerId = (targetTailor.userId?._id || targetTailor.userId)?.toString();
+    const requesterId = req.user?._id?.toString();
+    if (tailorOwnerId && requesterId && tailorOwnerId === requesterId) {
+      return res.status(403).json({ error: "You cannot book services at your own tailor shop." });
+    }
+
+    const isShopCurrentlyOpen = calculateIsShopOpen(targetTailor);
+    if (!isShopCurrentlyOpen) {
+      return res.status(400).json({ error: "This tailor shop is currently closed. Bookings are not allowed while the shop is closed." });
+    }
+
+    const serviceIds = (services || []).map(s => s.serviceId || s._id || s.id).filter(Boolean);
+    const dbServices = serviceIds.length > 0 ? await TailorService.find({ _id: { $in: serviceIds } }).lean() : [];
+
+    const normalizedServices = (services || []).map(s => {
+      const dbSvc = dbServices.find(d => d._id.toString() === (s.serviceId || s._id || s.id)?.toString());
+      const sMode = s.serviceMode || dbSvc?.serviceMode || "shop";
+      const cTime = (s.completionTime || dbSvc?.completionTime || "").trim();
+      return {
+        serviceId: s.serviceId || s._id || s.id,
+        name: s.name || dbSvc?.name || "Stitching Service",
+        price: Number(s.price ?? dbSvc?.price ?? 0),
+        quantity: s.quantity || 1,
+        serviceMode: sMode,
+        completionTime: cTime,
+      };
+    });
+
+    const hasPremium = Boolean(
+      isPremiumService ||
+      normalizedServices.some(s => s.serviceMode === "premium" || (s.name && /premium|vip/i.test(s.name))) ||
+      dbServices.some(d => d.serviceMode === "premium" || (d.name && /premium|vip/i.test(d.name)))
+    );
+
+    if (hasPremium && normalizedServices.length > 1) {
+      return res.status(400).json({
+        error: "VIP services operate on a fixed delivery timeline and cannot be combined with other services. Please book the VIP service individually."
+      });
+    }
+
+    let orderCompletionTime = (req.body.completionTime || "").trim();
+    let orderEstimatedDays = req.body.estimatedDays;
+
+    if (hasPremium) {
+      if (!orderCompletionTime) {
+        const pSvc = normalizedServices.find(s => s.serviceMode === "premium" || (s.name && /premium|vip/i.test(s.name)) || s.completionTime)
+          || dbServices.find(d => d.serviceMode === "premium" || (d.name && /premium|vip/i.test(d.name)) || d.completionTime);
+        if (pSvc && pSvc.completionTime) {
+          orderCompletionTime = pSvc.completionTime;
+        } else {
+          orderCompletionTime = "12 Hours";
+        }
+      }
+
+      const matchHours = orderCompletionTime.match(/(\d+)\s*(?:hour|hr)/i);
+      const matchDays = orderCompletionTime.match(/(\d+)\s*(?:day)/i);
+      if (matchHours) {
+        orderEstimatedDays = Math.max(1, Math.ceil(parseInt(matchHours[1], 10) / 24));
+      } else if (matchDays) {
+        orderEstimatedDays = Math.max(1, parseInt(matchDays[1], 10));
+      } else {
+        orderEstimatedDays = 1;
+      }
+    }
+
+    let calculatedDeliveryDate = deliveryDate;
+    if (!calculatedDeliveryDate && orderCompletionTime) {
+      const matchHours = orderCompletionTime.match(/(\d+)\s*(?:hour|hr)/i);
+      const matchDays = orderCompletionTime.match(/(\d+)\s*(?:day)/i);
+      if (matchHours) {
+        calculatedDeliveryDate = new Date(Date.now() + parseInt(matchHours[1], 10) * 60 * 60 * 1000);
+      } else if (matchDays) {
+        calculatedDeliveryDate = new Date(Date.now() + parseInt(matchDays[1], 10) * 24 * 60 * 60 * 1000);
+      }
+    }
+
     // OTP will be generated ONLY when tailor partner confirms/accepts the booking
     const order = await TailorOrder.create({
       customerId: req.user._id,
       tailorId,
-      services,
+      services: normalizedServices,
       totalAmount,
       measurements,
       measurementProfileId,
@@ -189,29 +330,45 @@ exports.createOrder = async (req, res) => {
       fabricDetails,
       designPreferences,
       isHomeService,
-      isPremiumService,
+      isPremiumService: hasPremium,
       homeServiceAddress,
       visitDate,
       visitFee,
       fittingDate,
-      deliveryDate,
+      deliveryDate: calculatedDeliveryDate,
+      estimatedDays: orderEstimatedDays || (hasPremium ? 1 : 3),
+      completionTime: orderCompletionTime,
       otp: "",
       isOtpVerified: false,
       status: "pending"
     });
 
     // Notify Tailor Partner
-    const targetTailor = await Tailor.findById(tailorId);
     if (targetTailor && targetTailor.userId) {
       const customerName = req.user?.name || "Customer";
-      const notifBody = `${customerName} placed a new ${isHomeService ? "Home" : "Shop"} service booking request for ₹${totalAmount}. Please confirm booking.`;
+      const serviceNames = (services || []).map(s => s.name).join(", ");
+      const addr = (homeServiceAddress || "").trim();
+      const notifTitle = hasPremium
+        ? `👑 VIP PREMIUM BOOKING: ${customerName}`
+        : isHomeService 
+          ? `New Home Tailoring: ${customerName} 🏠` 
+          : `New Tailor Booking: ${customerName} ✂️`;
+      const notifBody = `${hasPremium ? "👑 PRIORITY VIP ORDER\n" : ""}👤 Customer: ${customerName}\n✂️ Services: ${serviceNames || "Stitching"} (₹${totalAmount})${addr ? `\n📍 Address: ${addr}` : ""}`;
       
       await Notification.create({
         userId: targetTailor.userId,
-        title: "New Tailor Booking Request ✂️",
+        title: notifTitle,
         body: notifBody,
         type: "general",
-        data: { orderId: order._id, type: "tailor_order" }
+        data: {
+          orderId: order._id,
+          type: "tailor_order",
+          customerName,
+          services: serviceNames,
+          totalAmount,
+          address: addr,
+          isHomeService: !!isHomeService,
+        }
       }).catch(err => console.error("Notification create error:", err));
 
 
@@ -230,13 +387,42 @@ exports.createOrder = async (req, res) => {
   }
 };
 
+const enrichOrderTimeline = (order) => {
+  const o = order.toObject ? order.toObject() : { ...order };
+  if (o.tailorId) {
+    const tPhone = o.tailorId.mobileNumber || o.tailorId.phone || o.tailorId.userId?.phone || "";
+    o.tailorId.mobileNumber = tPhone;
+    o.tailorId.phone = tPhone;
+  }
+  const isPrem = Boolean(
+    o.isPremiumService ||
+    (o.services || []).some(s => s.serviceMode === "premium" || (s.name && /premium|vip/i.test(s.name)))
+  );
+  if (isPrem) {
+    o.isPremiumService = true;
+    if (!o.completionTime) {
+      const pSvc = (o.services || []).find(s => s.serviceMode === "premium" || s.completionTime || (s.name && /premium|vip/i.test(s.name)));
+      o.completionTime = pSvc?.completionTime || "12 Hours";
+    }
+    if (!o.estimatedDays || o.estimatedDays > 1) {
+      const matchHours = (o.completionTime || "").match(/(\d+)\s*(?:hour|hr)/i);
+      if (matchHours) {
+        o.estimatedDays = Math.max(1, Math.ceil(parseInt(matchHours[1], 10) / 24));
+      } else {
+        o.estimatedDays = 1;
+      }
+    }
+  }
+  return o;
+};
+
 exports.getTailorOrders = async (req, res) => {
   try {
     const tailor = await Tailor.findOne({ userId: req.user._id });
     if (!tailor) return res.status(403).json({ error: "Not a tailor" });
 
     const orders = await TailorOrder.find({ tailorId: tailor._id }).populate("customerId", "name email phone avatarUrl").sort({ createdAt: -1 });
-    res.json({ orders });
+    res.json({ orders: orders.map(enrichOrderTimeline) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Internal server error" });
@@ -245,8 +431,14 @@ exports.getTailorOrders = async (req, res) => {
 
 exports.getCustomerOrders = async (req, res) => {
   try {
-    const orders = await TailorOrder.find({ customerId: req.user._id }).populate("tailorId", "shopName address avatarUrl mobileNumber").sort({ createdAt: -1 });
-    res.json({ orders });
+    const orders = await TailorOrder.find({ customerId: req.user._id })
+      .populate({
+        path: "tailorId",
+        select: "shopName address avatarUrl mobileNumber ownerName userId",
+        populate: { path: "userId", select: "phone name" }
+      })
+      .sort({ createdAt: -1 });
+    res.json({ orders: orders.map(enrichOrderTimeline) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Internal server error" });
@@ -401,8 +593,8 @@ exports.generateDeliveryOtp = async (req, res) => {
 
     // Notify Customer
     const custId = order.customerId;
-    const notifTitle = "Order Ready for Delivery 📦";
-    const notifBody = `Your order #${order._id.toString().slice(-6)} is ready! Your Delivery OTP is: ${generatedDeliveryOtp}. Share this OTP with tailor upon receiving outfit.`;
+    const notifTitle = "Order Complete & Ready 📦";
+    const notifBody = `Your order #${order._id.toString().slice(-6)} is ready! Your Completion & Handover OTP is: ${generatedDeliveryOtp}. Share this OTP with the tailor upon receiving your outfit to confirm delivery.`;
 
     await Notification.create({
       userId: custId,
@@ -567,7 +759,7 @@ exports.updateOrderStatus = async (req, res) => {
     const tailor = await Tailor.findOne({ userId: req.user._id });
     if (!tailor) return res.status(403).json({ error: "Not a tailor" });
 
-    const { status, cancellationReason, internalNotes, priority, note, estimatedDays, deliveryDate, visitFee } = req.body;
+    const { status, cancellationReason, internalNotes, priority, note, estimatedDays, completionTime, deliveryDate, visitFee } = req.body;
     
     const order = await TailorOrder.findOne({ _id: req.params.id, tailorId: tailor._id });
     if (!order) return res.status(404).json({ error: "Order not found" });
@@ -600,12 +792,31 @@ exports.updateOrderStatus = async (req, res) => {
     if (status) updatePayload.status = status;
     if (cancellationReason !== undefined) updatePayload.cancellationReason = cancellationReason;
     if (internalNotes !== undefined) updatePayload.internalNotes = internalNotes;
+    const isPremOrder = Boolean(
+      order.isPremiumService ||
+      (order.services || []).some(s => s.serviceMode === "premium" || (s.name && /premium|vip/i.test(s.name)))
+    );
+
+    if (completionTime !== undefined) {
+      updatePayload.completionTime = completionTime;
+    } else if (isPremOrder && !order.completionTime) {
+      updatePayload.completionTime = "12 Hours";
+    }
+
     if (estimatedDays !== undefined) {
-      const daysNum = Number(estimatedDays) || 3;
+      const daysNum = Number(estimatedDays) || (isPremOrder ? 1 : 3);
       updatePayload.estimatedDays = daysNum;
-      const targetDate = new Date();
-      targetDate.setDate(targetDate.getDate() + daysNum);
-      updatePayload.deliveryDate = targetDate;
+      if (deliveryDate === undefined) {
+        const finalComp = updatePayload.completionTime || order.completionTime || (isPremOrder ? "12 Hours" : "");
+        const matchHours = finalComp ? finalComp.match(/(\d+)\s*(?:hour|hr)/i) : null;
+        if (matchHours) {
+          updatePayload.deliveryDate = new Date(Date.now() + parseInt(matchHours[1], 10) * 60 * 60 * 1000);
+        } else {
+          const targetDate = new Date();
+          targetDate.setDate(targetDate.getDate() + daysNum);
+          updatePayload.deliveryDate = targetDate;
+        }
+      }
     }
     if (deliveryDate !== undefined) updatePayload.deliveryDate = deliveryDate;
 
@@ -649,8 +860,11 @@ exports.updateOrderStatus = async (req, res) => {
       const custId = updated.customerId._id || updated.customerId;
       const finalOtp = updated.otp || generatedOtp;
       const notifTitle = (status === "accepted" || status === "confirmed") ? "Booking Confirmed! ✂️" : status === "declined" ? "Booking Declined" : `Booking Update: ${status}`;
+      const deliveryInfo = updated.deliveryDate
+        ? ` • Delivery: ${new Date(updated.deliveryDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} (${updated.completionTime || `${updated.estimatedDays || 1} Days`})`
+        : "";
       const notifBody = (status === "accepted" || status === "confirmed")
-        ? `Tailor partner confirmed your booking! Your verification OTP is: ${finalOtp}`
+        ? `Tailor partner confirmed your booking! Your OTP is: ${finalOtp}${deliveryInfo}`
         : `Your booking status has been updated to ${status}.`;
 
       await Notification.create({

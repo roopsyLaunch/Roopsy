@@ -65,7 +65,7 @@ const LiveCountdown = ({ targetDate }) => {
 
 export function MyBookingsScreen({ navigation }) {
   const { user } = useAuth();
-  const isPartner = user?.role === "barber" || user?.role === "admin";
+  const isPartner = user?.role === "barber" || user?.role === "tailor" || user?.role === "admin";
 
   const [viewMode, setViewMode] = useState(isPartner ? "Shop Queue" : "My Appointments"); // My Appointments, Shop Queue
   const [queueSegment, setQueueSegment] = useState("Upcoming"); // Upcoming, Completed, Cancelled
@@ -85,6 +85,13 @@ export function MyBookingsScreen({ navigation }) {
   const [otpInput, setOtpInput] = useState("");
   const [activeBookingId, setActiveBookingId] = useState(null);
   const [verifying, setVerifying] = useState(false);
+
+  // Completion OTP Modal State (for marking complete & confirming with customer)
+  const [completionOtpModalVisible, setCompletionOtpModalVisible] = useState(false);
+  const [completionOtpInput, setCompletionOtpInput] = useState("");
+  const [activeCompletionBookingId, setActiveCompletionBookingId] = useState(null);
+  const [generatingCompletionOtp, setGeneratingCompletionOtp] = useState(false);
+  const [verifyingCompletionOtp, setVerifyingCompletionOtp] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -127,17 +134,17 @@ export function MyBookingsScreen({ navigation }) {
     setSubmittingTailorRating(true);
     try {
       const orderId = tailorRatingOrder._id || tailorRatingOrder.id;
-      await api.post(`/tailors/orders/${orderId}/rate`, {
-        rating: tailorRating,
-        comment: tailorComment
+      const res = await api.post(`/tailors/orders/${orderId}/rate`, {
+        rating: Number(tailorRating) || 5,
+        comment: (tailorComment || "").trim()
       });
-      Alert.alert("Thank You! ⭐️", "Your tailor rating & review has been saved successfully.");
+      Alert.alert("Thank You! ⭐️", res.data?.message || "Your tailor rating & review has been saved successfully.");
       setTailorRatingModalVisible(false);
       setTailorRatingOrder(null);
       await load();
     } catch (err) {
       console.error(err);
-      Alert.alert("Error", err?.response?.data?.error || "Failed to submit rating");
+      Alert.alert("Submission Failed", err?.response?.data?.error || "Failed to submit tailor rating");
     } finally {
       setSubmittingTailorRating(false);
     }
@@ -167,12 +174,17 @@ export function MyBookingsScreen({ navigation }) {
         });
         setItems(combined);
       } else if (isPartner) {
-        const res = await api.get("/bookings/barber");
-        setItems(res.data.bookings || []);
+        if (user?.role === "tailor") {
+          const res = await api.get("/tailors/me/orders");
+          setItems(res.data.orders || []);
+        } else {
+          const res = await api.get("/bookings/barber");
+          setItems(res.data.bookings || []);
 
-        const svcRes = await api.get("/barbers/me");
-        if (svcRes.data?.services) {
-          setShopServices(svcRes.data.services);
+          const svcRes = await api.get("/barbers/me");
+          if (svcRes.data?.services) {
+            setShopServices(svcRes.data.services);
+          }
         }
       }
     } catch (err) {
@@ -202,6 +214,14 @@ export function MyBookingsScreen({ navigation }) {
           load();
           if (data && (data.isOtpVerified || data.message === "OTP Verified ✅")) {
             Alert.alert("OTP Verified! ✅", "Your OTP was verified by the barber partner. Haircut service is now in progress!");
+          }
+          if (data && data.completionPin) {
+            Alert.alert("Service Finished! 🎉", `Your service is complete! Your Completion OTP is: ${data.completionPin}. Please share this OTP with your barber/stylist to confirm completion.`);
+          }
+          if (data && data.requestReview && data.bookingId) {
+            setReviewBookingId(data.bookingId);
+            setReviewBarberId(data.barberId);
+            setReviewModalVisible(true);
           }
           if (data && data.requestRating && data.orderId) {
             api.get(`/tailors/orders/${data.orderId}`).then(res => {
@@ -305,6 +325,58 @@ export function MyBookingsScreen({ navigation }) {
     }
   };
 
+  const handleStartCompletion = async (booking) => {
+    const bookingId = booking.id || booking._id;
+    Alert.alert(
+      "Complete Service",
+      "Are you sure you want to mark this haircut service as completed?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Complete Service",
+          style: "default",
+          onPress: async () => {
+            try {
+              setVerifying(true);
+              await api.patch(`/bookings/${bookingId}`, { status: "completed" });
+              await load();
+              Alert.alert("Service Completed! ✅", "The haircut service has been successfully completed.");
+            } catch (e) {
+              const err = e?.response?.data?.error;
+              Alert.alert("Error", typeof err === "string" ? err : (err?.message || "Failed to complete service."));
+            } finally {
+              setVerifying(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const submitCompletionOtp = async () => {
+    if (!completionOtpInput || completionOtpInput.trim().length !== 4) {
+      Alert.alert("Invalid Input", "Please enter the 4-digit Completion OTP code.");
+      return;
+    }
+    setVerifyingCompletionOtp(true);
+    try {
+      const res = await api.post("/bookings/verify-completion-otp", {
+        bookingId: activeCompletionBookingId,
+        otp: completionOtpInput.trim()
+      });
+      setCompletionOtpModalVisible(false);
+      setCompletionOtpInput("");
+      setActiveCompletionBookingId(null);
+      Alert.alert("Service Completed! 🎉", res.data?.message || "Completion OTP verified & service marked completed!");
+      await load();
+    } catch (e) {
+      const err = e?.response?.data?.error;
+      Alert.alert("Verification Failed", typeof err === "string" ? err : "Invalid Completion OTP. Please verify the code and try again.");
+    } finally {
+      setVerifyingCompletionOtp(false);
+    }
+  };
+
   const openHistory = async (phone) => {
     if (!phone) return Alert.alert("Information Missing", "No contact details are available for this customer.");
     setHistoryModalVisible(true);
@@ -341,22 +413,30 @@ export function MyBookingsScreen({ navigation }) {
   };
 
   const submitReview = async () => {
-    if (rating < 1 || rating > 5) return Alert.alert("Invalid Rating", "Please select a rating value between 1 and 5 stars.");
+    const ratingNum = Number(rating);
+    if (!ratingNum || ratingNum < 1 || ratingNum > 5) {
+      return Alert.alert("Invalid Rating", "Please select a rating value between 1 and 5 stars.");
+    }
+    if (!reviewBookingId) {
+      return Alert.alert("Error", "Booking details missing. Please refresh and try again.");
+    }
+
     setSubmittingReview(true);
     try {
-      await api.post("/reviews", {
+      const res = await api.post("/reviews", {
         barberId: reviewBarberId,
         bookingId: reviewBookingId,
-        rating,
-        comment
+        rating: ratingNum,
+        comment: (comment || "").trim()
       });
       setReviewModalVisible(false);
       setRating(5);
       setComment("");
-      Alert.alert("Feedback Saved", "Thank you! Your rating and review have been submitted successfully.");
+      Alert.alert("Feedback Saved ⭐️", res.data?.message || "Thank you! Your rating and review have been submitted successfully.");
       await load();
     } catch (e) {
-      Alert.alert("Submission Failed", e?.response?.data?.error || "An error occurred while saving your feedback. Please try again.");
+      const errMsg = e?.response?.data?.error || "An error occurred while saving your feedback. Please try again.";
+      Alert.alert("Submission Failed", typeof errMsg === "string" ? errMsg : JSON.stringify(errMsg));
     } finally {
       setSubmittingReview(false);
     }
@@ -424,10 +504,13 @@ export function MyBookingsScreen({ navigation }) {
   }, [items, serviceTypeFilter, getBookingType]);
 
   const activeOtpBooking = React.useMemo(() => {
-    return items.find(i => i.isTailorOrder && (
-      (i.status === "accepted" && i.otp && !i.isOtpVerified) ||
-      (i.deliveryOtp && !i.isDeliveryOtpVerified)
-    ));
+    return items.find(i => 
+      (i.isTailorOrder && (
+        (i.status === "accepted" && i.otp && !i.isOtpVerified) ||
+        (i.deliveryOtp && !i.isDeliveryOtpVerified)
+      )) ||
+      (!i.isTailorOrder && i.status === "confirmed" && i.verificationPin && !i.isOtpVerified)
+    );
   }, [items]);
 
   const filteredItems = React.useMemo(() => {
@@ -485,6 +568,7 @@ export function MyBookingsScreen({ navigation }) {
   const renderCustomerCard = (item) => {
     const statusStyle = getStatusBadge(item.status);
     const isBeauty = getBookingType(item) === "beauty";
+    const partnerPhone = item.barber?.phone || item.barber?.mobileNumber || item.barberId?.mobileNumber || item.barberId?.phone || item.barberId?.userId?.phone || "";
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
@@ -504,6 +588,69 @@ export function MyBookingsScreen({ navigation }) {
         </View>
 
         <View style={styles.cardDivider} />
+
+        {/* Shop Partner Contact Card when Confirmed (Beauty Parlor & Salon) */}
+        {Boolean(partnerPhone) && !["pending", "cancelled", "declined", "expired"].includes(item.status) && (
+          <View style={{
+            backgroundColor: isBeauty ? "#fdf2f8" : "#eef2ff",
+            padding: 12,
+            borderRadius: 12,
+            marginBottom: 14,
+            borderWidth: 1,
+            borderColor: isBeauty ? "#fbcfe8" : "#c7d2fe",
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between"
+          }}>
+            <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 }}>
+              <View style={{
+                width: 38,
+                height: 38,
+                borderRadius: 19,
+                backgroundColor: isBeauty ? "#fce7f3" : "#e0e7ff",
+                alignItems: "center",
+                justifyContent: "center",
+                marginRight: 10
+              }}>
+                <Ionicons name="call" size={18} color={isBeauty ? "#be185d" : "#4f46e5"} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{
+                  fontSize: 11,
+                  fontWeight: "700",
+                  color: isBeauty ? "#be185d" : "#4f46e5",
+                  textTransform: "uppercase",
+                  letterSpacing: 0.5
+                }}>
+                  {isBeauty ? "Beauty Parlor Contact" : "Salon Partner Contact"}
+                </Text>
+                <Text style={{ fontSize: 14, fontWeight: "800", color: "#0f172a", marginTop: 2 }}>
+                  {partnerPhone}
+                </Text>
+              </View>
+            </View>
+            <Pressable
+              style={{
+                backgroundColor: isBeauty ? "#be185d" : "#4f46e5",
+                flexDirection: "row",
+                alignItems: "center",
+                paddingHorizontal: 14,
+                paddingVertical: 8,
+                borderRadius: 20,
+                gap: 6,
+                shadowColor: isBeauty ? "#be185d" : "#4f46e5",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.2,
+                shadowRadius: 3,
+                elevation: 2
+              }}
+              onPress={() => Linking.openURL(`tel:${partnerPhone}`)}
+            >
+              <Ionicons name="call" size={14} color="#ffffff" />
+              <Text style={{ color: "#ffffff", fontWeight: "700", fontSize: 12 }}>Call Partner</Text>
+            </Pressable>
+          </View>
+        )}
 
         {/* Live Queue Position & Delay */}
         {["pending", "confirmed", "arrived"].includes(item.status) && item.queuePosition > 0 && (
@@ -588,6 +735,20 @@ export function MyBookingsScreen({ navigation }) {
           </View>
         )}
 
+        {item.homeServiceAddress ? (
+          <View style={{ backgroundColor: "#f8fafc", padding: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: "#e2e8f0", flexDirection: "row", alignItems: "flex-start" }}>
+            <Ionicons name="location-sharp" size={14} color="#6d28d9" style={{ marginRight: 6, marginTop: 2 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 11, fontWeight: "700", color: "#64748b" }}>
+                {item.isHomeService ? "Service Address:" : "Booking Address:"}
+              </Text>
+              <Text style={{ fontSize: 12, color: "#1e293b", fontWeight: "500", marginTop: 2 }}>
+                {item.homeServiceAddress}
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
         {/* OTP Verified / Service In Progress Banner for Barber Booking */}
         {(item.status === "in-progress" || item.isOtpVerified) && (
           <View style={{ backgroundColor: "#ecfdf5", padding: 14, borderRadius: 14, marginBottom: 14, borderWidth: 1, borderColor: "#a7f3d0" }}>
@@ -613,45 +774,132 @@ export function MyBookingsScreen({ navigation }) {
           </View>
         )}
 
-        {/* Show OTP / Countdown for Customer */}
-        {item.status === "confirmed" && !item.isOtpVerified && (
-          <View style={styles.otpBox}>
-            {(() => {
-              const { start, end } = getCheckInTimes(item);
+        {/* Completion OTP Card for Customer (Service Complete Verification) */}
+        {item.completionPin && !item.isCompletionOtpVerified && (
+          <View style={{ backgroundColor: "#fdf4ff", padding: 16, borderRadius: 16, marginBottom: 14, borderWidth: 1.5, borderColor: "#d946ef", shadowColor: "#d946ef", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, shadowRadius: 6, elevation: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                <Ionicons name="sparkles" size={24} color="#c026d3" style={{ marginRight: 10 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: "#a21caf", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    Service Finished 🎉
+                  </Text>
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: "#701a75", marginTop: 1 }}>
+                    Completion Confirmation OTP
+                  </Text>
+                </View>
+              </View>
+              <View style={{ backgroundColor: "#fae8ff", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: "#f0abfc" }}>
+                <Text style={{ fontSize: 11, fontWeight: "800", color: "#a21caf" }}>Share with Stylist</Text>
+              </View>
+            </View>
 
-              if (currentTime < start) {
-                const diff = start - currentTime;
-                const hh = Math.floor(diff / 3600000).toString().padStart(2, '0');
-                const mm = Math.floor((diff % 3600000) / 60000).toString().padStart(2, '0');
-                const ss = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0');
-                return (
-                  <View style={{ alignItems: "center" }}>
-                    <Text style={{ fontSize: 13, color: "#64748b", fontWeight: "700" }}>Check-in starts in</Text>
-                    <Text style={{ fontSize: 24, fontWeight: "900", color: "#334155", marginTop: 4 }}>{hh}:{mm}:{ss}</Text>
-                  </View>
-                );
-              } else if (currentTime <= end) {
-                const diff = end - currentTime;
-                const mm = Math.floor(diff / 60000).toString().padStart(2, '0');
-                const ss = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0');
-                return (
-                  <View>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                      <Text style={[styles.otpLabel, { color: "#16a34a" }]}>Check-in Open</Text>
-                      <Text style={{ fontSize: 13, color: "#ef4444", fontWeight: "800" }}>Closes In {mm}:{ss}</Text>
-                    </View>
-                    <Text style={styles.otpValue}>{item.verificationPin}</Text>
-                    <Text style={{ fontSize: 11, color: "#64748b", textAlign: "center", marginTop: 4 }}>Verify OTP before {end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
-                  </View>
-                );
-              } else {
-                return (
-                  <View style={{ alignItems: "center" }}>
-                    <Text style={{ fontSize: 14, color: "#ef4444", fontWeight: "800" }}>Check-in Window Closed</Text>
-                  </View>
-                );
-              }
-            })()}
+            <View style={{ alignItems: "center", marginVertical: 12, backgroundColor: "#ffffff", paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: "#f5d0fe" }}>
+              <Text style={{ fontSize: 32, fontWeight: "900", color: "#86198f", letterSpacing: 8 }}>
+                {item.completionPin}
+              </Text>
+            </View>
+
+            <Text style={{ fontSize: 12, color: "#86198f", textAlign: "center", fontWeight: "600" }}>
+              🔒 Share this 4-digit code with your partner to confirm your service is completed and satisfactory!
+            </Text>
+          </View>
+        )}
+
+        {/* Completion Verified Banner */}
+        {item.isCompletionOtpVerified && (
+          <View style={{ backgroundColor: "#f0fdf4", padding: 12, borderRadius: 12, marginBottom: 14, borderWidth: 1, borderColor: "#bbf7d0", flexDirection: "row", alignItems: "center" }}>
+            <Ionicons name="checkmark-done-circle" size={22} color="#16a34a" style={{ marginRight: 10 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 12, fontWeight: "800", color: "#15803d" }}>Service Completed & Confirmed ✅</Text>
+              <Text style={{ fontSize: 11, color: "#166534", marginTop: 1 }}>Completion OTP verified by partner. Hope you loved your new look!</Text>
+            </View>
+          </View>
+        )}
+
+        {/* Pending Confirmation Banner */}
+        {item.status === "pending" && (
+          <View style={{ backgroundColor: "#fffbeb", padding: 12, borderRadius: 12, marginBottom: 14, borderWidth: 1, borderColor: "#fef08a", flexDirection: "row", alignItems: "center" }}>
+            <Ionicons name="time" size={20} color="#d97706" style={{ marginRight: 10 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontWeight: "800", color: "#b45309" }}>Pending Confirmation</Text>
+              <Text style={{ fontSize: 12, color: "#d97706", marginTop: 2 }}>
+                Waiting for barber partner to confirm. OTP will be generated immediately once confirmed.
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* Check-in OTP Box with 12-Hour Expiration */}
+        {item.status === "confirmed" && !item.isOtpVerified && item.verificationPin && (
+          <View style={{
+            backgroundColor: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#fef2f2" : "#fef3c7",
+            padding: 14,
+            borderRadius: 14,
+            marginBottom: 14,
+            borderWidth: 1,
+            borderColor: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#fca5a5" : "#fde68a"
+          }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                <Ionicons
+                  name={(item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "alert-circle" : "key"}
+                  size={24}
+                  color={(item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#dc2626" : "#d97706"}
+                  style={{ marginRight: 10 }}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={{
+                    fontSize: 11,
+                    fontWeight: "800",
+                    color: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#991b1b" : "#92400e",
+                    textTransform: "uppercase",
+                    letterSpacing: 0.5
+                  }}>
+                    {(item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "OTP Expired ❌" : "Share OTP with Barber Partner 💈"}
+                  </Text>
+                  <Text style={{
+                    fontSize: 26,
+                    fontWeight: "900",
+                    color: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#dc2626" : "#b45309",
+                    letterSpacing: 4,
+                    marginTop: 2,
+                    textDecorationLine: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "line-through" : "none"
+                  }}>
+                    {item.verificationPin}
+                  </Text>
+                </View>
+              </View>
+              <View style={{
+                backgroundColor: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#fee2e2" : "#fef08a",
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 8
+              }}>
+                <Text style={{
+                  fontSize: 11,
+                  fontWeight: "800",
+                  color: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#dc2626" : "#92400e"
+                }}>
+                  {(item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "Expired" : "Show Barber"}
+                </Text>
+              </View>
+            </View>
+
+            <View style={{ marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#fecaca" : "#fde68a" }}>
+              <Text style={{
+                fontSize: 11,
+                fontWeight: "700",
+                color: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#dc2626" : "#b45309"
+              }}>
+                {(item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt))
+                  ? "⚠️ OTP Expired (Valid for 12 hours after booking confirmation)"
+                  : item.otpExpiresAt
+                    ? `🔒 Valid for 12 hours (Expires at ${new Date(item.otpExpiresAt).toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit', hour12: true })})`
+                    : "🔒 Valid for 12 hours after confirmation. Barber partner will verify this code to start service."
+                }
+              </Text>
+            </View>
           </View>
         )}
 
@@ -711,9 +959,33 @@ export function MyBookingsScreen({ navigation }) {
             }}>
               <Text style={[styles.cancelText, { color: "#0f172a" }]}>Book Again</Text>
             </Pressable>
-            <Pressable style={[styles.cancelBtn, { flex: 1, marginTop: 0, backgroundColor: "#fef08a" }]} onPress={() => { setReviewBookingId(item.id); setReviewBarberId(item.barber?.id || item.barberId?._id || item.barberId); setReviewModalVisible(true); }}>
-              <Text style={[styles.cancelText, { color: "#854d0e" }]}>Leave a Review</Text>
-            </Pressable>
+            {item.isRated ? (
+              <View style={{ flex: 1, backgroundColor: "#f0fdf4", padding: 8, borderRadius: 12, borderWidth: 1, borderColor: "#bbf7d0", flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Ionicons name="star" size={16} color="#eab308" style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 12, fontWeight: "800", color: "#166534" }}>Rated: {item.rating}/5</Text>
+                </View>
+                <Pressable onPress={() => {
+                  setReviewBookingId(item.id || item._id);
+                  setReviewBarberId(item.barber?.id || item.barberId?._id || item.barberId);
+                  setRating(item.rating || 5);
+                  setComment(item.reviewComment || "");
+                  setReviewModalVisible(true);
+                }}>
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#15803d", textDecorationLine: "underline" }}>Edit Review</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable style={[styles.cancelBtn, { flex: 1, marginTop: 0, backgroundColor: "#fef08a" }]} onPress={() => {
+                setReviewBookingId(item.id || item._id);
+                setReviewBarberId(item.barber?.id || item.barberId?._id || item.barberId);
+                setRating(5);
+                setComment("");
+                setReviewModalVisible(true);
+              }}>
+                <Text style={[styles.cancelText, { color: "#854d0e" }]}>⭐️ Leave a Review</Text>
+              </Pressable>
+            )}
           </View>
         )}
       </View>
@@ -723,6 +995,16 @@ export function MyBookingsScreen({ navigation }) {
   const renderTailorCard = (item) => {
     const statusStyle = getStatusBadge(item.status);
     const shopName = item.tailorId?.shopName || "Tailor Shop";
+    const tailorPhone = item.tailorId?.mobileNumber || item.tailorId?.phone || item.tailorId?.userId?.phone || item.tailorPhone || "";
+    const isTailorVip = Boolean(
+      item.isPremiumService ||
+      (item.services || []).some(s => s.serviceMode === "premium" || s.isPremium || (s.name && /premium|vip/i.test(s.name)))
+    );
+    const vipCompletionTime = (
+      item.completionTime ||
+      (item.services || []).find(s => s.serviceMode === "premium" || s.isPremium || (s.name && /premium|vip/i.test(s.name)))?.completionTime ||
+      (isTailorVip ? "12 Hours" : "")
+    ).trim();
 
     const cancelTailorOrder = async () => {
       Alert.alert("Cancel Booking Request", "Are you sure you want to cancel this tailor booking?", [
@@ -745,7 +1027,24 @@ export function MyBookingsScreen({ navigation }) {
     };
 
     return (
-      <View style={styles.card}>
+      <View style={[styles.card, isTailorVip && { borderColor: "#c084fc", borderWidth: 1.5, backgroundColor: "#fffdfa" }]}>
+        {/* VIP Premium Alert Header */}
+        {isTailorVip && (
+          <View style={{ backgroundColor: "#7e22ce", flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, marginBottom: 12 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Ionicons name="sparkles" size={14} color="#fbbf24" />
+              <Text style={{ color: "#ffffff", fontWeight: "900", fontSize: 11, letterSpacing: 0.5 }}>
+                👑 PREMIUM VIP BOOKING
+              </Text>
+            </View>
+            <View style={{ backgroundColor: "#facc15", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+              <Text style={{ color: "#581c87", fontWeight: "900", fontSize: 10 }}>
+                {vipCompletionTime || "EXPRESS"}
+              </Text>
+            </View>
+          </View>
+        )}
+
         <View style={styles.cardHeader}>
           <View style={styles.cardHeaderLeft}>
             <View style={[styles.avatarCircle, { backgroundColor: "#f3e8ff", borderColor: "#d8b4fe" }]}>
@@ -764,13 +1063,68 @@ export function MyBookingsScreen({ navigation }) {
 
         <View style={styles.cardDivider} />
 
+        {/* Tailor Partner Contact Card when Confirmed */}
+        {Boolean(tailorPhone) && !["pending", "cancelled", "declined"].includes(item.status) && (
+          <View style={{
+            backgroundColor: "#f5f3ff",
+            padding: 12,
+            borderRadius: 12,
+            marginBottom: 14,
+            borderWidth: 1,
+            borderColor: "#ddd6fe",
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between"
+          }}>
+            <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 }}>
+              <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: "#ede9fe", alignItems: "center", justifyContent: "center", marginRight: 10 }}>
+                <Ionicons name="call" size={18} color="#6d28d9" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, fontWeight: "700", color: "#6d28d9", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  Tailor Partner Contact
+                </Text>
+                <Text style={{ fontSize: 14, fontWeight: "800", color: "#1e1b4b", marginTop: 2 }}>
+                  {tailorPhone}
+                </Text>
+              </View>
+            </View>
+            <Pressable
+              style={{
+                backgroundColor: "#6d28d9",
+                flexDirection: "row",
+                alignItems: "center",
+                paddingHorizontal: 14,
+                paddingVertical: 8,
+                borderRadius: 20,
+                gap: 6,
+                shadowColor: "#6d28d9",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.2,
+                shadowRadius: 3,
+                elevation: 2
+              }}
+              onPress={() => Linking.openURL(`tel:${tailorPhone}`)}
+            >
+              <Ionicons name="call" size={14} color="#ffffff" />
+              <Text style={{ color: "#ffffff", fontWeight: "700", fontSize: 12 }}>Call Partner</Text>
+            </Pressable>
+          </View>
+        )}
+
         {/* Tailor Verification OTP Box */}
         {item.status === "pending" ? (
-          <View style={{ backgroundColor: "#fffbeb", padding: 12, borderRadius: 12, marginBottom: 14, borderWidth: 1, borderColor: "#fef08a", flexDirection: "row", alignItems: "center" }}>
-            <Ionicons name="time" size={20} color="#d97706" style={{ marginRight: 10 }} />
+          <View style={{ backgroundColor: isTailorVip ? "#faf5ff" : "#fffbeb", padding: 12, borderRadius: 12, marginBottom: 14, borderWidth: 1, borderColor: isTailorVip ? "#e9d5ff" : "#fef08a", flexDirection: "row", alignItems: "center" }}>
+            <Ionicons name={isTailorVip ? "flash" : "time"} size={20} color={isTailorVip ? "#9333ea" : "#d97706"} style={{ marginRight: 10 }} />
             <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 13, fontWeight: "800", color: "#b45309" }}>Pending Confirmation</Text>
-              <Text style={{ fontSize: 12, color: "#d97706", marginTop: 2 }}>Waiting for tailor partner to accept. OTP will be generated upon confirmation.</Text>
+              <Text style={{ fontSize: 13, fontWeight: "800", color: isTailorVip ? "#6b21a8" : "#b45309" }}>
+                {isTailorVip ? "👑 VIP Booking — Pending Confirmation" : "Pending Confirmation"}
+              </Text>
+              <Text style={{ fontSize: 12, color: isTailorVip ? "#7e22ce" : "#d97706", marginTop: 2 }}>
+                {isTailorVip
+                  ? `Fast-track VIP express order! Tailor partner will direct confirm soon.${vipCompletionTime ? ` Target: Complete in ${vipCompletionTime}.` : ""}`
+                  : "Waiting for tailor partner to accept. OTP will be generated upon confirmation."}
+              </Text>
             </View>
           </View>
         ) : (
@@ -852,34 +1206,75 @@ export function MyBookingsScreen({ navigation }) {
           </View>
         </View>
 
-        {/* Promised Delivery / Completion Date Banner */}
-        {item.deliveryDate ? (
-          <View style={{ backgroundColor: "#f3e8ff", padding: 12, borderRadius: 12, marginBottom: 14, borderWidth: 1, borderColor: "#d8b4fe", flexDirection: "row", alignItems: "center" }}>
-            <Ionicons name="calendar" size={22} color="#6d28d9" style={{ marginRight: 10 }} />
+        {item.homeServiceAddress ? (
+          <View style={{ backgroundColor: "#f0fdfa", padding: 10, borderRadius: 10, marginBottom: 14, borderWidth: 1, borderColor: "#ccfbf1", flexDirection: "row", alignItems: "flex-start" }}>
+            <Ionicons name="location-sharp" size={15} color="#0d9488" style={{ marginRight: 6, marginTop: 2 }} />
             <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 11, fontWeight: "800", color: "#6d28d9", textTransform: "uppercase", letterSpacing: 0.5 }}>
-                Est. Completion Date
+              <Text style={{ fontSize: 11, fontWeight: "700", color: "#0f766e" }}>
+                {item.isHomeService ? "Doorstep Visit Address:" : "Delivery Address:"}
               </Text>
-              <Text style={{ fontSize: 15, fontWeight: "900", color: "#4c1d95", marginTop: 2 }}>
-                {new Date(item.deliveryDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
-                {item.estimatedDays ? ` (${item.estimatedDays} Days)` : ""}
-              </Text>
-            </View>
-            <View style={{ backgroundColor: "#6d28d9", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}>
-              <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 12 }}>
-                {item.estimatedDays || 3}d
+              <Text style={{ fontSize: 12, color: "#134e4a", fontWeight: "500", marginTop: 2 }}>
+                {item.homeServiceAddress}
               </Text>
             </View>
           </View>
-        ) : item.estimatedDays ? (
-          <View style={{ backgroundColor: "#f3e8ff", padding: 12, borderRadius: 12, marginBottom: 14, borderWidth: 1, borderColor: "#d8b4fe", flexDirection: "row", alignItems: "center" }}>
-            <Ionicons name="time" size={20} color="#6d28d9" style={{ marginRight: 10 }} />
+        ) : null}
+
+        {/* Promised Delivery / Completion Date Banner */}
+        {item.deliveryDate ? (
+          <View style={{ 
+            backgroundColor: isTailorVip ? "#faf5ff" : "#f3e8ff", 
+            padding: 14, 
+            borderRadius: 14, 
+            marginBottom: 14, 
+            borderWidth: isTailorVip ? 1.5 : 1, 
+            borderColor: isTailorVip ? "#c084fc" : "#d8b4fe" 
+          }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 }}>
+                <Ionicons name={isTailorVip ? "sparkles" : "calendar"} size={22} color={isTailorVip ? "#9333ea" : "#6d28d9"} style={{ marginRight: 10 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: isTailorVip ? "#7e22ce" : "#6d28d9", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    {isTailorVip ? "👑 VIP Completion Target" : "Est. Completion Date"}
+                  </Text>
+                  <Text style={{ fontSize: 14, fontWeight: "900", color: "#4c1d95", marginTop: 2 }}>
+                    {isTailorVip 
+                      ? `Your order will be completed by ${new Date(item.deliveryDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`
+                      : new Date(item.deliveryDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                    {!isTailorVip && item.estimatedDays ? ` (${item.estimatedDays} Days)` : ""}
+                  </Text>
+                  {isTailorVip && (
+                    <Text style={{ fontSize: 11, fontWeight: "700", color: "#7e22ce", marginTop: 3 }}>
+                      ⚡ Guaranteed Turnaround: {vipCompletionTime || `${item.estimatedDays || 1} Days`}
+                    </Text>
+                  )}
+                </View>
+              </View>
+              <View style={{ backgroundColor: isTailorVip ? "#7e22ce" : "#6d28d9", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}>
+                <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 12 }}>
+                  {isTailorVip ? (vipCompletionTime || `${item.estimatedDays || 1}d`) : `${item.estimatedDays || 3}d`}
+                </Text>
+              </View>
+            </View>
+          </View>
+        ) : (vipCompletionTime || item.estimatedDays) ? (
+          <View style={{ backgroundColor: isTailorVip ? "#faf5ff" : "#f3e8ff", padding: 12, borderRadius: 12, marginBottom: 14, borderWidth: 1, borderColor: isTailorVip ? "#c084fc" : "#d8b4fe", flexDirection: "row", alignItems: "center" }}>
+            <Ionicons name={isTailorVip ? "flash" : "time"} size={20} color={isTailorVip ? "#9333ea" : "#6d28d9"} style={{ marginRight: 10 }} />
             <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 11, fontWeight: "800", color: "#6d28d9", textTransform: "uppercase" }}>Estimated Time</Text>
-              <Text style={{ fontSize: 14, fontWeight: "900", color: "#4c1d95", marginTop: 2 }}>
-                Will complete in {item.estimatedDays} Days
+              <Text style={{ fontSize: 11, fontWeight: "800", color: isTailorVip ? "#7e22ce" : "#6d28d9", textTransform: "uppercase" }}>
+                {isTailorVip ? "👑 VIP Turnaround Promise" : "Estimated Time"}
+              </Text>
+              <Text style={{ fontSize: 13, fontWeight: "900", color: "#4c1d95", marginTop: 2 }}>
+                {isTailorVip 
+                  ? `Your order will be completed in ${vipCompletionTime || "12 Hours"}`
+                  : `Will complete in ${item.estimatedDays || 3} Days`}
               </Text>
             </View>
+            {isTailorVip && (
+              <View style={{ backgroundColor: "#7e22ce", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                <Text style={{ color: "#fff", fontWeight: "800", fontSize: 10 }}>VIP Express</Text>
+              </View>
+            )}
           </View>
         ) : null}
 
@@ -909,17 +1304,17 @@ export function MyBookingsScreen({ navigation }) {
                 </View>
               )}
 
-              {item.isHomeService && (
+              {item.isHomeService && (item.visitFee > 0) && (
                 <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
                   <Text style={{ fontSize: 13, color: "#0d9488", fontWeight: "700" }}>🏡 Doorstep Delivery Charge:</Text>
-                  <Text style={{ fontSize: 13, fontWeight: "800", color: "#0d9488" }}>₹{item.visitFee || 0}</Text>
+                  <Text style={{ fontSize: 13, fontWeight: "800", color: "#0d9488" }}>₹{item.visitFee}</Text>
                 </View>
               )}
 
-              {item.isPremiumService && (
+              {item.isPremiumService && (item.visitFee > 0) && (
                 <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
                   <Text style={{ fontSize: 13, color: "#7c3aed", fontWeight: "700" }}>👑 Premium VIP Service Fee:</Text>
-                  <Text style={{ fontSize: 13, fontWeight: "800", color: "#7c3aed" }}>₹{item.visitFee || 0}</Text>
+                  <Text style={{ fontSize: 13, fontWeight: "800", color: "#7c3aed" }}>₹{item.visitFee}</Text>
                 </View>
               )}
 
@@ -1090,9 +1485,30 @@ export function MyBookingsScreen({ navigation }) {
             )}
           </View>
         ) : (
-          <View style={[styles.homeServiceBadge, { backgroundColor: "#f0fdf4", borderColor: "#bbf7d0", paddingVertical: 8, paddingHorizontal: 12 }]}>
-            <Ionicons name="storefront" size={14} color="#16a34a" style={{ marginRight: 6 }} />
-            <Text style={[styles.homeServiceBadgeText, { color: "#16a34a" }]}>Shop Service</Text>
+          <View style={{ width: "100%", marginTop: 4 }}>
+            <View style={[styles.homeServiceBadge, { backgroundColor: "#f0fdf4", borderColor: "#bbf7d0", paddingVertical: 8, paddingHorizontal: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <Ionicons name="storefront" size={14} color="#16a34a" style={{ marginRight: 6 }} />
+                <Text style={[styles.homeServiceBadgeText, { color: "#16a34a" }]}>Shop Service</Text>
+              </View>
+              {item.customer?.phone && (
+                <Pressable style={{ flexDirection: 'row', alignItems: 'center' }} onPress={() => Linking.openURL(`tel:${item.customer.phone}`)}>
+                  <Ionicons name="call" size={12} color="#16a34a" style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 12, color: "#16a34a", textDecorationLine: 'underline', fontWeight: 'bold' }}>{item.customer.phone}</Text>
+                </Pressable>
+              )}
+            </View>
+            {item.homeServiceAddress ? (
+              <View style={{ backgroundColor: "#f8fafc", padding: 10, borderRadius: 10, marginTop: 6, borderWidth: 1, borderColor: "#e2e8f0" }}>
+                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 2 }}>
+                  <Ionicons name="location-sharp" size={13} color="#0284c7" style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: "#0369a1" }}>Customer Address:</Text>
+                </View>
+                <Text style={{ fontSize: 12, color: "#334155", fontWeight: "500" }}>
+                  {item.homeServiceAddress}
+                </Text>
+              </View>
+            ) : null}
           </View>
         )}
 
@@ -1121,8 +1537,10 @@ export function MyBookingsScreen({ navigation }) {
           </View>
         ) : item.status === "in-progress" ? (
           <View style={styles.actionGrid}>
-            <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#16a34a" }]} onPress={() => setStatus(item.id, "completed")}>
-              <Text style={[styles.actionBtnTextSolid, { color: "#ffffff" }]}>Mark as Completed</Text>
+            <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#16a34a" }]} onPress={() => handleStartCompletion(item)}>
+              <Text style={[styles.actionBtnTextSolid, { color: "#ffffff" }]}>
+                Complete Service ✂️
+              </Text>
             </Pressable>
           </View>
         ) : null}
@@ -1245,15 +1663,19 @@ export function MyBookingsScreen({ navigation }) {
           <Ionicons name="key" size={20} color="#d97706" style={{ marginRight: 10 }} />
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 12, fontWeight: "800", color: "#b45309", textTransform: "uppercase" }}>
-              {activeOtpBooking.deliveryOtp ? "📦 Active Delivery OTP Code" : "✂️ Active Tailor Verification OTP"}
+              {activeOtpBooking.deliveryOtp 
+                ? "📦 Active Delivery OTP Code" 
+                : activeOtpBooking.isTailorOrder 
+                  ? "✂️ Active Tailor Verification OTP" 
+                  : "💈 Active Barber Check-in OTP (12h Validity)"}
             </Text>
             <Text style={{ fontSize: 16, fontWeight: "900", color: "#92400e", letterSpacing: 2, marginTop: 2 }}>
-              {activeOtpBooking.deliveryOtp || activeOtpBooking.otp}
+              {activeOtpBooking.deliveryOtp || activeOtpBooking.otp || activeOtpBooking.verificationPin}
             </Text>
           </View>
           <View style={{ backgroundColor: "#d97706", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
             <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 11 }}>
-              Show Tailor
+              {activeOtpBooking.isTailorOrder ? "Show Tailor" : "Show Barber"}
             </Text>
           </View>
         </View>
@@ -1323,6 +1745,38 @@ export function MyBookingsScreen({ navigation }) {
               </Pressable>
               <Pressable style={styles.modalSubmitBtn} onPress={submitOtp} disabled={verifying}>
                 {verifying ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalSubmitText}>Verify & Start</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Completion OTP Modal (Verify & Complete Service) */}
+      <Modal visible={completionOtpModalVisible} transparent animationType="fade" onRequestClose={() => setCompletionOtpModalVisible(false)}>
+        <View style={styles.modalBg}>
+          <View style={styles.modalContent}>
+            <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: "#f3e8ff", justifyContent: "center", alignItems: "center", marginBottom: 12 }}>
+              <Ionicons name="checkmark-done-circle" size={32} color="#7c3aed" />
+            </View>
+            <Text style={styles.modalTitle}>Verify Completion OTP</Text>
+            <Text style={styles.modalDesc}>Ask the customer for the 4-digit Completion OTP sent to their phone to verify service is complete.</Text>
+
+            <TextInput
+              style={[styles.otpInputBox, { borderColor: "#c084fc", color: "#6d28d9" }]}
+              placeholder="0000"
+              keyboardType="number-pad"
+              maxLength={4}
+              value={completionOtpInput}
+              onChangeText={setCompletionOtpInput}
+              editable={!verifyingCompletionOtp}
+            />
+
+            <View style={styles.modalActions}>
+              <Pressable style={styles.modalCancelBtn} onPress={() => setCompletionOtpModalVisible(false)} disabled={verifyingCompletionOtp}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={[styles.modalSubmitBtn, { backgroundColor: "#7c3aed" }]} onPress={submitCompletionOtp} disabled={verifyingCompletionOtp}>
+                {verifyingCompletionOtp ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalSubmitText}>Verify & Complete</Text>}
               </Pressable>
             </View>
           </View>
@@ -1404,17 +1858,17 @@ export function MyBookingsScreen({ navigation }) {
             <Text style={styles.modalTitle}>Rate & Review</Text>
             <Text style={styles.modalDesc}>How was your experience?</Text>
 
-            <View style={{ flexDirection: "row", justifyContent: "center", gap: 8, marginBottom: 20 }}>
+            <View style={{ flexDirection: "row", justifyContent: "center", gap: 10, marginBottom: 20 }}>
               {[1, 2, 3, 4, 5].map((star) => (
-                <Pressable key={star} onPress={() => setRating(star)}>
-                  <Ionicons name={rating >= star ? "star" : "star-outline"} size={32} color="#fbbf24" />
+                <Pressable key={star} onPress={() => setRating(star)} style={{ padding: 4 }}>
+                  <Ionicons name={rating >= star ? "star" : "star-outline"} size={36} color="#eab308" />
                 </Pressable>
               ))}
             </View>
 
             <TextInput
               style={[styles.otpInputBox, { fontSize: 14, textAlign: "left", letterSpacing: 0, padding: 12, minHeight: 80, marginBottom: 24 }]}
-              placeholder="Leave a comment (Optional)"
+              placeholder="Write a review or feedback (Optional)"
               value={comment}
               onChangeText={setComment}
               placeholderTextColor="#94a3b8"

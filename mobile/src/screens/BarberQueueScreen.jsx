@@ -64,6 +64,12 @@ export function BarberQueueScreen() {
   const [confirmETA, setConfirmETA] = useState("");
   const [confirmingBookingId, setConfirmingBookingId] = useState(null);
 
+  // Completion OTP state
+  const [completionOtpModalVisible, setCompletionOtpModalVisible] = useState(false);
+  const [completionOtpInput, setCompletionOtpInput] = useState("");
+  const [activeCompletionBookingId, setActiveCompletionBookingId] = useState(null);
+  const [verifyingCompletionOtp, setVerifyingCompletionOtp] = useState(false);
+
   const loadData = useCallback(async () => {
     try {
       const [qRes, sRes] = await Promise.all([
@@ -164,6 +170,55 @@ export function BarberQueueScreen() {
     }
   }
 
+  const handleStartCompletion = async (item) => {
+    const bookingId = item.id || item._id;
+    Alert.alert(
+      "Complete Service",
+      "Are you sure you want to mark this service as completed?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Complete Service",
+          style: "default",
+          onPress: async () => {
+            try {
+              await api.patch(`/bookings/${bookingId}`, { status: "completed" });
+              await loadData();
+              Alert.alert("Completed ✅", "Service marked as completed!");
+            } catch (e) {
+              const err = e?.response?.data?.error;
+              Alert.alert("Error", typeof err === "string" ? err : (err?.message || "Failed to complete service."));
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const submitCompletionOtp = async () => {
+    if (!completionOtpInput || completionOtpInput.trim().length !== 4) {
+      Alert.alert("Invalid Input", "Please enter the 4-digit Completion OTP code.");
+      return;
+    }
+    setVerifyingCompletionOtp(true);
+    try {
+      const res = await api.post("/bookings/verify-completion-otp", {
+        bookingId: activeCompletionBookingId,
+        otp: completionOtpInput.trim()
+      });
+      setCompletionOtpModalVisible(false);
+      setCompletionOtpInput("");
+      setActiveCompletionBookingId(null);
+      Alert.alert("Service Completed! 🎉", res.data?.message || "Completion OTP verified & service marked completed!");
+      await loadData();
+    } catch (e) {
+      const err = e?.response?.data?.error;
+      Alert.alert("Verification Failed", typeof err === "string" ? err : "Invalid Completion OTP. Please verify the code and try again.");
+    } finally {
+      setVerifyingCompletionOtp(false);
+    }
+  };
+
   const toggleService = (id) => {
     setSelectedServices(prev => 
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
@@ -212,11 +267,21 @@ export function BarberQueueScreen() {
                    )}
                  </View>
                ) : (
-                 <View style={{ marginTop: 6, backgroundColor: "#f0fdf4", padding: 8, borderRadius: 8, borderWidth: 1, borderColor: "#bbf7d0", flexDirection: "row", alignItems: "center", alignSelf: "flex-start" }}>
-                   <Ionicons name="storefront" size={12} color="#16a34a" style={{ marginRight: 4 }} />
-                   <Text style={{ fontSize: 12, fontWeight: "700", color: "#16a34a" }}>Shop Service</Text>
-                 </View>
-               )}
+                  <View style={{ marginTop: 6 }}>
+                    <View style={{ backgroundColor: "#f0fdf4", padding: 8, borderRadius: 8, borderWidth: 1, borderColor: "#bbf7d0", flexDirection: "row", alignItems: "center", alignSelf: "flex-start" }}>
+                      <Ionicons name="storefront" size={12} color="#16a34a" style={{ marginRight: 4 }} />
+                      <Text style={{ fontSize: 12, fontWeight: "700", color: "#16a34a" }}>Shop Service</Text>
+                    </View>
+                    {item.homeServiceAddress ? (
+                      <View style={{ marginTop: 4, backgroundColor: "#f8fafc", padding: 6, borderRadius: 6, borderWidth: 1, borderColor: "#e2e8f0" }}>
+                        <Text style={{ fontSize: 11, color: "#334155", fontWeight: "500" }}>
+                          <Text style={{ fontWeight: "700", color: "#0369a1" }}>📍 Address: </Text>
+                          {item.homeServiceAddress}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                )}
              </View>
            </View>
              <View style={{alignItems:"flex-end", maxWidth: 100}}>
@@ -250,8 +315,8 @@ export function BarberQueueScreen() {
             </Pressable>
           )}
           {item.status === 'in-progress' && (
-            <Pressable style={[styles.btn, {backgroundColor:"#6d28d9"}]} onPress={() => setStatus(item.id, "completed")}>
-              <Text style={styles.btnText}>Complete</Text>
+            <Pressable style={[styles.btn, {backgroundColor:"#16a34a"}]} onPress={() => handleStartCompletion(item)}>
+              <Text style={styles.btnText}>Complete Service ✂️</Text>
             </Pressable>
           )}
           {(item.status === 'confirmed' || item.status === 'arrived' || item.status === 'pending') && (
@@ -369,6 +434,40 @@ export function BarberQueueScreen() {
                 }
               }}>
                 <Text style={styles.submitBtnText}>Confirm Booking</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Completion OTP Modal */}
+      <Modal visible={completionOtpModalVisible} transparent animationType="fade" onRequestClose={() => setCompletionOtpModalVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", padding: 20 }}>
+          <View style={{ backgroundColor: "#fff", borderRadius: 24, padding: 24, width: "100%", maxWidth: 340, alignItems: "center" }}>
+            <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: "#f3e8ff", justifyContent: "center", alignItems: "center", marginBottom: 12 }}>
+              <Ionicons name="checkmark-done-circle" size={32} color="#7c3aed" />
+            </View>
+            <Text style={{ fontSize: 20, fontWeight: "800", color: "#0f172a", marginBottom: 8 }}>Verify Completion OTP</Text>
+            <Text style={{ fontSize: 14, color: "#64748b", textAlign: "center", marginBottom: 20, lineHeight: 20 }}>
+              Ask the customer for the 4-digit Completion OTP code sent to their phone to verify service is complete.
+            </Text>
+
+            <TextInput
+              style={{ width: "100%", backgroundColor: "#f8fafc", borderWidth: 1.5, borderColor: "#c084fc", borderRadius: 16, padding: 16, fontSize: 26, fontWeight: "800", textAlign: "center", letterSpacing: 8, color: "#6d28d9", marginBottom: 24 }}
+              placeholder="0000"
+              keyboardType="number-pad"
+              maxLength={4}
+              value={completionOtpInput}
+              onChangeText={setCompletionOtpInput}
+              editable={!verifyingCompletionOtp}
+            />
+
+            <View style={{ flexDirection: "row", width: "100%", gap: 12 }}>
+              <Pressable style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: "#f1f5f9", alignItems: "center" }} onPress={() => setCompletionOtpModalVisible(false)} disabled={verifyingCompletionOtp}>
+                <Text style={{ fontSize: 15, fontWeight: "700", color: "#64748b" }}>Cancel</Text>
+              </Pressable>
+              <Pressable style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: "#7c3aed", alignItems: "center" }} onPress={submitCompletionOtp} disabled={verifyingCompletionOtp}>
+                {verifyingCompletionOtp ? <ActivityIndicator color="#fff" /> : <Text style={{ fontSize: 15, fontWeight: "700", color: "#fff" }}>Verify & Complete</Text>}
               </Pressable>
             </View>
           </View>

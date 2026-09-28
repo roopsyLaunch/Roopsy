@@ -6,7 +6,16 @@ const Barber = require("../models/Barber");
 const Service = require("../models/Service");
 const AuditLog = require("../models/AuditLog");
 const User = require("../models/User");
-const { isWithinWorkingHours, endFitsWorkingHours } = require("../utils/time");
+const { 
+  isWithinWorkingHours, 
+  endFitsWorkingHours, 
+  dayKeyFromDate, 
+  parseHm, 
+  makeISTDate, 
+  getISTComponents, 
+  calculateIsShopOpen, 
+  normalizeWorkingHours 
+} = require("../utils/time");
 const { availableSeatSlots } = require("../utils/barberSeats");
 
 const CHECKIN_WINDOW_START_MINS = 10;
@@ -18,18 +27,18 @@ async function autoSuggestChair(barber, startTime, durationMinutes) {
   const buffer = barber.bufferMinutes || 5;
   const finishWithBuffer = new Date(finish.getTime() + buffer * 60000);
 
-  const [y, mo, d] = [start.getFullYear(), start.getMonth() + 1, start.getDate()];
-  const dayStart = new Date(y, mo - 1, d, 0, 0, 0, 0);
-  const dayEnd = new Date(y, mo - 1, d, 23, 59, 59, 999);
-
-  const { parseHm } = require("../utils/time");
+  const { parseHm, makeISTDate, getISTComponents } = require("../utils/time");
+  const startIST = getISTComponents(start);
+  const [y, mo, d] = [startIST.year, startIST.month, startIST.day];
+  const dayStart = makeISTDate(y, mo, d, 0, 0, 0);
+  const dayEnd = makeISTDate(y, mo, d, 23, 59, 59);
 
   // Check Lunch Time
   if (barber.lunchTime && barber.lunchTime.isActive) {
     const lStartM = parseHm(barber.lunchTime.startTime || "13:00");
     const lEndM = parseHm(barber.lunchTime.endTime || "14:00");
-    const lunchStart = new Date(y, mo - 1, d, Math.floor(lStartM / 60), lStartM % 60, 0, 0);
-    const lunchEnd = new Date(y, mo - 1, d, Math.floor(lEndM / 60), lEndM % 60, 0, 0);
+    const lunchStart = makeISTDate(y, mo, d, Math.floor(lStartM / 60), lStartM % 60, 0);
+    const lunchEnd = makeISTDate(y, mo, d, Math.floor(lEndM / 60), lEndM % 60, 0);
     if (start < lunchEnd && finishWithBuffer > lunchStart) {
       return { seatIndex: null, seatLabel: "Waiting", addToQueue: true, queuePosition: 0, conflict: "Shop is on lunch break." };
     }
@@ -38,10 +47,10 @@ async function autoSuggestChair(barber, startTime, durationMinutes) {
   // Check breaks
   const breaks = barber.breaks || [];
   for (const br of breaks) {
-    const brStartTime = new Date(br.startTime);
-    const brEndTime = new Date(br.endTime);
-    const brStart = new Date(y, mo - 1, d, brStartTime.getHours(), brStartTime.getMinutes());
-    const brEnd = new Date(y, mo - 1, d, brEndTime.getHours(), brEndTime.getMinutes());
+    const brStartComp = getISTComponents(br.startTime);
+    const brEndComp = getISTComponents(br.endTime);
+    const brStart = makeISTDate(y, mo, d, brStartComp.hour, brStartComp.minute, 0);
+    const brEnd = makeISTDate(y, mo, d, brEndComp.hour, brEndComp.minute, 0);
     if (start < brEnd && finishWithBuffer > brStart) {
       return { seatIndex: null, seatLabel: "Waiting", addToQueue: true, queuePosition: 0, conflict: "Shop is on break." };
     }
@@ -54,7 +63,13 @@ async function autoSuggestChair(barber, startTime, durationMinutes) {
     endTime: { $gt: dayStart }
   }).sort({ startTime: 1 });
 
-  const chairs = barber.seats.filter(s => s.isAvailable && s.status !== 'maintenance');
+  const { buildSeats } = require("../utils/barberSeats");
+  let chairs = (barber.seats && barber.seats.length > 0)
+    ? barber.seats.filter(s => s.status !== 'maintenance')
+    : buildSeats(barber.seatCount || 1);
+  if (chairs.length === 0) {
+    chairs = buildSeats(barber.seatCount || 1);
+  }
   const schedules = {};
   for (const c of chairs) schedules[c.index] = [];
   const unassigned = [];
@@ -147,59 +162,38 @@ async function create(req, res) {
   
   const barber = await Barber.findById(barberId);
   if (!barber) return res.status(404).json({ error: "Barber not found" });
+
+  const ownerUserId = (barber.userId?._id || barber.userId)?.toString();
+  const requesterId = req.user?._id?.toString();
+  if (ownerUserId && requesterId && ownerUserId === requesterId) {
+    const isBeauty = /beauty/i.test(barber.businessCategory || "");
+    const shopLabel = isBeauty ? "beauty parlor" : "barber shop";
+    return res.status(403).json({ error: `You cannot book services at your own ${shopLabel}.` });
+  }
+
   if (barber.pauseBookings) return res.status(400).json({ error: "Shop is currently not accepting new bookings." });
 
-  if (isHomeService) {
-    if (!barber.offersHomeService) return res.status(400).json({ error: "Home service off" });
-  } else {
-    if (!barber.isShopOpen) return res.status(400).json({ error: "Shop is currently closed for shop bookings." });
+  const start = new Date(startTime);
+  if (Number.isNaN(start.getTime())) return res.status(400).json({ error: "Invalid startTime" });
+
+  // Shop Status Check: Booking is allowed only when the shop partner has turned the shop ON
+  const shopIsOpen = barber.isShopOpen !== false && !barber.pauseBookings;
+  if (!shopIsOpen) {
+    return res.status(400).json({ error: "Shop is currently closed. Bookings are not allowed while the shop is closed." });
+  }
+
+  if (isHomeService && !barber.offersHomeService) {
+    return res.status(400).json({ error: "Home service is not offered by this shop." });
   }
 
   const services = await Service.find({ _id: { $in: serviceIds.map(id => new mongoose.Types.ObjectId(id)) }, barberId: barber._id });
   if (services.length !== serviceIds.length) return res.status(400).json({ error: "Invalid services" });
 
   const totalMinutes = services.reduce((sum, s) => sum + s.durationMinutes, 0);
-  const start = new Date(startTime);
   const end = new Date(start.getTime() + totalMinutes * 60 * 1000);
+  const startIST = getISTComponents(start);
 
-  const { parseHm } = require("../utils/time");
-  if (barber.lunchTime && barber.lunchTime.isActive) {
-    const y = start.getFullYear();
-    const mo = start.getMonth();
-    const d = start.getDate();
-    const lStartM = parseHm(barber.lunchTime.startTime || "13:00");
-    const lEndM = parseHm(barber.lunchTime.endTime || "14:00");
-    const lunchStart = new Date(y, mo, d, Math.floor(lStartM / 60), lStartM % 60, 0, 0);
-    const lunchEnd = new Date(y, mo, d, Math.floor(lEndM / 60), lEndM % 60, 0, 0);
-    if (start < lunchEnd && end > lunchStart) {
-      return res.status(400).json({ error: "Shop is currently on lunch break." });
-    }
-  }
-
-  if (Number.isNaN(start.getTime())) return res.status(400).json({ error: "Invalid startTime" });
-
-  const { dayKeyFromDate } = require("../utils/time");
-  const dayKey = dayKeyFromDate(start);
-  
-  // Create an effective working hours object that considers dailyOpenTime and dailyCloseTime 
-  // since Partner Registration doesn't explicitly set workingHours, relying on strict defaults.
-  const effectiveWorkingHours = JSON.parse(JSON.stringify(barber.workingHours || {}));
-  if (barber.dailyOpenTime && barber.dailyCloseTime) {
-    if (!effectiveWorkingHours[dayKey]) effectiveWorkingHours[dayKey] = {};
-    const dOpen = parseHm(barber.dailyOpenTime);
-    const dClose = parseHm(barber.dailyCloseTime);
-    const whOpen = parseHm(effectiveWorkingHours[dayKey].open || "09:00");
-    const whClose = parseHm(effectiveWorkingHours[dayKey].close || "18:00");
-    
-    // Expand the window if daily limits are broader
-    effectiveWorkingHours[dayKey].open = dOpen < whOpen ? barber.dailyOpenTime : (effectiveWorkingHours[dayKey].open || "09:00");
-    effectiveWorkingHours[dayKey].close = dClose > whClose ? barber.dailyCloseTime : (effectiveWorkingHours[dayKey].close || "18:00");
-  }
-
-  if (!isWithinWorkingHours(start, effectiveWorkingHours)) return res.status(400).json({ error: "Start time outside working hours" });
-  if (!endFitsWorkingHours(start, end, effectiveWorkingHours)) return res.status(400).json({ error: "Booking ends after closing time" });
-
-  const dateString = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+  const dateString = `${startIST.year}-${String(startIST.month).padStart(2, '0')}-${String(startIST.day).padStart(2, '0')}`;
   if (barber.unavailableDates && barber.unavailableDates.includes(dateString)) {
     return res.status(400).json({ error: "Shop is closed on this date." });
   }
@@ -270,7 +264,6 @@ async function create(req, res) {
     }
   }
 
-  const verificationPin = Math.floor(1000 + Math.random() * 9000).toString();
   const booking = await Booking.create({
     customerId: req.user._id,
     barberId: barber._id,
@@ -282,7 +275,8 @@ async function create(req, res) {
     notes: notes || "",
     seatIndex: finalSeatIndex,
     seatLabel: finalSeatLabel,
-    verificationPin,
+    verificationPin: "", // Generated upon confirmation by barber partner
+    otpExpiresAt: null,
     isHomeService: isHomeService || false,
     homeServiceAddress: homeServiceAddress || "",
     homeServiceLocation: homeServiceLocation || undefined,
@@ -309,27 +303,33 @@ async function create(req, res) {
       const Notification = require("../models/Notification");
       const customerName = req.user?.name || "Customer";
       const totalAmount = services.reduce((sum, s) => sum + s.price, 0);
+      const serviceNames = (services || []).map(s => s.name).join(", ");
+      const addr = (homeServiceAddress || "").trim();
+
+      const notifTitle = isHomeService ? `New Home Booking: ${customerName} 🏠` : `New Booking: ${customerName} 💈`;
+      const notifBody = `👤 Customer: ${customerName}\n✂️ Services: ${serviceNames || "Grooming"} (₹${totalAmount})${addr ? `\n📍 Address: ${addr}` : ""}`;
+
       await Notification.create({
         userId: barber.userId,
-        title: "New Booking Request 💈",
-        body: `${customerName} booked an appointment for ₹${totalAmount}. Please review the request.`,
+        title: notifTitle,
+        body: notifBody,
         type: "general",
-        data: { bookingId: booking._id, type: "barber_booking" }
+        data: {
+          bookingId: booking._id,
+          type: "barber_booking",
+          customerName,
+          services: serviceNames,
+          totalAmount,
+          address: addr,
+          isHomeService: !!isHomeService,
+        }
       });
     } catch (e) {
       console.error("Failed to create booking request notification for barber", e);
     }
   }
 
-  // Send Booking OTP via SMS to Customer
-  if (req.user?.phone) {
-    try {
-      const { sendCustomSms } = require("../services/smsService");
-      await sendCustomSms(req.user.phone, booking.verificationPin);
-    } catch (err) {
-      console.error("Failed to send booking verification OTP SMS:", err);
-    }
-  }
+
 
   const io = req.app.get("io");
   if (io) {
@@ -359,17 +359,44 @@ function formatBooking(b) {
     isWalkIn: b.isWalkIn, guestName: b.guestName, guestPhone: b.guestPhone,
     queuePosition: b.queuePosition, arrivedAt: b.arrivedAt, startedAt: b.startedAt, completedAt: b.completedAt, delayMinutes: b.delayMinutes,
     staffId: b.staffId, paymentStatus: b.paymentStatus, customerETA: b.customerETA, barberETA: b.barberETA, barberArrivalTime: b.barberArrivalTime,
-    isOtpVerified: b.isOtpVerified || false, otpVerifiedAt: b.otpVerifiedAt
+    isOtpVerified: b.isOtpVerified || false, otpVerifiedAt: b.otpVerifiedAt,
+    otpExpiresAt: b.otpExpiresAt,
+    completionPin: b.completionPin || "",
+    isCompletionOtpVerified: b.isCompletionOtpVerified || false,
+    completionOtpVerifiedAt: b.completionOtpVerifiedAt,
+    completionRequestedAt: b.completionRequestedAt,
+    rating: b.rating,
+    reviewComment: b.reviewComment || "",
+    isRated: b.isRated || false,
+    ratedAt: b.ratedAt
   };
 }
 
 async function listMine(req, res) {
-  const bookings = await Booking.find({ customerId: req.user._id }).populate("serviceIds").populate("barberId").sort({ createdAt: -1 });
+  const bookings = await Booking.find({ customerId: req.user._id })
+    .populate("serviceIds")
+    .populate({
+      path: "barberId",
+      populate: { path: "userId", select: "phone name" }
+    })
+    .sort({ createdAt: -1 });
+
   const out = bookings.map((b) => {
     const barber = b.barberId;
+    const partnerPhone = barber ? (barber.mobileNumber || barber.phone || barber.userId?.phone || "") : "";
     return {
       ...formatBooking(b),
-      barber: barber ? { id: barber._id, shopName: barber.shopName, bio: barber.bio, phone: barber.mobileNumber, businessCategory: barber.businessCategory, genderPreference: barber.genderPreference } : null,
+      barber: barber
+        ? {
+            id: barber._id,
+            shopName: barber.shopName,
+            bio: barber.bio,
+            phone: partnerPhone,
+            mobileNumber: partnerPhone,
+            businessCategory: barber.businessCategory,
+            genderPreference: barber.genderPreference,
+          }
+        : null,
     };
   });
   res.json({ bookings: out });
@@ -406,10 +433,19 @@ async function patch(req, res) {
     if (!isOwnBarber && req.user.role !== "admin") return res.status(403).json({ error: "Only the barber can update this status" });
   }
 
+
   if (parsed.data.status !== undefined && parsed.data.status !== booking.status) {
     const oldStatus = booking.status;
     booking.status = parsed.data.status;
     const now = new Date();
+
+    // Generate Check-in OTP on confirmation by barber partner with 12 hours validity
+    if (booking.status === "confirmed") {
+      if (!booking.verificationPin || booking.verificationPin === "WALK") {
+        booking.verificationPin = Math.floor(1000 + Math.random() * 9000).toString();
+      }
+      booking.otpExpiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000); // 12 hours expiry
+    }
 
     if (booking.status === "arrived") booking.arrivedAt = now;
     if (booking.status === "in-progress") {
@@ -427,10 +463,12 @@ async function patch(req, res) {
     // Check if delayed
     if (booking.status === "completed") {
        booking.completedAt = now;
+       booking.isCompletionOtpVerified = true;
+       booking.completionOtpVerifiedAt = now;
        if (booking.startedAt) {
           const actualDuration = (now.getTime() - booking.startedAt.getTime()) / 60000;
-          if (actualDuration > booking.expectedDuration + 5) {
-             booking.delayMinutes = Math.floor(actualDuration - booking.expectedDuration);
+          if (actualDuration > (booking.expectedDuration || 30) + 5) {
+             booking.delayMinutes = Math.floor(actualDuration - (booking.expectedDuration || 30));
           }
        }
     }
@@ -468,21 +506,54 @@ async function patch(req, res) {
 
   const io = req.app.get("io");
   if (io) {
-    if (booking.customerId) io.to(`user_${booking.customerId.toString()}`).emit("bookingUpdated", { bookingId: booking._id });
+    if (booking.customerId) {
+      io.to(`user_${booking.customerId.toString()}`).emit("bookingUpdated", { 
+        bookingId: booking._id,
+        barberId: booking.barberId,
+        status: booking.status,
+        verificationPin: booking.verificationPin,
+        otpExpiresAt: booking.otpExpiresAt,
+        isCompletionOtpVerified: booking.isCompletionOtpVerified,
+        requestReview: booking.status === "completed",
+        message: booking.status === "completed" ? "Service Completed ✅" : `Status updated to ${booking.status}`
+      });
+      if (booking.status === "completed") {
+        io.to(`user_${booking.customerId.toString()}`).emit("serviceCompleted", {
+          bookingId: booking._id,
+          barberId: booking.barberId,
+          requestReview: true
+        });
+      }
+    }
     if (barber) {
       io.to(`user_${barber.userId.toString()}`).emit("bookingUpdated", { bookingId: booking._id });
+      io.to(`barber_${barber._id.toString()}`).emit("bookingUpdated", { bookingId: booking._id });
       io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: barber.seats });
       io.to(`barber_${barber._id.toString()}`).emit("queueUpdated");
     }
   }
 
-  // Send Push Notification to Customer & Save to Notification Inbox
+  // Send Push Notification & SMS to Customer upon confirmation
   if (booking.customerId && parsed.data.status !== undefined) {
     let title = "Booking Update";
     let body = `Your booking status is now: ${parsed.data.status}`;
     if (parsed.data.status === "confirmed") {
-      title = "Booking Confirmed!";
-      body = barber ? `Your booking at ${barber.shopName} has been confirmed.` : "Your booking is confirmed.";
+      title = "Booking Confirmed! ✅";
+      body = barber 
+        ? `Your appointment at ${barber.shopName} has been confirmed. Your Check-in OTP is: ${booking.verificationPin} (valid for 12 hours).` 
+        : `Your appointment has been confirmed. Your Check-in OTP is: ${booking.verificationPin} (valid for 12 hours).`;
+
+      // Send SMS with confirmed OTP
+      try {
+        User.findById(booking.customerId).then(cust => {
+          if (cust?.phone) {
+            const { sendCustomSms } = require("../services/smsService");
+            sendCustomSms(cust.phone, booking.verificationPin).catch(() => {});
+          }
+        }).catch(() => {});
+      } catch (err) {
+        console.error("SMS notification error:", err);
+      }
     } else if (parsed.data.status === "cancelled") {
       title = "Booking Cancelled";
       body = barber ? `Your booking at ${barber.shopName} has been cancelled.` : "Your booking is cancelled.";
@@ -570,8 +641,6 @@ async function availableSlots(req, res) {
   const isHomeService = services.some(s => s.isHomeService);
   if (isHomeService) {
     if (!barber.offersHomeService) return res.json({ slots: [] });
-  } else {
-    if (!barber.isShopOpen) return res.json({ slots: [] });
   }
 
   const totalMinutes = services.reduce((sum, s) => sum + (s.durationMinutes || 30), 0);
@@ -579,8 +648,9 @@ async function availableSlots(req, res) {
   const totalNeededMinutes = totalMinutes + buffer;
 
   const [y, mo, d] = date.split("-").map(Number);
-  const dayStart = new Date(y, mo - 1, d, 0, 0, 0, 0);
-  const dayEnd = new Date(y, mo - 1, d, 23, 59, 59, 999);
+  const { dayKeyFromDate, parseHm, makeISTDate, getISTComponents } = require("../utils/time");
+  const dayStart = makeISTDate(y, mo, d, 0, 0, 0);
+  const dayEnd = makeISTDate(y, mo, d, 23, 59, 59);
 
   const existing = await Booking.find({
     barberId: barber._id,
@@ -589,18 +659,24 @@ async function availableSlots(req, res) {
     endTime: { $gt: dayStart },
   }).sort({ startTime: 1 });
 
-  const { dayKeyFromDate, parseHm } = require("../utils/time");
-  const wh = barber.workingHours[dayKeyFromDate(dayStart)];
-  if (!wh || !wh.open || !wh.close || wh.isClosed) return res.json({ slots: [] });
+  const now = new Date();
+  const isShopOpenCurrently = barber.isShopOpen !== false && !barber.pauseBookings;
 
-  const openM = parseHm(wh.open);
-  const closeM = parseHm(wh.close);
-  const shopOpenDate = new Date(y, mo - 1, d, Math.floor(openM / 60), openM % 60, 0, 0);
-  let shopCloseDate = new Date(y, mo - 1, d, Math.floor(closeM / 60), closeM % 60, 0, 0);
-  if (closeM < openM) shopCloseDate = new Date(shopCloseDate.getTime() + 24 * 60 * 60 * 1000);
+  if (!isShopOpenCurrently) return res.json({ slots: [], allSlots: [], totalSlotsForDay: 0, bookedSlotsForDay: 0 });
 
-  const chairs = barber.seats.filter(s => s.isAvailable && s.status !== 'maintenance');
-  if (chairs.length === 0) return res.json({ slots: [] });
+  const openM = parseHm(barber.dailyOpenTime || "08:00");
+  const closeM = parseHm(barber.dailyCloseTime || "22:00");
+  const shopOpenDate = makeISTDate(y, mo, d, Math.floor(openM / 60), openM % 60, 0);
+  let shopCloseDate = makeISTDate(y, mo, d, Math.floor(closeM / 60), closeM % 60, 0);
+  if (closeM <= openM) shopCloseDate = new Date(shopCloseDate.getTime() + 24 * 60 * 60 * 1000);
+
+  const { buildSeats } = require("../utils/barberSeats");
+  let chairs = (barber.seats && barber.seats.length > 0)
+    ? barber.seats.filter(s => s.status !== 'maintenance')
+    : buildSeats(barber.seatCount || 1);
+  if (chairs.length === 0) {
+    chairs = buildSeats(barber.seatCount || 1);
+  }
 
   // Initialize schedules per chair
   const schedules = {};
@@ -610,8 +686,8 @@ async function availableSlots(req, res) {
   if (barber.lunchTime && barber.lunchTime.isActive) {
     const lStartM = parseHm(barber.lunchTime.startTime || "13:00");
     const lEndM = parseHm(barber.lunchTime.endTime || "14:00");
-    const lunchStart = new Date(y, mo - 1, d, Math.floor(lStartM / 60), lStartM % 60, 0, 0);
-    const lunchEnd = new Date(y, mo - 1, d, Math.floor(lEndM / 60), lEndM % 60, 0, 0);
+    const lunchStart = makeISTDate(y, mo, d, Math.floor(lStartM / 60), lStartM % 60, 0);
+    const lunchEnd = makeISTDate(y, mo, d, Math.floor(lEndM / 60), lEndM % 60, 0);
     for (const c of chairs) {
       schedules[c.index].push({ start: lunchStart, end: lunchEnd });
     }
@@ -620,11 +696,10 @@ async function availableSlots(req, res) {
   // Add breaks to all chairs
   const breaks = barber.breaks || [];
   for (const br of breaks) {
-    // Treat break dates as time only for the given day
-    const brStartTime = new Date(br.startTime);
-    const brEndTime = new Date(br.endTime);
-    const brStart = new Date(y, mo - 1, d, brStartTime.getHours(), brStartTime.getMinutes());
-    const brEnd = new Date(y, mo - 1, d, brEndTime.getHours(), brEndTime.getMinutes());
+    const brStartComp = getISTComponents(br.startTime);
+    const brEndComp = getISTComponents(br.endTime);
+    const brStart = makeISTDate(y, mo, d, brStartComp.hour, brStartComp.minute, 0);
+    const brEnd = makeISTDate(y, mo, d, brEndComp.hour, brEndComp.minute, 0);
     for (const c of chairs) {
       schedules[c.index].push({ start: brStart, end: brEnd });
     }
@@ -673,7 +748,6 @@ async function availableSlots(req, res) {
 
   const slotIntervalMinutes = barber.slotIntervalMinutes || 15;
   const validSlots = new Set();
-  const now = new Date();
 
   // Find free gaps for each chair and generate slots
   for (const c of chairs) {
@@ -763,6 +837,10 @@ async function verifyOtp(req, res) {
   const barber = await Barber.findOne({ userId: req.user._id });
   if (!barber || booking.barberId.toString() !== barber._id.toString()) return res.status(403).json({ error: "Forbidden" });
 
+  if (booking.otpExpiresAt && new Date() > new Date(booking.otpExpiresAt)) {
+    return res.status(400).json({ error: "OTP expired! Check-in OTP is valid for 12 hours after booking confirmation." });
+  }
+
   if (booking.verificationPin !== otp) return res.status(400).json({ error: "Invalid OTP" });
   booking.status = "in-progress";
   booking.startedAt = new Date();
@@ -820,6 +898,171 @@ async function verifyOtp(req, res) {
   res.json({ booking: formatBooking(booking) });
 }
 
+const generateCompletionOtpSchema = z.object({ bookingId: z.string().length(24) });
+async function generateCompletionOtp(req, res) {
+  const bookingId = req.params.id || req.body.bookingId;
+  const parsed = generateCompletionOtpSchema.safeParse({ bookingId });
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const booking = await Booking.findById(bookingId).populate("serviceIds");
+  if (!booking) return res.status(404).json({ error: "Booking not found" });
+
+  const barber = await Barber.findOne({ userId: req.user._id });
+  if (!barber || booking.barberId.toString() !== barber._id.toString()) {
+    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+  }
+
+  // Generate 4-digit completion OTP
+  const completionPin = Math.floor(1000 + Math.random() * 9000).toString();
+  booking.completionPin = completionPin;
+  booking.completionRequestedAt = new Date();
+  await booking.save();
+
+  const serviceNames = (booking.serviceIds || []).map(s => s?.name || "Service").join(", ");
+  const shopName = barber?.shopName || "Salon / Parlor";
+
+  if (booking.customerId) {
+    try {
+      const Notification = require("../models/Notification");
+      await Notification.create({
+        userId: booking.customerId,
+        title: "Service Finished - Completion OTP 🎉",
+        body: `Your service (${serviceNames}) at ${shopName} is finished! Your Completion OTP is: ${completionPin}. Share this OTP with the partner to confirm completion.`,
+        type: "booking_completion_otp",
+        data: { bookingId: booking._id, completionPin, serviceNames, shopName }
+      });
+
+      const customer = await User.findById(booking.customerId);
+      if (customer && customer.phone) {
+        try {
+          const { sendCustomSms } = require("../services/smsService");
+          await sendCustomSms(customer.phone, completionPin);
+        } catch (smsErr) {
+          console.error("Failed to send completion OTP SMS", smsErr);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to notify customer of completion OTP", err);
+    }
+  }
+
+  const io = req.app.get("io");
+  if (io) {
+    if (booking.customerId) {
+      io.to(`user_${booking.customerId.toString()}`).emit("bookingUpdated", {
+        bookingId: booking._id,
+        completionPin,
+        status: booking.status,
+        message: "Service Finished - Completion OTP Generated 🎉"
+      });
+      io.to(`user_${booking.customerId.toString()}`).emit("completionOtpGenerated", {
+        bookingId: booking._id,
+        completionPin
+      });
+    }
+    io.to(`barber_${booking.barberId.toString()}`).emit("bookingUpdated", { bookingId: booking._id });
+  }
+
+  res.json({ success: true, message: "Completion OTP generated and sent to customer!", completionPin, booking: formatBooking(booking) });
+}
+
+const verifyCompletionOtpSchema = z.object({ bookingId: z.string().length(24), otp: z.string().length(4) });
+async function verifyCompletionOtp(req, res) {
+  const bookingId = req.params.id || req.body.bookingId;
+  const otp = req.body.otp;
+  const parsed = verifyCompletionOtpSchema.safeParse({ bookingId, otp });
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const booking = await Booking.findById(bookingId).populate("serviceIds");
+  if (!booking) return res.status(404).json({ error: "Booking not found" });
+
+  const barber = await Barber.findOne({ userId: req.user._id });
+  if (!barber || booking.barberId.toString() !== barber._id.toString()) {
+    if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+  }
+
+  if (!booking.completionPin) {
+    return res.status(400).json({ error: "Completion OTP has not been generated yet. Please generate OTP first." });
+  }
+
+  if (booking.completionPin !== String(otp).trim()) {
+    return res.status(400).json({ error: "Invalid Completion OTP code. Please enter the correct 4-digit code." });
+  }
+
+  const now = new Date();
+  booking.status = "completed";
+  booking.completedAt = now;
+  booking.isCompletionOtpVerified = true;
+  booking.completionOtpVerifiedAt = now;
+  booking.queuePosition = 0;
+
+  if (booking.startedAt) {
+    const actualDuration = (now.getTime() - booking.startedAt.getTime()) / 60000;
+    if (actualDuration > (booking.expectedDuration || 30) + 5) {
+      booking.delayMinutes = Math.floor(actualDuration - (booking.expectedDuration || 30));
+    }
+  }
+
+  if (barber && booking.seatIndex !== null && booking.seatIndex !== undefined) {
+    const seat = barber.seats.find(s => s.index === booking.seatIndex);
+    if (seat && !seat.isAvailable) {
+      seat.isAvailable = true;
+      seat.occupiedUntil = null;
+      await barber.save();
+    }
+  }
+
+  await booking.save();
+
+  await AuditLog.create({
+    actionType: "Completion OTP Verified & Service Completed",
+    entityId: booking._id,
+    entityModel: "Booking",
+    actorId: req.user._id,
+    actorModel: "Barber",
+    details: {}
+  });
+
+  const shopName = barber?.shopName || "Salon / Parlor";
+  if (booking.customerId) {
+    try {
+      const Notification = require("../models/Notification");
+      await Notification.create({
+        userId: booking.customerId,
+        title: "Service Completed & Confirmed! ✅",
+        body: `Your service at ${shopName} has been successfully completed and confirmed! Tap to leave a review ⭐️`,
+        type: "booking_completed",
+        data: { bookingId: booking._id, barberId: booking.barberId, requestReview: true }
+      });
+    } catch (e) {
+      console.error("Failed to create completion notification", e);
+    }
+  }
+
+  const io = req.app.get("io");
+  if (io) {
+    io.to(`barber_${barber._id.toString()}`).emit("queueUpdated");
+    io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: barber.seats });
+    if (booking.customerId) {
+      io.to(`user_${booking.customerId.toString()}`).emit("bookingUpdated", {
+        bookingId: booking._id,
+        barberId: booking.barberId,
+        status: "completed",
+        isCompletionOtpVerified: true,
+        requestReview: true,
+        message: "Service Completed & Confirmed! ✅"
+      });
+      io.to(`user_${booking.customerId.toString()}`).emit("serviceCompleted", {
+        bookingId: booking._id,
+        barberId: booking.barberId,
+        requestReview: true
+      });
+    }
+  }
+
+  res.json({ success: true, message: "Completion OTP verified & service marked completed! 🎉", booking: formatBooking(booking) });
+}
+
 const lockSlotSchema = z.object({ barberId: z.string().length(24), time: z.string() });
 async function lockSlot(req, res) {
   const parsed = lockSlotSchema.safeParse(req.body);
@@ -844,7 +1087,9 @@ async function walkIn(req, res) {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const barber = await Barber.findOne({ userId: req.user.id });
   if (!barber) return res.status(404).json({ error: "Barber not found" });
-  if (!barber.isShopOpen || barber.pauseBookings) return res.status(400).json({ error: "Shop is currently not accepting new bookings." });
+  const { calculateIsShopOpen } = require("../utils/time");
+  const shopIsOpen = calculateIsShopOpen(barber) || barber.isShopOpen;
+  if (!shopIsOpen || barber.pauseBookings) return res.status(400).json({ error: "Shop is currently not accepting new bookings." });
   
   const { serviceIds, customerName, customerPhone } = parsed.data;
   const services = await Service.find({ _id: { $in: serviceIds }, barberId: barber._id });
@@ -990,5 +1235,5 @@ async function slotAlternatives(req, res) {
 }
 
 module.exports = {
-  create, listMine, listForBarber, patch, availableSlots, verifyOtp, lockSlot, walkIn, slotAlternatives, getUnifiedQueue, reschedule, cancel
+  create, listMine, listForBarber, patch, availableSlots, verifyOtp, generateCompletionOtp, verifyCompletionOtp, lockSlot, walkIn, slotAlternatives, getUnifiedQueue, reschedule, cancel
 };

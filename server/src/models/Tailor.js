@@ -61,9 +61,14 @@ const tailorSchema = new mongoose.Schema(
     specialties: { type: [String], default: [] }, // e.g., Suits, Dresses, Alterations
     experienceYears: { type: Number, default: 0 },
     isShopOpen: { type: Boolean, default: true },
+    autoShopStatus: { type: Boolean, default: false },
+    pauseBookings: { type: Boolean, default: false },
     offersShopService: { type: Boolean, default: true },
     offersHomeService: { type: Boolean, default: true },
     offersPremiumService: { type: Boolean, default: true },
+    homeServiceFee: { type: Number, default: 0 },
+    visitFee: { type: Number, default: 0 },
+    premiumServiceFee: { type: Number, default: 0 },
     acceptsRushOrders: { type: Boolean, default: false },
     rushOrderFee: { type: Number, default: 0 },
     

@@ -29,6 +29,7 @@ router.patch("/push-token", authRequired, authController.updatePushToken);
 router.get("/notifications", authRequired, authController.getUserNotifications);
 router.patch("/notifications/read-all", authRequired, authController.markNotificationsRead);
 router.delete("/notifications/:id", authRequired, authController.deleteNotification);
+router.delete("/notifications", authRequired, authController.clearAllNotifications);
 router.post("/notifications/delete-bulk", authRequired, authController.deleteNotificationsBulk);
 
 module.exports = router;

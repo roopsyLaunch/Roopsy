@@ -19,9 +19,15 @@ import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
 import { getApiBaseUrl } from "../config";
 
-// Enable LayoutAnimation for Android
-if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
+// Enable LayoutAnimation for Android (Old Architecture only)
+if (
+  Platform.OS === "android" &&
+  UIManager.setLayoutAnimationEnabledExperimental &&
+  !global?.nativeFabricUIManager
+) {
+  try {
+    UIManager.setLayoutAnimationEnabledExperimental(true);
+  } catch (e) {}
 }
 
 function getErrorMessage(err) {
@@ -170,8 +176,9 @@ export function RegisterScreen({ navigation }) {
         }
       }
 
+      const cleanedName = name.replace(/^(mr\.?|mrs\.?|ms\.?)\s+/i, "").trim() || name.trim();
       const payload = {
-        name: name.trim(),
+        name: cleanedName,
         phone: phone.trim(),
         otp: code.trim(),
         requestId: requestId || undefined,

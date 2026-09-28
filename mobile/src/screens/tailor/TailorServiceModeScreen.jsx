@@ -2,29 +2,43 @@ import React, { useState } from "react";
 import { View, Text, StyleSheet, Pressable, ScrollView, TextInput, Alert, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import DateTimePickerModal from "react-native-modal-datetime-picker";
 import { api } from "../../api/client";
 import { getCurrentGPSLocation } from "../../services/locationService";
+import { useAuth } from "../../context/AuthContext";
 
 export function TailorServiceModeScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
   const { tailor, services } = route.params;
+  const { user, tailor: myTailor } = useAuth();
 
-  const [serviceMode, setServiceMode] = useState("shop"); // "shop" or "home"
+  const [currentTailor, setCurrentTailor] = useState(tailor);
+  const [serviceMode, setServiceMode] = useState("shop"); // "shop", "home", "premium"
   
-  const [address, setAddress] = useState("");
-  const [visitDate, setVisitDate] = useState(null);
-  const [isDatePickerVisible, setDatePickerVisibility] = useState(false);
+  const defaultAddr = user?.address?.line1 ? `${user.address.line1}, ${user.address.city || ""}` : "";
+  const [address, setAddress] = useState(defaultAddr);
   const [submitting, setSubmitting] = useState(false);
   const [fetchingGps, setFetchingGps] = useState(false);
 
-  const VISIT_FEE = 150; // Fixed visit fee for Doorstep Tailoring
-  const PREMIUM_FEE = 250; // Fixed premium VIP service fee
+  // Fetch freshest tailor details for exact partner configured fees
+  React.useEffect(() => {
+    const tId = tailor?._id || tailor?.id;
+    if (tId) {
+      api.get(`/tailors/${tId}`)
+        .then((res) => {
+          if (res.data?.tailor) setCurrentTailor(res.data.tailor);
+        })
+        .catch(() => {});
+    }
+  }, [tailor?._id, tailor?.id]);
 
-  const handleConfirmDate = (date) => {
-    setVisitDate(date);
-    setDatePickerVisibility(false);
-  };
+  const isShopAllowed = currentTailor?.offersShopService !== false;
+  const isHomeAllowed = currentTailor?.offersHomeService !== false;
+
+  const homeFee = Math.max(0, Number(currentTailor?.homeServiceFee ?? currentTailor?.visitFee) || 0);
+
+  const activeFee = serviceMode === "home" ? homeFee : 0;
+  const servicesTotal = services.reduce((acc, s) => acc + (s.price || 0), 0);
+  const grandTotal = servicesTotal + activeFee;
 
   const handleFetchGPS = async () => {
     setFetchingGps(true);
@@ -46,10 +60,6 @@ export function TailorServiceModeScreen({ route, navigation }) {
     }
   };
 
-  const isShopAllowed = tailor?.offersShopService !== false;
-  const isHomeAllowed = tailor?.offersHomeService !== false;
-  const isPremiumAllowed = tailor?.offersPremiumService !== false;
-
   const handleSelectMode = (mode) => {
     if (mode === "shop" && !isShopAllowed) {
       return Alert.alert("Service Unavailable", "Shop service is currently turned off by the tailor.");
@@ -57,13 +67,26 @@ export function TailorServiceModeScreen({ route, navigation }) {
     if (mode === "home" && !isHomeAllowed) {
       return Alert.alert("Service Unavailable", "Home service is currently turned off by the tailor.");
     }
-    if (mode === "premium" && !isPremiumAllowed) {
-      return Alert.alert("Service Unavailable", "Premium service is currently turned off by the tailor.");
-    }
     setServiceMode(mode);
   };
 
   const handlePlaceOrder = async () => {
+    const myId = (user?._id || user?.id)?.toString();
+    const ownerId = (currentTailor?.userId?._id || currentTailor?.userId || tailor?.userId?._id || tailor?.userId)?.toString();
+    const targetTailorId = (currentTailor?._id || tailor?._id)?.toString();
+    const isOwnTailor = Boolean(
+      (myId && ownerId && myId === ownerId) ||
+      (myTailor?._id && targetTailorId && myTailor._id.toString() === targetTailorId)
+    );
+    if (isOwnTailor) {
+      return Alert.alert(
+        "Action Not Allowed",
+        "You cannot place an order at your own tailor shop. You can explore and book services from other tailor studios."
+      );
+    }
+    if (currentTailor?.isShopOpen === false || tailor?.isShopOpen === false) {
+      return Alert.alert("Shop Currently Closed", "This tailor studio is currently closed and not accepting new orders. Please try again when the shop opens.");
+    }
     if (serviceMode === "shop" && !isShopAllowed) {
       return Alert.alert("Service Unavailable", "Shop service is currently turned off by the tailor.");
     }
@@ -75,31 +98,38 @@ export function TailorServiceModeScreen({ route, navigation }) {
       if (!address.trim()) {
         return Alert.alert("Required", "Please provide your full address for doorstep visit.");
       }
-      if (!visitDate) {
-        return Alert.alert("Required", "Please select a date and time for doorstep visit.");
-      }
     }
 
-    const fee = serviceMode === "home" ? VISIT_FEE : (serviceMode === "premium" ? PREMIUM_FEE : 0);
-    const servicesTotal = services.reduce((acc, s) => acc + (s.price || 0), 0);
-    const grandTotal = servicesTotal + fee;
+    const premiumSvc = (services || []).find(s => s.serviceMode === "premium" || s.isPremium || (s.name && /premium|vip/i.test(s.name)));
+    const hasPremiumService = Boolean(premiumSvc);
+    const premiumCompTime = premiumSvc?.completionTime || (hasPremiumService ? "12 Hours" : "");
+    const premiumEstDays = hasPremiumService ? (premiumSvc?.estimatedDays || 1) : (services[0]?.estimatedDays || 3);
 
     setSubmitting(true);
     try {
       const response = await api.post("/tailors/orders", {
-        tailorId: tailor._id,
-        services: services.map(s => ({ serviceId: s._id, name: s.name, price: s.price, quantity: 1 })),
+        tailorId: currentTailor._id || tailor._id,
+        services: services.map(s => ({ 
+          serviceId: s._id || s.id, 
+          name: s.name, 
+          price: s.price, 
+          quantity: 1,
+          serviceMode: s.serviceMode || (hasPremiumService ? "premium" : "shop"),
+          completionTime: s.completionTime || (hasPremiumService ? premiumCompTime : "")
+        })),
         totalAmount: grandTotal,
         isHomeService: serviceMode === "home",
-        isPremiumService: serviceMode === "premium",
-        homeServiceAddress: serviceMode === "home" ? address : "",
-        visitDate: serviceMode === "home" ? visitDate.toISOString() : null,
-        visitFee: fee
+        isPremiumService: hasPremiumService,
+        completionTime: premiumCompTime,
+        estimatedDays: premiumEstDays,
+        homeServiceAddress: address.trim() || "",
+        visitDate: null,
+        visitFee: activeFee
       });
 
       Alert.alert(
         "Booking Request Sent! ✂️",
-        `Your booking request has been sent to ${tailor.shopName || "the tailor"}.\n\n⏳ Pending Tailor Confirmation: Your verification OTP will be generated as soon as the tailor partner confirms your booking.`,
+        `Your booking request has been sent to ${currentTailor?.shopName || tailor?.shopName || "the tailor"}.\n\n⏳ Pending Tailor Confirmation: Your verification OTP will be generated as soon as the tailor partner confirms your booking.`,
         [
           {
             text: "View My Bookings",
@@ -176,7 +206,11 @@ export function TailorServiceModeScreen({ route, navigation }) {
               <Text style={styles.cardDesc}>
                 Tailor visits customer's home for doorstep measurements & trial fitting.
               </Text>
-              <Text style={styles.feeText}>+₹{VISIT_FEE} Visit Fee</Text>
+              {homeFee > 0 ? (
+                <Text style={styles.feeText}>+₹{homeFee} Visit Charge</Text>
+              ) : (
+                <Text style={styles.feeTextFree}>Free (No extra charges)</Text>
+              )}
             </View>
             <View style={[styles.radioCircle, serviceMode === "home" && styles.radioCircleActive]}>
               {serviceMode === "home" && <View style={styles.radioDot} />}
@@ -184,81 +218,58 @@ export function TailorServiceModeScreen({ route, navigation }) {
           </Pressable>
         )}
 
-        {/* Option 3: Premium VIP Service */}
-        {isPremiumAllowed && (
-          <Pressable 
-            style={[styles.card, serviceMode === "premium" && styles.cardActivePremium]} 
-            onPress={() => handleSelectMode("premium")}
-          >
-            <View style={styles.iconBox}>
-              <Ionicons name="ribbon" size={24} color={serviceMode === "premium" ? "#7c3aed" : "#64748b"} />
-            </View>
-            <View style={styles.cardInfo}>
-              <Text style={[styles.cardTitle, serviceMode === "premium" && styles.cardTitleActivePremium]}>👑 Premium VIP Service (Priority Stitching)</Text>
-              <Text style={styles.cardDesc}>
-                Express priority stitching, premium fabric care, custom designer details & fast delivery.
-              </Text>
-              <Text style={styles.feeTextPremium}>+₹{PREMIUM_FEE} Premium Fee</Text>
-            </View>
-            <View style={[styles.radioCircle, serviceMode === "premium" && styles.radioCircleActivePremium]}>
-              {serviceMode === "premium" && <View style={[styles.radioDot, { backgroundColor: "#7c3aed" }]} />}
-            </View>
-          </Pressable>
-        )}
-
-        {/* Home Visit Details (Only when Home Service is selected) */}
-        {serviceMode === "home" && (
-          <View style={styles.homeDetailsContainer}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <Text style={[styles.label, { marginBottom: 0 }]}>Full Delivery / Doorstep Address</Text>
-              <Pressable 
-                style={({ pressed }) => [
-                  styles.gpsAutofillBtn,
-                  pressed && { opacity: 0.7 }
-                ]}
-                onPress={handleFetchGPS}
-                disabled={fetchingGps}
-              >
-                {fetchingGps ? (
-                  <ActivityIndicator size="small" color="#0d9488" style={{ marginRight: 4 }} />
-                ) : (
-                  <Ionicons name="location" size={14} color="#0d9488" style={{ marginRight: 4 }} />
-                )}
-                <Text style={styles.gpsAutofillText}>
-                  {fetchingGps ? "Locating..." : "Auto Fill"}
-                </Text>
-              </Pressable>
-            </View>
-            <TextInput 
-              style={styles.textArea} 
-              multiline 
-              numberOfLines={3}
-              placeholder="Enter your complete home address with landmark..."
-              value={address}
-              onChangeText={setAddress}
-            />
-
-            <Text style={styles.label}>Preferred Visit Time</Text>
-            <Pressable style={styles.dateSelector} onPress={() => setDatePickerVisibility(true)}>
-              <Ionicons name="calendar-outline" size={20} color="#475569" style={{ marginRight: 10 }} />
-              <Text style={visitDate ? styles.dateTextSelected : styles.dateTextPlaceholder}>
-                {visitDate ? visitDate.toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "Select Date & Time"}
+        {/* Address & Auto Address (GPS) Details */}
+        <View style={styles.homeDetailsContainer}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <Text style={[styles.label, { marginBottom: 0 }]}>
+              {serviceMode === "home" ? "Full Delivery / Doorstep Address (Required)" : "Your Address / Delivery Location (Optional)"}
+            </Text>
+            <Pressable 
+              style={({ pressed }) => [
+                styles.gpsAutofillBtn,
+                pressed && { opacity: 0.7 }
+              ]}
+              onPress={handleFetchGPS}
+              disabled={fetchingGps}
+            >
+              {fetchingGps ? (
+                <ActivityIndicator size="small" color="#0d9488" style={{ marginRight: 4 }} />
+              ) : (
+                <Ionicons name="locate" size={14} color="#0d9488" style={{ marginRight: 4 }} />
+              )}
+              <Text style={styles.gpsAutofillText}>
+                {fetchingGps ? "Locating..." : "Auto Address"}
               </Text>
             </Pressable>
           </View>
-        )}
+          <TextInput 
+            style={styles.textArea} 
+            multiline 
+            numberOfLines={3}
+            placeholder={serviceMode === "home" ? "Enter your complete home address with landmark..." : "Enter your address or tap Auto Address..."}
+            value={address}
+            onChangeText={setAddress}
+          />
+        </View>
 
       </ScrollView>
 
-      <DateTimePickerModal
-        isVisible={isDatePickerVisible}
-        mode="datetime"
-        onConfirm={handleConfirmDate}
-        onCancel={() => setDatePickerVisibility(false)}
-        minimumDate={new Date()}
-      />
-
       <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+        <View style={styles.totalRow}>
+          <View>
+            <Text style={styles.totalLabel}>Total Payable</Text>
+            {activeFee > 0 ? (
+              <Text style={{ fontSize: 11, color: "#64748b", fontWeight: "600", marginTop: 2 }}>
+                Includes ₹{activeFee} doorstep visit charge
+              </Text>
+            ) : (
+              <Text style={{ fontSize: 11, color: "#16a34a", fontWeight: "600", marginTop: 2 }}>
+                No extra charges
+              </Text>
+            )}
+          </View>
+          <Text style={styles.totalValue}>₹{grandTotal}</Text>
+        </View>
         <Pressable style={[styles.nextBtn, submitting && { opacity: 0.7 }]} onPress={handlePlaceOrder} disabled={submitting}>
           {submitting ? (
             <ActivityIndicator color="#fff" />
@@ -322,6 +333,9 @@ const styles = StyleSheet.create({
   dateTextSelected: { fontSize: 15, color: "#0f172a", fontWeight: "600" },
 
   bottomBar: { position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: "#ffffff", paddingHorizontal: 24, paddingTop: 16, borderTopWidth: 1, borderTopColor: "#f1f5f9", shadowColor: "#000", shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.05, shadowRadius: 10, elevation: 10 },
+  totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  totalLabel: { fontSize: 14, fontWeight: "700", color: "#64748b" },
+  totalValue: { fontSize: 18, fontWeight: "900", color: "#0f172a" },
   nextBtn: { backgroundColor: "#0d9488", height: 56, borderRadius: 16, flexDirection: "row", justifyContent: "center", alignItems: "center" },
   nextBtnText: { color: "#ffffff", fontSize: 16, fontWeight: "700", marginRight: 8 },
   cardActivePremium: { borderColor: "#7c3aed", backgroundColor: "#faf5ff" },

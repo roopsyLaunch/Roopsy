@@ -13,6 +13,8 @@ router.get("/barber", authRequired, requireRole("barber", "admin"), bookingContr
 router.get("/queue", authRequired, requireRole("barber", "admin"), bookingController.getUnifiedQueue);
 router.post("/walk-in", authRequired, requireRole("barber"), bookingController.walkIn);
 router.post("/verify-otp", authRequired, requireRole("barber", "admin"), bookingController.verifyOtp);
+router.post("/:id/generate-completion-otp", authRequired, requireRole("barber", "admin"), bookingController.generateCompletionOtp);
+router.post("/verify-completion-otp", authRequired, requireRole("barber", "admin"), bookingController.verifyCompletionOtp);
 router.post("/:id/reschedule", authRequired, bookingController.reschedule);
 router.post("/:id/cancel", authRequired, bookingController.cancel);
 router.patch("/:id", authRequired, bookingController.patch);

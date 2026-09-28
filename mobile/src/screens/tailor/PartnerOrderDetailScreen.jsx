@@ -363,11 +363,11 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
               )}
             </>
           )}
-          {order.estimatedDays ? (
+          {(order.completionTime || order.estimatedDays) ? (
             <InfoRow
               label="Estimated Completion"
-              value={`${order.estimatedDays} Days (${order.deliveryDate ? new Date(order.deliveryDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "Target"})`}
-              valueColor="#059669"
+              value={`${order.completionTime || `${order.estimatedDays} Days`} (${order.deliveryDate ? new Date(order.deliveryDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "Target"})`}
+              valueColor={order.isPremiumService ? "#7c3aed" : "#059669"}
             />
           ) : null}
         </Section>

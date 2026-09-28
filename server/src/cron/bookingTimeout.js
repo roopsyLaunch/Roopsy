@@ -73,14 +73,24 @@ function startBookingTimeoutCron(app) {
               if (b.customerId) {
                  io.to(`user_${b.customerId.toString()}`).emit("delayAlert", { delayMinutes: delay });
                  
-                 // Save notification
-                 await Notification.create({
+                 // Update existing delay notification or create one if none exists
+                 const existingDelayNotif = await Notification.findOne({
                     userId: b.customerId,
-                    title: "Service Delayed",
-                    body: `Your barber is currently delayed by ${delay} minutes.`,
-                    type: "delay",
-                    data: { bookingId: b._id }
+                    "data.bookingId": b._id,
+                    type: "delay"
                  });
+                 if (existingDelayNotif) {
+                    existingDelayNotif.body = `Your barber is currently delayed by ${delay} minutes.`;
+                    await existingDelayNotif.save();
+                 } else {
+                    await Notification.create({
+                       userId: b.customerId,
+                       title: "Service Delayed",
+                       body: `Your barber is currently delayed by ${delay} minutes.`,
+                       type: "delay",
+                       data: { bookingId: b._id }
+                    });
+                 }
               }
             }
           }
@@ -109,6 +119,13 @@ function startBookingTimeoutCron(app) {
          const title = is30 ? "Booking in 30 minutes" : "Booking in 10 minutes";
          const body = is30 ? "Your salon appointment starts in 30 minutes. Be ready!" : "Your salon appointment starts in 10 minutes. Please arrive now.";
          
+         const existingReminder = await Notification.findOne({
+            userId: b.customerId,
+            "data.bookingId": b._id,
+            title
+         });
+         if (existingReminder) continue;
+
          await Notification.create({
             userId: b.customerId,
             title,

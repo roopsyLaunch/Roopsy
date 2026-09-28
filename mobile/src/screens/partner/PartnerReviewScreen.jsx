@@ -81,7 +81,6 @@ export function PartnerReviewScreen({ navigation, route }) {
             pincode: data.pincode,
           },
           location: data.lat && data.lng ? { lat: Number(data.lat), lng: Number(data.lng) } : undefined,
-          workingHours: data.hours,
           gallery: uploadedImages,
           seatCount: Number(data.seatCount) || 1,
         });
@@ -94,13 +93,40 @@ export function PartnerReviewScreen({ navigation, route }) {
           const stepPercent = 50 + ((idx + 1) / totalServices) * 45;
           setProgress(Math.round(stepPercent));
           setProgressText(`Configuring stitching service: ${svc.name}...`);
+
+          let svcImages = [];
+          if (svc.image) {
+            if (svc.image.startsWith("http")) {
+              svcImages.push(svc.image);
+            } else {
+              try {
+                const formData = new FormData();
+                formData.append("image", {
+                  uri: svc.image,
+                  name: `svc_photo_${Date.now()}_${idx}.jpg`,
+                  type: "image/jpeg",
+                });
+                const uploadRes = await api.post("/upload", formData, {
+                  headers: { "Content-Type": "multipart/form-data" },
+                });
+                if (uploadRes.data?.url) {
+                  svcImages.push(uploadRes.data.url);
+                }
+              } catch (err) {
+                console.error("Failed to upload service image:", err);
+              }
+            }
+          }
           
           await api.post("/tailors/services", {
             name: svc.name,
             price: Number(svc.price) || 0,
+            originalPrice: Number(svc.originalPrice || svc.price) || 0,
+            discountAmount: Number(svc.discountAmount) || 0,
             category: "Custom Stitching",
             estimatedDays: 3,
-            genderCategory: "unisex"
+            genderCategory: "unisex",
+            images: svcImages,
           });
         }
         
@@ -126,12 +152,39 @@ export function PartnerReviewScreen({ navigation, route }) {
         const stepPercent = 15 + ((idx + 1) / (totalServices + 1)) * 30;
         setProgress(Math.round(stepPercent));
         setProgressText(`Adding salon service: ${svc.name}...`);
+
+        let svcImages = [];
+        if (svc.image) {
+          if (svc.image.startsWith("http")) {
+            svcImages.push(svc.image);
+          } else {
+            try {
+              const formData = new FormData();
+              formData.append("image", {
+                uri: svc.image,
+                name: `svc_photo_${Date.now()}_${idx}.jpg`,
+                type: "image/jpeg",
+              });
+              const uploadRes = await api.post("/upload", formData, {
+                headers: { "Content-Type": "multipart/form-data" },
+              });
+              if (uploadRes.data?.url) {
+                svcImages.push(uploadRes.data.url);
+              }
+            } catch (err) {
+              console.error("Failed to upload service image:", err);
+            }
+          }
+        }
         
         await api.post("/services", {
           barberId: newBarberId,
           name: svc.name,
           durationMinutes: 30,
           price: Number(svc.price) || 0,
+          originalPrice: Number(svc.originalPrice || svc.price) || 0,
+          discountAmount: Number(svc.discountAmount) || 0,
+          images: svcImages,
         });
       }
 
@@ -195,7 +248,6 @@ export function PartnerReviewScreen({ navigation, route }) {
           pincode: data.pincode,
         },
         location: data.lat && data.lng ? { lat: Number(data.lat), lng: Number(data.lng) } : undefined,
-        workingHours: data.hours,
         gallery: uploadedImages,
         seatCount: Number(data.seatCount) || 1,
         maxAdvanceBookingDays: (data.category === "Beauty Parlor" || data.category === "Salon") ? 30 : 1,
@@ -216,12 +268,12 @@ export function PartnerReviewScreen({ navigation, route }) {
 
   const StepIndicator = () => (
     <View style={styles.stepContainer}>
-      {[1,2,3,4,5,6].map(step => (
+      {[1,2,3,4].map(step => (
         <React.Fragment key={step}>
-          <View style={[styles.stepCircle, step === 5 && styles.stepActive, step < 5 && styles.stepDone]}>
-            <Text style={[styles.stepText, step === 5 && styles.stepTextActive, step < 5 && styles.stepTextActive]}>{step}</Text>
+          <View style={[styles.stepCircle, step === 4 && styles.stepActive, step < 4 && styles.stepDone]}>
+            <Text style={[styles.stepText, step === 4 && styles.stepTextActive, step < 4 && styles.stepTextActive]}>{step}</Text>
           </View>
-          {step < 6 && <View style={[styles.stepLine, step < 5 && styles.stepLineDone]} />}
+          {step < 4 && <View style={[styles.stepLine, step < 4 && styles.stepLineDone]} />}
         </React.Fragment>
       ))}
     </View>
@@ -272,19 +324,11 @@ export function PartnerReviewScreen({ navigation, route }) {
             <Ionicons name="cut-outline" size={20} color="#64748b" style={styles.icon} />
             <View style={styles.textCol}>
               <Text style={styles.label}>Services</Text>
-              <Text style={styles.val}>{data.services?.length || 0} Services</Text>
+              <Text style={styles.val}>{data.services && data.services.length > 0 ? `${data.services.length} Services` : "None (Will add after approval)"}</Text>
             </View>
             <Pressable onPress={() => navigation.navigate("PartnerServices")}><Text style={styles.editBtn}>Edit</Text></Pressable>
           </View>
 
-          <View style={styles.row}>
-            <Ionicons name="time-outline" size={20} color="#64748b" style={styles.icon} />
-            <View style={styles.textCol}>
-              <Text style={styles.label}>Business Hours</Text>
-              <Text style={styles.val}>7 Days a Week</Text>
-            </View>
-            <Pressable onPress={() => navigation.navigate("PartnerHours")}><Text style={styles.editBtn}>Edit</Text></Pressable>
-          </View>
 
           <View style={[styles.row, { borderBottomWidth: 0 }]}>
             <Ionicons name="image-outline" size={20} color="#64748b" style={styles.icon} />

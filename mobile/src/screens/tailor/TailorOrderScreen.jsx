@@ -3,9 +3,11 @@ import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Alert
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "../../api/client";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAuth } from "../../context/AuthContext";
 
 export function TailorOrderScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
+  const { user, tailor: myTailor } = useAuth();
   
   // Params from previous step
   const { 
@@ -31,6 +33,19 @@ export function TailorOrderScreen({ route, navigation }) {
   const grandTotal = servicesTotal + fabricTotal + visitTotal;
 
   const handleSubmit = async () => {
+    const myId = (user?._id || user?.id)?.toString();
+    const ownerId = (tailor?.userId?._id || tailor?.userId)?.toString();
+    const targetTailorId = (tailor?._id)?.toString();
+    const isOwnTailor = Boolean(
+      (myId && ownerId && myId === ownerId) ||
+      (myTailor?._id && targetTailorId && myTailor._id.toString() === targetTailorId)
+    );
+    if (isOwnTailor) {
+      return Alert.alert(
+        "Action Not Allowed",
+        "You cannot place an order at your own tailor shop. You can explore and book services from other tailor studios."
+      );
+    }
     setBusy(true);
     try {
       await api.post("/tailors/orders", {
@@ -100,7 +115,7 @@ export function TailorOrderScreen({ route, navigation }) {
             </>
           )}
 
-          {isHomeService && (
+          {isHomeService && visitFee > 0 && (
             <>
               <Text style={[styles.subheadingDark, { marginTop: 12 }]}>Logistics</Text>
               <View style={styles.row}>
@@ -167,9 +182,11 @@ export function TailorOrderScreen({ route, navigation }) {
                 <>
                   <Text style={styles.detailValue}>At-Home Tailoring</Text>
                   <Text style={styles.detailValueInfo}>{homeServiceAddress}</Text>
-                  <Text style={styles.detailValueInfo}>
-                    {new Date(visitDate).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
-                  </Text>
+                  {visitDate ? (
+                    <Text style={styles.detailValueInfo}>
+                      {new Date(visitDate).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+                    </Text>
+                  ) : null}
                 </>
               ) : (
                 <Text style={styles.detailValue}>Visit Tailor Shop</Text>

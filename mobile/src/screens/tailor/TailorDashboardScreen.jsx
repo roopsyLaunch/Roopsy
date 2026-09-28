@@ -9,6 +9,8 @@ import { useAuth } from "../../context/AuthContext";
 import { api } from "../../api/client";
 import { getSocket } from "../../api/socket";
 import { useFocusEffect } from "@react-navigation/native";
+import { NotificationBell } from "../../components/NotificationModal";
+import { isTailorShopOpen } from "../../services/shopStatusService";
 
 const QUICK_ACTIONS = [
   { label: "Production\nBoard", icon: "albums", color: "#6d28d9", bg: "#ede9fe", screen: "ProductionBoard" },
@@ -102,13 +104,20 @@ export function TailorDashboardScreen({ navigation }) {
     setRefreshing(false);
   };
 
-  const toggleStatus = async () => {
+  const toggleStatus = async (val) => {
+    const isCurrentOpen = isTailorShopOpen(tailor);
+    const nextStatus = typeof val === "boolean" ? val : !isCurrentOpen;
     setLoading(true);
     try {
-      await api.patch("/tailors/me", { isShopOpen: !tailor.isShopOpen });
-      await refreshMe();
+      await api.patch("/tailors/me", { 
+        isShopOpen: nextStatus, 
+        offersShopService: nextStatus,
+        autoShopStatus: false 
+      });
+      if (refreshMe) await refreshMe();
     } catch (e) {
       console.error(e);
+      Alert.alert("Status Error", e?.response?.data?.error || "Failed to update shop status");
     } finally {
       setLoading(false);
     }
@@ -146,18 +155,21 @@ export function TailorDashboardScreen({ navigation }) {
             <Text style={styles.ownerName}>{tailor.ownerName || user?.name}</Text>
           </View>
           <View style={styles.headerRight}>
-            {loading ? (
-              <ActivityIndicator color="#6d28d9" size="small" />
-            ) : (
-              <Switch
-                value={tailor.isShopOpen}
-                onValueChange={toggleStatus}
-                trackColor={{ false: "#e2e8f0", true: "#c4b5fd" }}
-                thumbColor={tailor.isShopOpen ? "#6d28d9" : "#94a3b8"}
-              />
-            )}
-            <Text style={[styles.shopStatusText, { color: tailor.isShopOpen ? "#6d28d9" : "#94a3b8" }]}>
-              {tailor.isShopOpen ? "Open" : "Closed"}
+            <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
+              <NotificationBell size={24} color="#0f172a" badgeColor="#6d28d9" style={{ marginRight: 6 }} />
+              {loading ? (
+                <ActivityIndicator color="#6d28d9" size="small" />
+              ) : (
+                <Switch
+                  value={isTailorShopOpen(tailor)}
+                  onValueChange={toggleStatus}
+                  trackColor={{ false: "#e2e8f0", true: "#c4b5fd" }}
+                  thumbColor={isTailorShopOpen(tailor) ? "#6d28d9" : "#94a3b8"}
+                />
+              )}
+            </View>
+            <Text style={[styles.shopStatusText, { color: isTailorShopOpen(tailor) ? "#6d28d9" : "#94a3b8" }]}>
+              {isTailorShopOpen(tailor) ? "Open" : "Closed"}
             </Text>
           </View>
         </View>

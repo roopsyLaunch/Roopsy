@@ -1,78 +1,357 @@
-import React, { useEffect, useState, useRef } from "react";
-import { View, Text, StyleSheet, Image, ScrollView, ActivityIndicator, Pressable, Linking, Dimensions, Modal } from "react-native";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Linking,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  Dimensions,
+  RefreshControl,
+  Modal,
+  TextInput,
+  StatusBar,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
 import { api } from "../../api/client";
+import { getSocket } from "../../api/socket";
 import { useAuth } from "../../context/AuthContext";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { isTailorShopOpen } from "../../services/shopStatusService";
 
-const SALON_FALLBACK_IMAGES = [
-  "https://images.unsplash.com/photo-1598522325754-046dd13ac1c0?w=800&q=80",
-];
+const { width: SCREEN_WIDTH } = Dimensions.get("window");
+
+function getServiceImage(service) {
+  if (service.images && service.images.length > 0 && service.images[0]) {
+    return service.images[0];
+  }
+  return null;
+}
+
+function isVipService(service) {
+  if (!service) return false;
+  return Boolean(
+    service.serviceMode === "premium" ||
+    service.isPremium ||
+    (typeof service.category === "string" && /premium|vip/i.test(service.category)) ||
+    (typeof service.name === "string" && /premium|vip/i.test(service.name))
+  );
+}
+
+function getServiceDescription(service) {
+  if (service.description) return service.description;
+  if (service.subcategory) return service.subcategory;
+  const n = (service.name || "").toLowerCase();
+  if (n.includes("shirt")) return "Custom fit shirt stitching with collar & cuff styling";
+  if (n.includes("pant") || n.includes("trouser")) return "Tailored fit trousers with custom waistband & pocket design";
+  if (n.includes("suit") || n.includes("blazer")) return "Bespoke formal 2-piece / 3-piece suit crafting with lining";
+  if (n.includes("kurta") || n.includes("pajama")) return "Traditional ethnic kurta pajama with fine seam stitching";
+  if (n.includes("blouse")) return "Designer blouse stitching with custom neck & sleeve patterns";
+  if (isVipService(service)) return "Express VIP stitching with priority turnaround & trial guarantee";
+  return "Expert bespoke stitching with precise measurements & trial fitting";
+}
+
+function getTailorCategoryIcon(catLabel) {
+  const l = (catLabel || "").toLowerCase();
+  if (l.includes("shirt")) return "shirt-outline";
+  if (l.includes("pant") || l.includes("trouser")) return "cut-outline";
+  if (l.includes("suit") || l.includes("blazer") || l.includes("premium") || l.includes("vip")) return "ribbon-outline";
+  if (l.includes("kurta") || l.includes("dress") || l.includes("blouse") || l.includes("ethnic")) return "sparkles-outline";
+  return "cut-outline";
+}
 
 export function TailorDetailScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
-  const { favorites, toggleFavorite } = useAuth();
+  const { user, tailor: myTailor, favorites, toggleFavorite } = useAuth();
   const { tailorId, shopName } = route.params || {};
-  
+
   const [tailor, setTailor] = useState(null);
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedServices, setSelectedServices] = useState([]);
-  const [activeSlide, setActiveSlide] = useState(0);
-  const [collapsedCategories, setCollapsedCategories] = useState({});
+
   const [zoomModalVisible, setZoomModalVisible] = useState(false);
   const [zoomImagesList, setZoomImagesList] = useState([]);
   const [zoomImageIndex, setZoomImageIndex] = useState(0);
-  const zoomScrollRef = useRef(null);
 
-  useEffect(() => {
-    if (zoomModalVisible && zoomScrollRef.current) {
-      setTimeout(() => {
-        zoomScrollRef.current?.scrollTo({
-          x: zoomImageIndex * Dimensions.get("window").width,
-          animated: false,
-        });
-      }, 50);
-    }
-  }, [zoomModalVisible, zoomImageIndex]);
-
-  const normalServices = React.useMemo(() => {
-    return services.filter(s => s.serviceMode !== "premium");
-  }, [services]);
-
-  const premiumServices = React.useMemo(() => {
-    return services.filter(s => s.serviceMode === "premium");
-  }, [services]);
-
-  const groupedNormalServices = React.useMemo(() => {
-    return normalServices.reduce((acc, s) => {
-      const cat = s.category || "Other Services";
-      if (!acc[cat]) acc[cat] = [];
-      acc[cat].push(s);
-      return acc;
-    }, {});
-  }, [normalServices]);
+  const isFollowing = (favorites || []).includes(tailorId);
 
   useEffect(() => {
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
 
+  const loadTailor = useCallback(async () => {
+    try {
+      const [tailorRes, servicesRes] = await Promise.all([
+        api.get(`/tailors/${tailorId}`),
+        api.get(`/tailors/${tailorId}/services`),
+      ]);
+      const rawTailor = tailorRes.data.tailor;
+      setTailor(rawTailor ? { ...rawTailor, isShopOpen: isTailorShopOpen(rawTailor) } : rawTailor);
+      const loadedServices = (servicesRes.data.services || []).map((s) => ({
+        ...s,
+        originalPrice: s.originalPrice || s.price || 0,
+        discountAmount: s.discountAmount || 0,
+      }));
+      setServices(loadedServices);
+    } catch (err) {
+      console.error(err);
+      Alert.alert("Error", err?.response?.data?.error || "Failed to load tailor details");
+    }
+  }, [tailorId]);
+
   useEffect(() => {
     (async () => {
-      try {
-        const [tailorRes, servicesRes] = await Promise.all([
-          api.get(`/tailors/${tailorId}`),
-          api.get(`/tailors/${tailorId}/services`)
-        ]);
-        setTailor(tailorRes.data.tailor);
-        setServices(servicesRes.data.services || []);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
+      setLoading(true);
+      await loadTailor();
+      setLoading(false);
     })();
-  }, [tailorId]);
+  }, [loadTailor]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadTailor();
+    setRefreshing(false);
+  }, [loadTailor]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadTailor();
+    }, [loadTailor])
+  );
+
+  // Real-time shop status updates from tailor partner
+  useEffect(() => {
+    const socket = getSocket();
+    const handleStatusUpdate = (data) => {
+      const matchId = String(data?.tailorId || data?.shopId || "");
+      const currentId = String(tailorId || tailor?._id || tailor?.id || "");
+      if (matchId && currentId && matchId === currentId) {
+        setTailor((prev) => (prev ? { ...prev, isShopOpen: Boolean(data.isShopOpen) } : prev));
+      }
+    };
+    socket.on("shopStatusUpdated", handleStatusUpdate);
+    return () => {
+      socket.off("shopStatusUpdated", handleStatusUpdate);
+    };
+  }, [tailorId, tailor?._id, tailor?.id]);
+
+  const todayWorkingHoursText = useMemo(() => {
+    const days = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+    const fullDays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const now = new Date();
+    const todayKey = days[now.getDay()];
+    const fullKey = fullDays[now.getDay()];
+    const wh = tailor?.workingHours ? (tailor.workingHours[todayKey] || tailor.workingHours[fullKey]) : null;
+    if (!wh) {
+      return "09:30 AM - 08:30 PM";
+    }
+    if (wh.isClosed || wh.open === false) {
+      return "Closed Today (Weekly Off)";
+    }
+    const open = (typeof wh.open === "string" ? wh.open : wh.start) || "09:30 AM";
+    const close = (typeof wh.close === "string" ? wh.close : wh.end) || "08:30 PM";
+    return `${open} - ${close}`;
+  }, [tailor]);
+
+  const toggleService = (svc) => {
+    if (!svc) return;
+    const svcId = svc._id || svc.id;
+    const isAlreadySelected = selectedServices.some((s) => (s._id || s.id) === svcId);
+
+    // If already selected, deselect it
+    if (isAlreadySelected) {
+      setSelectedServices((prev) => prev.filter((s) => (s._id || s.id) !== svcId));
+      return;
+    }
+
+    const tappedIsVIP = isVipService(svc);
+    const currentlySelectedVIP = selectedServices.find((s) => isVipService(s));
+
+    // Case 1: Customer tapped a VIP service
+    if (tappedIsVIP) {
+      // If a VIP service is already selected, ask to switch
+      if (currentlySelectedVIP) {
+        Alert.alert(
+          "VIP Service Exclusive",
+          `VIP services operate on a dedicated priority turnaround schedule and can only be booked one at a time.\n\nWould you like to switch your selection to "${svc.name}"?`,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Switch to This VIP",
+              onPress: () => setSelectedServices([svc]),
+            },
+          ]
+        );
+        return;
+      }
+
+      // If normal services are already selected, ask before replacing with VIP
+      if (selectedServices.length > 0) {
+        Alert.alert(
+          "VIP Service Exclusive",
+          `VIP services feature a dedicated delivery timeline and cannot be combined with regular services.\n\nWould you like to clear the selected regular services and book "${svc.name}" as VIP?`,
+          [
+            { text: "Keep Regular Services", style: "cancel" },
+            {
+              text: "Select VIP Only 👑",
+              onPress: () => setSelectedServices([svc]),
+            },
+          ]
+        );
+        return;
+      }
+
+      // No services selected yet, select VIP directly
+      setSelectedServices([svc]);
+      return;
+    }
+
+    // Case 2: Customer tapped a NORMAL service
+    if (currentlySelectedVIP) {
+      // Customer has a VIP service selected and tapped a normal service
+      Alert.alert(
+        "VIP Service Selected",
+        `You currently have a VIP service selected with a dedicated turnaround time. VIP services cannot be combined with regular services.\n\nWould you like to replace the VIP service with "${svc.name}"? (You can select multiple regular services together).`,
+        [
+          { text: "Keep VIP Service", style: "cancel" },
+          {
+            text: "Select Regular Service",
+            onPress: () => setSelectedServices([svc]),
+          },
+        ]
+      );
+      return;
+    }
+
+    // Normal service and no VIP currently selected: can select as many normal services as desired!
+    setSelectedServices((prev) => [...prev, svc]);
+  };
+
+  const isOwnShop = useMemo(() => {
+    const myId = (user?._id || user?.id)?.toString();
+    const ownerUserId = (tailor?.userId?._id || tailor?.userId)?.toString();
+    const isOwnerUser = Boolean(myId && ownerUserId && myId === ownerUserId);
+    const isOwnerTailor = Boolean(myTailor?._id && tailorId && myTailor._id.toString() === tailorId.toString());
+    return isOwnerUser || isOwnerTailor;
+  }, [tailor, user, myTailor, tailorId]);
+
+  const handleProceed = () => {
+    if (isOwnShop) {
+      return Alert.alert(
+        "Action Not Allowed",
+        "You cannot place an order at your own tailor shop. You can explore and book services from other tailor studios."
+      );
+    }
+    if (tailor && !isTailorShopOpen(tailor)) {
+      return Alert.alert(
+        "Shop Currently Closed",
+        "This tailor studio is currently closed and not accepting new orders right now. Please check their operating hours or try again when the shop opens."
+      );
+    }
+    const hasVip = selectedServices.some((s) => isVipService(s));
+    if (hasVip && selectedServices.length > 1) {
+      return Alert.alert(
+        "Invalid Selection",
+        "VIP services have a dedicated delivery timeline and cannot be combined with regular services. Please select either one VIP service or multiple regular services."
+      );
+    }
+    navigation.navigate("TailorServiceMode", {
+      tailor,
+      services: selectedServices,
+    });
+  };
+
+  const heroImages = useMemo(() => {
+    const list = [];
+    if (tailor?.shopPosterUrl) list.push(tailor.shopPosterUrl);
+    if (tailor?.gallery && tailor.gallery.length > 0) list.push(...tailor.gallery);
+    if (list.length === 0) {
+      list.push("https://images.unsplash.com/photo-1598522325754-046dd13ac1c0?w=800&q=80");
+    }
+    return list;
+  }, [tailor?.shopPosterUrl, tailor?.gallery]);
+
+  const shopAvatar = useMemo(() => {
+    if (tailor?.shopPosterUrl) return tailor.shopPosterUrl;
+    if (tailor?.gallery && tailor.gallery.length > 0) return tailor.gallery[0];
+    return "https://images.unsplash.com/photo-1598522325754-046dd13ac1c0?w=400&q=80";
+  }, [tailor?.shopPosterUrl, tailor?.gallery]);
+
+  const dynamicCategories = useMemo(() => {
+    const seen = new Set();
+    const cats = [];
+    services.forEach((s) => {
+      let label = isVipService(s) ? "Premium VIP" : (s.category && s.category.trim()) || "General";
+      if (!seen.has(label)) {
+        seen.add(label);
+        cats.push(label);
+      }
+    });
+    // Put "Premium VIP" category right after "All" if shop offers VIP services
+    if (seen.has("Premium VIP")) {
+      return ["Premium VIP", ...cats.filter((c) => c !== "Premium VIP")];
+    }
+    return cats;
+  }, [services]);
+
+  const currentDisplayServices = useMemo(() => {
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      return services.filter(
+        (s) =>
+          (s.name && s.name.toLowerCase().includes(q)) ||
+          (s.category && s.category.toLowerCase().includes(q)) ||
+          (s.subcategory && s.subcategory.toLowerCase().includes(q))
+      );
+    }
+    if (selectedCategory === "all" || dynamicCategories.length === 0) {
+      // Sort VIP services first so customers see them prominently at the top of All Tailoring Services
+      return [...services].sort((a, b) => {
+        const aVIP = isVipService(a);
+        const bVIP = isVipService(b);
+        if (aVIP && !bVIP) return -1;
+        if (!aVIP && bVIP) return 1;
+        return 0;
+      });
+    }
+    if (selectedCategory === "Premium VIP") {
+      return services.filter((s) => isVipService(s));
+    }
+    return services.filter(
+      (s) => (s.category && s.category.trim()) === selectedCategory
+    );
+  }, [services, selectedCategory, dynamicCategories, searchQuery]);
+
+  const currentSectionTitle = useMemo(() => {
+    if (searchQuery.trim()) return "Search Results";
+    if (selectedCategory === "all") return "All Tailoring Services";
+    return selectedCategory;
+  }, [selectedCategory, searchQuery]);
+
+  const addr = tailor?.address || {};
+  const addressDisplay = [addr.line1, addr.city, addr.pincode].filter(Boolean).join(", ") || "Main Market, Jamunaha";
+
+  function openMap() {
+    if (tailor?.location?.lat != null && tailor?.location?.lng != null) {
+      const q = `${tailor.location.lat},${tailor.location.lng}`;
+      Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`);
+    } else if (addr.line1 || addr.city) {
+      Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressDisplay)}`);
+    }
+  }
+
+  const totalPrice = useMemo(() => {
+    return selectedServices.reduce((acc, s) => acc + (s.price || 0), 0);
+  }, [selectedServices]);
 
   if (loading) {
     return (
@@ -85,391 +364,536 @@ export function TailorDetailScreen({ route, navigation }) {
   if (!tailor) {
     return (
       <View style={styles.centered}>
+        <Ionicons name="alert-circle" size={48} color="#94a3b8" />
         <Text style={styles.errorText}>Tailor not found</Text>
       </View>
     );
   }
 
-  const toggleService = (svc) => {
-    setSelectedServices(prev => {
-      if (prev.find(s => s._id === svc._id)) {
-        return prev.filter(s => s._id !== svc._id);
-      }
-      return [...prev, svc];
-    });
-  };
-
-  const handleProceed = () => {
-    navigation.navigate("TailorServiceMode", { 
-      tailor, 
-      services: selectedServices 
-    });
-  };
-
-  function openMap() {
-    if (tailor.location?.lat != null && tailor.location?.lng != null) {
-      const q = `${tailor.location.lat},${tailor.location.lng}`;
-      Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`);
-    }
-  }
-
-  const heroImages = [];
-  if (tailor.shopPosterUrl) heroImages.push(tailor.shopPosterUrl);
-  if (tailor.gallery && tailor.gallery.length > 0) heroImages.push(...tailor.gallery);
-  if (heroImages.length === 0) heroImages.push(SALON_FALLBACK_IMAGES[0]);
-
-  const screenWidth = Dimensions.get("window").width;
-  const addr = tailor.address || {};
-
   return (
-    <View style={styles.mainWrapper}>
-      <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        
-        {/* Parallax Hero Header */}
-        <View style={styles.heroContainer}>
-          <ScrollView
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            onScroll={(e) => {
-              const slide = Math.round(e.nativeEvent.contentOffset.x / screenWidth);
-              setActiveSlide(slide);
-            }}
-            scrollEventThrottle={16}
-          >
-            {heroImages.map((img, i) => (
-              <Pressable key={i} onPress={() => { setZoomImagesList(heroImages); setZoomImageIndex(i); setZoomModalVisible(true); }}>
-                <Image 
-                  source={{ uri: img }} 
-                  style={[styles.heroImage, { width: screenWidth }]} 
-                  resizeMode="contain"
-                />
-              </Pressable>
-            ))}
-          </ScrollView>
-          <View style={styles.heroOverlay} pointerEvents="none" />
-          
-          {/* Pagination Dots */}
-          {heroImages.length > 1 && (
-            <View style={styles.paginationContainer} pointerEvents="none">
-              {heroImages.map((_, i) => (
-                <View key={i} style={[styles.dot, activeSlide === i ? styles.activeDot : null]} />
-              ))}
-            </View>
-          )}
-          
-          {/* Hero Image Watermarks */}
-          <View style={styles.heroWatermarkContainer} pointerEvents="none">
-            <Text style={styles.heroWatermarkLeft}>Tap to zoom</Text>
-            <Text style={styles.heroWatermarkRight}>Roopsy</Text>
-          </View>
-          
-          {/* Custom Nav Bar */}
-          <View style={[styles.navBar, { top: Math.max(insets.top, 20) }]}>
-            <Pressable style={styles.navBtn} onPress={() => navigation.goBack()}>
-              <Ionicons name="arrow-back" size={24} color="#0f172a" />
-            </Pressable>
-            <Pressable style={styles.navBtn} onPress={() => toggleFavorite(tailorId)}>
-              <Ionicons name={favorites.includes(tailorId) ? "heart" : "heart-outline"} size={24} color={favorites.includes(tailorId) ? "#ef4444" : "#0f172a"} />
-            </Pressable>
-          </View>
-        </View>
+    <View style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
 
-        {/* Info Card (Pulls up over the image) */}
-        <View style={styles.infoSheet}>
-          <View style={styles.titleRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.shopTitle}>{tailor.shopName || shopName || "Premium Tailor"}</Text>
-              <Text style={styles.shopCategory}>{tailor.specialties?.join(", ") || "Custom Stitching"}</Text>
-            </View>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.metaInfoRow}>
-            <View style={styles.metaItem}>
-              <Ionicons name="time" size={20} color="#0d9488" />
-              <View style={styles.metaTextCol}>
-                <Text style={styles.metaLabel}>Status</Text>
-                <Text style={[styles.metaValue, { color: tailor.isShopOpen ? "#16a34a" : "#ef4444" }]}>
-                  {tailor.isShopOpen ? "Open Now" : "Closed"}
-                </Text>
-              </View>
-            </View>
-            
-            <View style={styles.metaItem}>
-              <Ionicons name="person" size={20} color="#0d9488" />
-              <View style={styles.metaTextCol}>
-                <Text style={styles.metaLabel}>Tailor</Text>
-                <Text style={styles.metaValue}>{tailor.ownerName || "Expert Tailor"}</Text>
-              </View>
-            </View>
-          </View>
-
-          {(addr.line1 || addr.city) && (
-            <Pressable onPress={openMap} style={styles.locationBox}>
-              <View style={styles.locIconWrap}>
-                <Ionicons name="location" size={20} color="#0d9488" />
-              </View>
-              <View style={styles.locTextWrap}>
-                <Text style={styles.locTitle}>Shop Location</Text>
-                <Text style={styles.locAddress}>{[addr.line1, addr.city, addr.pincode].filter(Boolean).join(", ")}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#cbd5e1" />
-            </Pressable>
-          )}
-
-          {tailor.bio && (
-            <View style={styles.aboutSection}>
-              <Text style={styles.sectionTitle}>About</Text>
-              <Text style={styles.bioText}>{tailor.bio}</Text>
-            </View>
-          )}
-
-          {/* Services Selection (FIRST) */}
-          <View style={styles.servicesSection}>
-            <Text style={styles.sectionTitle}>Tailoring Services</Text>
-            {services.length === 0 ? (
-              <View style={styles.warningBox}>
-                <Ionicons name="alert-circle" size={20} color="#b45309" />
-                <Text style={styles.warningText}>No services available for this tailor.</Text>
-              </View>
-            ) : (
-              <>
-                {/* 1. Premium VIP Services Accordion (Rendered at top if there are any premium services) */}
-                {premiumServices.length > 0 && (() => {
-                  const isExpanded = collapsedCategories["Premium VIP Services"] !== true;
-                  return (
-                    <View style={{ marginBottom: 16, backgroundColor: "#faf5ff", borderRadius: 16, borderWidth: 1.5, borderColor: "#d8b4fe", overflow: "hidden" }}>
-                      <Pressable
-                        style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f3e8ff", paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: isExpanded ? 1 : 0, borderBottomColor: "#d8b4fe" }}
-                        onPress={() => {
-                          setCollapsedCategories(prev => ({
-                            ...prev,
-                            "Premium VIP Services": isExpanded
-                          }));
-                        }}
-                      >
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
-                          <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: "#7c3aed", justifyContent: "center", alignItems: "center" }}>
-                            <Ionicons name="ribbon" size={16} color="#ffffff" />
-                          </View>
-                          <View style={{ flex: 1 }}>
-                            <Text style={{ fontSize: 15, fontWeight: "900", color: "#6b21a8" }}>👑 Premium VIP Services</Text>
-                            <Text style={{ fontSize: 12, color: "#7c3aed", fontWeight: "700", marginTop: 1 }}>{premiumServices.length} Express VIP Options</Text>
-                          </View>
-                        </View>
-                        <Ionicons name={isExpanded ? "chevron-up" : "chevron-down"} size={20} color="#6b21a8" />
-                      </Pressable>
-
-                      {isExpanded && (
-                        <View style={{ padding: 12 }}>
-                          {premiumServices.map((s) => {
-                            const isSelected = !!selectedServices.find(svc => svc._id === s._id);
-                            return (
-                              <Pressable
-                                key={s._id}
-                                style={[
-                                  styles.serviceCard, 
-                                  isSelected && styles.serviceCardActive,
-                                  isSelected && { borderColor: "#7c3aed", backgroundColor: "#faf5ff" }
-                                ]}
-                                onPress={() => toggleService(s)}
-                              >
-                                <View style={styles.serviceMainRow}>
-                                  <View style={[styles.svcIconBox, isSelected && { backgroundColor: "#f3e8ff" }]}>
-                                    <Ionicons name="shirt" size={20} color={isSelected ? "#7c3aed" : "#64748b"} />
-                                  </View>
-                                  <View style={styles.svcInfo}>
-                                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                                      <Text style={[styles.svcName, isSelected && { color: "#7c3aed" }]}>{s.name}</Text>
-                                      <View style={{ backgroundColor: "#7c3aed", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
-                                        <Text style={{ fontSize: 9, fontWeight: "900", color: "#ffffff" }}>VIP EXPRESS</Text>
-                                      </View>
-                                    </View>
-                                  </View>
-                                  <View style={styles.svcPriceBox}>
-                                    <Text style={[styles.svcPrice, isSelected && { color: "#7c3aed" }]}>₹{s.price}</Text>
-                                    <View style={[styles.radioCircle, isSelected && { borderColor: "#7c3aed" }]}>
-                                      {isSelected && <View style={[styles.radioDot, { backgroundColor: "#7c3aed" }]} />}
-                                    </View>
-                                  </View>
-                                </View>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                      )}
-                    </View>
-                  );
-                })()}
-
-                {/* 2. Normal Stitching Services Categories */}
-                {Object.keys(groupedNormalServices).map(category => {
-                  const categoryList = groupedNormalServices[category];
-                  const isExpanded = collapsedCategories[category] !== true;
-
-                  return (
-                    <View key={category} style={{ marginBottom: 16, backgroundColor: "#ffffff", borderRadius: 16, borderWidth: 1, borderColor: "#e2e8f0", overflow: "hidden" }}>
-                      <Pressable
-                        style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#f8fafc", paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: isExpanded ? 1 : 0, borderBottomColor: "#e2e8f0" }}
-                        onPress={() => {
-                          setCollapsedCategories(prev => ({
-                            ...prev,
-                            [category]: isExpanded
-                          }));
-                        }}
-                      >
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
-                          <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: "#e6f7f2", justifyContent: "center", alignItems: "center" }}>
-                            <Ionicons name="cut" size={16} color="#0d9488" />
-                          </View>
-                          <View style={{ flex: 1 }}>
-                            <Text style={{ fontSize: 15, fontWeight: "800", color: "#0f172a" }}>{category}</Text>
-                            <Text style={{ fontSize: 12, color: "#64748b", marginTop: 1 }}>{categoryList.length} Options</Text>
-                          </View>
-                        </View>
-                        <Ionicons name={isExpanded ? "chevron-up" : "chevron-down"} size={20} color="#0f172a" />
-                      </Pressable>
-
-                      {isExpanded && (
-                        <View style={{ padding: 12 }}>
-                          {categoryList.map((s) => {
-                            const isSelected = !!selectedServices.find(svc => svc._id === s._id);
-                            return (
-                              <Pressable
-                                key={s._id}
-                                style={[styles.serviceCard, isSelected && styles.serviceCardActive]}
-                                onPress={() => toggleService(s)}
-                              >
-                                <View style={styles.serviceMainRow}>
-                                  <View style={styles.svcIconBox}>
-                                    <Ionicons name="shirt" size={20} color={isSelected ? "#0d9488" : "#64748b"} />
-                                  </View>
-                                  <View style={styles.svcInfo}>
-                                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                                      <Text style={[styles.svcName, isSelected && styles.svcNameActive]}>{s.name}</Text>
-                                    </View>
-                                  </View>
-                                  <View style={styles.svcPriceBox}>
-                                    <Text style={[styles.svcPrice, isSelected && styles.svcPriceActive]}>₹{s.price}</Text>
-                                    <View style={[styles.radioCircle, isSelected && styles.radioCircleActive]}>
-                                      {isSelected && <View style={styles.radioDot} />}
-                                    </View>
-                                  </View>
-                                </View>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                      )}
-                    </View>
-                  );
-                })}
-              </>
-            )}
-          </View>
-
-          {/* Working Hours (BELOW SERVICES) */}
-          {tailor.workingHours && (
-            <View style={styles.workingHoursSection}>
-              <Text style={styles.sectionTitle}>Working Hours</Text>
-              <View style={styles.workingHoursCard}>
-                {["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map(day => {
-                  const dayData = tailor.workingHours[day];
-                  if (!dayData) return null;
-                  const dayName = { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday", sat: "Saturday", sun: "Sunday" }[day];
-                  
-                  const formatTime = (timeStr) => {
-                    if (!timeStr) return "";
-                    const [h, m] = timeStr.split(":");
-                    const hour = parseInt(h, 10);
-                    const ampm = hour >= 12 ? "PM" : "AM";
-                    const formattedHour = hour % 12 || 12;
-                    return `${formattedHour}:${m} ${ampm}`;
-                  };
-
-                  return (
-                    <View key={day} style={styles.whRow}>
-                      <Text style={styles.whDay}>{dayName}</Text>
-                      <Text style={[styles.whTime, dayData.isClosed && styles.whClosed]}>
-                        {dayData.isClosed ? "Closed" : `${formatTime(dayData.open)} - ${formatTime(dayData.close)}`}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-            </View>
-          )}
-        </View>
-      </ScrollView>
-
-      {/* Floating Bottom Bar for Booking */}
-      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 20) }]}>
-        <View style={styles.bottomSummary}>
-          {selectedServices.length > 0 ? (
-            <View>
-              <Text style={styles.summaryLabel}>{selectedServices.length} Items Selected</Text>
-              <Text style={[styles.summaryPrice, { fontSize: 18 }]}>
-                Total Price: ₹{selectedServices.reduce((acc, s) => acc + s.price, 0)}
-              </Text>
-            </View>
-          ) : (
-            <View>
-              <Text style={styles.summaryLabel}>0 Items Selected</Text>
-              <Text style={styles.summaryPrice}>₹0</Text>
-            </View>
-          )}
-        </View>
-        <Pressable 
-          style={[styles.bookBtn, selectedServices.length === 0 && styles.bookBtnDisabled]}
-          disabled={selectedServices.length === 0}
-          onPress={handleProceed}
+      {/* ================= TOP HEADER BAR ================= */}
+      <View style={[styles.topHeader, { paddingTop: Math.max(insets.top, 12) }]}>
+        <Pressable
+          onPress={() => {
+            if (navigation.canGoBack()) navigation.goBack();
+            else navigation.navigate("MainTabs", { screen: "Home" });
+          }}
+          style={styles.backBtn}
         >
-          <Text style={styles.bookBtnText}>Place Order</Text>
+          <Ionicons name="arrow-back" size={24} color="#0f172a" />
+        </Pressable>
+
+        {/* Circular Avatar */}
+        <Pressable
+          onPress={() => {
+            setZoomImagesList(heroImages);
+            setZoomImageIndex(0);
+            setZoomModalVisible(true);
+          }}
+          style={styles.avatarWrapper}
+        >
+          <Image source={{ uri: shopAvatar }} style={styles.shopAvatar} />
+        </Pressable>
+
+        {/* Title & Badges */}
+        <View style={styles.headerInfoCol}>
+          <Text style={styles.headerShopName} numberOfLines={1}>
+            {tailor.shopName || shopName || "Master Tailors"}
+          </Text>
+
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2, marginBottom: 2 }}>
+            <View style={styles.verifiedRow}>
+              <Ionicons name="checkmark-circle" size={13} color="#16a34a" />
+              <Text style={styles.verifiedText}>Verified</Text>
+            </View>
+
+            {/* LIVE OPEN / CLOSED BADGE */}
+            {(() => {
+              const isOpen = isTailorShopOpen(tailor);
+              return (
+                <View style={[styles.statusPill, isOpen ? styles.statusPillOpen : styles.statusPillClosed]}>
+                  <View style={[styles.statusDot, { backgroundColor: isOpen ? "#16a34a" : "#ef4444" }]} />
+                  <Text style={[styles.statusPillText, { color: isOpen ? "#15803d" : "#b91c1c" }]}>
+                    {isOpen ? "OPEN NOW" : "CLOSED"}
+                  </Text>
+                </View>
+              );
+            })()}
+          </View>
+
+          <Pressable onPress={openMap} style={styles.locationRow}>
+            <Ionicons name="location-sharp" size={13} color="#475569" />
+            <Text style={styles.locationText} numberOfLines={1}>
+              {addressDisplay}
+            </Text>
+          </Pressable>
+        </View>
+
+        {/* Follow Button */}
+        <Pressable
+          style={[styles.followBtn, isFollowing && styles.followingBtn]}
+          onPress={() => toggleFavorite(tailorId)}
+        >
+          <Ionicons name="heart" size={15} color={isFollowing ? "#ffffff" : "#0d9488"} style={{ marginRight: 5 }} />
+          <Text style={[styles.followBtnText, isFollowing && styles.followingBtnText]}>
+            {isFollowing ? "Following" : "Follow"}
+          </Text>
         </Pressable>
       </View>
 
-      {/* Zoomable Image Viewer Modal */}
-      <Modal
-        visible={zoomModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setZoomModalVisible(false)}
+      {/* Real-time Closed Banner if studio is closed right now */}
+      {!tailor.isShopOpen && (
+        <View style={styles.closedTopBanner}>
+          <Ionicons name="alert-circle" size={18} color="#b91c1c" style={{ marginRight: 8 }} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.closedTopBannerTitle}>Studio Closed Right Now</Text>
+            <Text style={styles.closedTopBannerSub}>
+              This tailor shop is currently closed. New orders will be accepted when the shop reopens.
+            </Text>
+          </View>
+        </View>
+      )}
+
+      <ScrollView
+        style={styles.mainScroll}
+        contentContainerStyle={{ paddingBottom: selectedServices.length > 0 ? 140 : 60 }}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#0d9488" />}
       >
+        {/* ================= SEARCH & FILTER BAR ================= */}
+        <View style={styles.searchBarWrapper}>
+          <View style={styles.searchInputCard}>
+            <Ionicons name="search-outline" size={18} color="#94a3b8" style={{ marginRight: 8 }} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search shirts, trousers, suits, kurta..."
+              placeholderTextColor="#94a3b8"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+            {searchQuery.length > 0 && (
+              <Pressable onPress={() => setSearchQuery("")} style={{ padding: 4 }}>
+                <Ionicons name="close-circle" size={18} color="#94a3b8" />
+              </Pressable>
+            )}
+          </View>
+
+          <Pressable
+            style={styles.filterBtn}
+            onPress={() => {
+              Alert.alert(
+                "Filter Services",
+                "Select a category filter",
+                [
+                  { text: "All Services", onPress: () => setSelectedCategory("all") },
+                  { text: "Premium VIP", onPress: () => setSelectedCategory("Premium VIP") },
+                  { text: "Cancel", style: "cancel" },
+                ]
+              );
+            }}
+          >
+            <Ionicons name="options-outline" size={20} color="#0f172a" />
+          </Pressable>
+        </View>
+
+        {/* ================= DYNAMIC CATEGORY TABS ================= */}
+        {(dynamicCategories.length > 1 || (dynamicCategories.length === 1 && services.length > 0)) && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categoriesScroll}
+          >
+            {/* "All" tab always first */}
+            <Pressable
+              key="all"
+              style={[styles.categoryCard, selectedCategory === "all" && styles.categoryCardSelected]}
+              onPress={() => {
+                setSelectedCategory("all");
+                setSearchQuery("");
+              }}
+            >
+              <View style={styles.categoryIconWrap}>
+                <Ionicons
+                  name="grid-outline"
+                  size={22}
+                  color={selectedCategory === "all" ? "#0d9488" : "#0f172a"}
+                />
+              </View>
+              <Text style={[styles.categoryLabel, selectedCategory === "all" && styles.categoryLabelSelected]}>
+                All
+              </Text>
+            </Pressable>
+
+            {/* Dynamic tabs from categories */}
+            {dynamicCategories.map((catLabel) => {
+              const isSelected = selectedCategory === catLabel;
+              const isVIPTab = catLabel === "Premium VIP";
+              return (
+                <Pressable
+                  key={catLabel}
+                  style={[
+                    styles.categoryCard,
+                    isVIPTab && styles.vipCategoryCard,
+                    isSelected && (isVIPTab ? styles.vipCategoryCardSelected : styles.categoryCardSelected)
+                  ]}
+                  onPress={() => {
+                    setSelectedCategory(catLabel);
+                    setSearchQuery("");
+                  }}
+                >
+                  <View style={styles.categoryIconWrap}>
+                    <Ionicons
+                      name={isVIPTab ? "ribbon" : getTailorCategoryIcon(catLabel)}
+                      size={22}
+                      color={isSelected ? (isVIPTab ? "#ffffff" : "#0d9488") : (isVIPTab ? "#7c3aed" : "#0f172a")}
+                    />
+                  </View>
+                  <Text style={[
+                    styles.categoryLabel,
+                    isVIPTab && styles.vipCategoryLabel,
+                    isSelected && (isVIPTab ? styles.vipCategoryLabelSelected : styles.categoryLabelSelected)
+                  ]}>
+                    {isVIPTab ? "👑 VIP" : catLabel}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        )}
+
+        {/* ================= HERO SPECIAL OFFER BANNER ================= */}
+        <View style={styles.bannerContainer}>
+          <View style={styles.bannerContentLeft}>
+            <View style={styles.specialOfferBadge}>
+              <Text style={styles.specialOfferText}>✂️ Bespoke Tailoring</Text>
+            </View>
+            <Text style={styles.bannerHeading}>Perfect Fit, Crafted for You</Text>
+            <Text style={styles.bannerSubheading}>Custom Tailoring & Express VIP Stitching</Text>
+
+            <Pressable
+              style={styles.bannerActionBtn}
+              onPress={() => {
+                if (currentDisplayServices.length > 0) {
+                  toggleService(currentDisplayServices[0]);
+                }
+              }}
+            >
+              <Text style={styles.bannerActionBtnText}>Select Services →</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.bannerImageWrapper}>
+            <Image
+              source={{ uri: heroImages[0] }}
+              style={styles.bannerImage}
+              resizeMode="cover"
+            />
+          </View>
+
+          {/* Dots Indicator */}
+          <View style={styles.bannerDotsRow}>
+            <View style={[styles.bannerDot, styles.bannerDotActive]} />
+            <View style={styles.bannerDot} />
+            <View style={styles.bannerDot} />
+          </View>
+        </View>
+
+        {/* ================= SECTION HEADER ================= */}
+        <View style={styles.sectionHeaderRow}>
+          <View style={styles.sectionHeaderLeft}>
+            <View style={[styles.sectionIconWrap, selectedCategory === "Premium VIP" && { backgroundColor: "#ede9fe" }]}>
+              <Ionicons
+                name={selectedCategory === "Premium VIP" ? "ribbon" : "cut-outline"}
+                size={20}
+                color={selectedCategory === "Premium VIP" ? "#7c3aed" : "#0d9488"}
+              />
+            </View>
+            <Text style={styles.sectionMainTitle}>{currentSectionTitle}</Text>
+            {selectedCategory === "all" && services.some(isVipService) && (
+              <View style={styles.vipHeaderNoticeBadge}>
+                <Text style={styles.vipHeaderNoticeBadgeText}>👑 VIP Services Available</Text>
+              </View>
+            )}
+          </View>
+
+          {selectedCategory !== "all" && services.length > currentDisplayServices.length && (
+            <Pressable onPress={() => { setSelectedCategory("all"); setSearchQuery(""); }}>
+              <Text style={styles.viewAllBtnText}>View All &gt;</Text>
+            </Pressable>
+          )}
+        </View>
+        <Text style={styles.sectionSubTitleText}>
+          {currentDisplayServices.length} service{currentDisplayServices.length !== 1 ? "s" : ""} available
+        </Text>
+
+        {/* ================= HORIZONTAL SERVICES CARDS ================= */}
+        {currentDisplayServices.length === 0 ? (
+          <View style={styles.noServicesBox}>
+            <Ionicons name="cut-outline" size={36} color="#99f6e4" />
+            <Text style={styles.noServicesTitle}>
+              {searchQuery.trim() ? "No services found" : "No tailoring services added yet"}
+            </Text>
+            <Text style={styles.noServicesSub}>
+              {searchQuery.trim()
+                ? "Try searching with a different keyword"
+                : "This tailor hasn't added services in this category yet"}
+            </Text>
+          </View>
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.horizontalServicesScroll}
+          >
+            {currentDisplayServices.map((service, idx) => {
+              const svcId = service._id || service.id;
+              const isSelected = !!selectedServices.find((s) => (s._id || s.id) === svcId);
+              const isVIP = isVipService(service);
+              const timeHighlight = isVIP && service.completionTime ? `⚡ Ready in ${service.completionTime}` : null;
+              const badgeLabel = timeHighlight
+                ? timeHighlight
+                : isVIP
+                ? "👑 VIP Express"
+                : idx === 0
+                ? "🔥 Popular"
+                : idx === 1
+                ? "⭐ Trending"
+                : "✨ Bespoke";
+              const badgeColor = isVIP ? "#7c3aed" : idx === 0 ? "#0d9488" : idx === 1 ? "#0284c7" : "#059669";
+
+              return (
+                <View key={svcId} style={[styles.serviceItemCard, isVIP && styles.serviceItemCardVIP]}>
+                  {/* VIP Top Highlight Ribbon */}
+                  {isVIP && (
+                    <View style={styles.vipTopRibbon}>
+                      <Ionicons name="sparkles" size={11} color="#fef08a" />
+                      <Text style={styles.vipTopRibbonText}>👑 PREMIUM VIP SERVICE</Text>
+                      <Ionicons name="flash" size={11} color="#fef08a" />
+                    </View>
+                  )}
+
+                  {/* Service Image with Badges */}
+                  <View style={styles.serviceImageContainer}>
+                    {(() => {
+                      const imgUri = getServiceImage(service);
+                      return imgUri ? (
+                        <Image source={{ uri: imgUri }} style={styles.serviceImage} />
+                      ) : (
+                        <View style={[styles.serviceImage, styles.emptyServiceImagePlaceholder, isVIP && { backgroundColor: "#faf5ff" }]}>
+                          <Ionicons name={isVIP ? "ribbon-outline" : "cut-outline"} size={32} color={isVIP ? "#a855f7" : "#5eead4"} />
+                          <Text style={[styles.emptyServiceImageText, isVIP && { color: "#7c3aed" }]}>{service.name || "Stitching"}</Text>
+                        </View>
+                      );
+                    })()}
+
+                    {/* Top Left Pill Badge */}
+                    <View style={[styles.popularBadge, isVIP ? styles.vipPopularBadge : { backgroundColor: badgeColor }]}>
+                      <Text style={styles.popularBadgeText}>{badgeLabel}</Text>
+                    </View>
+
+                    {/* Top Right Heart / Select */}
+                    <Pressable
+                      style={[styles.cardHeartBtn, isVIP && styles.cardHeartBtnVIP]}
+                      onPress={() => toggleService(service)}
+                    >
+                      <Ionicons
+                        name={isSelected ? "checkmark-circle" : "checkmark-circle-outline"}
+                        size={22}
+                        color={isSelected ? (isVIP ? "#a855f7" : "#0d9488") : "#ffffff"}
+                      />
+                    </Pressable>
+                  </View>
+
+                  {/* Service Details */}
+                  <View style={[styles.serviceBody, isVIP && styles.serviceBodyVIP]}>
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 4 }}>
+                      <Text style={[styles.serviceNameText, isVIP && styles.vipServiceNameText]} numberOfLines={1}>
+                        {service.name}
+                      </Text>
+                      {isVIP && (
+                        <View style={styles.vipCrownBadge}>
+                          <Text style={styles.vipCrownBadgeText}>VIP 👑</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={[styles.serviceDescText, isVIP && styles.vipServiceDescText]} numberOfLines={2}>
+                      {getServiceDescription(service)}
+                    </Text>
+
+                    {/* VIP Highlight Features Strip */}
+                    {isVIP && (
+                      <View style={styles.vipHighlightStrip}>
+                        <Ionicons name="flash" size={11} color="#7c3aed" />
+                        <Text style={styles.vipHighlightStripText}>
+                          Priority Stitching • {service.completionTime ? `⚡ ${service.completionTime}` : "Express Turnaround"}
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* Price, Mode & Select Button */}
+                    <View style={styles.serviceFooterRow}>
+                      <View>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                          <Text style={[styles.servicePriceText, isVIP && styles.vipPriceText]}>₹{service.price}</Text>
+                          {service.originalPrice > service.price && (
+                            <Text style={styles.originalPriceStrike}>₹{service.originalPrice}</Text>
+                          )}
+                          {service.originalPrice > service.price && (
+                            <View style={[styles.discountPill, isVIP && { backgroundColor: "#f3e8ff" }]}>
+                              <Text style={[styles.discountPillText, isVIP && { color: "#7c3aed" }]}>
+                                {Math.round(((service.originalPrice - service.price) / service.originalPrice) * 100)}% OFF
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+
+                        {/* Delivery Time Highlight for Premium VIP Services */}
+                        {isVIP && (service.completionTime || service.estimatedDays) ? (
+                          <View style={styles.vipDeliveryTag}>
+                            <Ionicons name="time" size={11} color="#7c3aed" style={{ marginRight: 3 }} />
+                            <Text style={styles.vipDeliveryTagText}>
+                              Ready in {service.completionTime || `${service.estimatedDays} Days`}
+                            </Text>
+                          </View>
+                        ) : (
+                          <View style={styles.durationRow}>
+                            <Ionicons name="cut-outline" size={13} color="#64748b" style={{ marginRight: 3 }} />
+                            <Text style={styles.durationText}>Custom fit</Text>
+                          </View>
+                        )}
+                      </View>
+
+                      <Pressable
+                        style={[
+                          styles.bookNowBtn,
+                          isVIP && styles.bookNowBtnVIP,
+                          isSelected && (isVIP ? styles.bookNowBtnVIPSelected : styles.bookNowBtnSelected)
+                        ]}
+                        onPress={() => toggleService(service)}
+                      >
+                        <Text style={styles.bookNowBtnText}>
+                          {isSelected ? "Selected ✓" : isVIP ? "Select VIP 👑" : "Select"}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
+          </ScrollView>
+        )}
+
+        {/* ================= TAILOR PROFILE & ABOUT ================= */}
+        <View style={styles.metaCardsContainer}>
+          {/* Master Tailor / Owner Info */}
+          <View style={styles.hoursMetaCard}>
+            <View style={styles.metaIconWrap}>
+              <Ionicons name="person" size={20} color="#0d9488" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.metaCardTitle}>Master Tailor</Text>
+              <Text style={styles.metaCardSub}>
+                {tailor.ownerName || "Expert Bespoke Tailor"} • {tailor.specialties?.join(", ") || "Custom Stitching"}
+              </Text>
+            </View>
+          </View>
+
+          {/* Location Card */}
+          <Pressable onPress={openMap} style={styles.locationMetaCard}>
+            <View style={styles.metaIconWrap}>
+              <Ionicons name="location" size={20} color="#0d9488" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.metaCardTitle}>Shop Location</Text>
+              <Text style={styles.metaCardSub} numberOfLines={1}>
+                {addressDisplay}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+          </Pressable>
+
+          {/* Working Hours Card */}
+          <View style={styles.hoursMetaCard}>
+            <View style={styles.metaIconWrap}>
+              <Ionicons name="time" size={20} color="#16a34a" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.metaCardTitle}>Shop Status</Text>
+              <Text style={[styles.metaCardSub, { color: tailor.isShopOpen ? "#16a34a" : "#ef4444", fontWeight: "600" }]}>
+                {tailor.isShopOpen ? "Open for Bookings" : "Closed Now"}
+              </Text>
+            </View>
+          </View>
+
+          {/* Bio if exists */}
+          {tailor.bio ? (
+            <View style={styles.bioCard}>
+              <Text style={styles.bioCardTitle}>About Studio</Text>
+              <Text style={styles.bioCardText}>{tailor.bio}</Text>
+            </View>
+          ) : null}
+        </View>
+      </ScrollView>
+
+      {/* ================= FLOATING FOOTER SUMMARY BAR ================= */}
+      {selectedServices.length > 0 && (
+        <View style={[styles.floatingFooter, { paddingBottom: Math.max(insets.bottom, 14) }]}>
+          <View style={styles.footerLeft}>
+            <View style={[styles.footerCartBadge, selectedServices.some(isVipService) && { backgroundColor: "#f3e8ff" }]}>
+              <Ionicons
+                name={selectedServices.some(isVipService) ? "ribbon" : "bag-check"}
+                size={20}
+                color={selectedServices.some(isVipService) ? "#7c3aed" : "#0d9488"}
+              />
+              <View style={[styles.badgeNumber, selectedServices.some(isVipService) && { backgroundColor: "#7c3aed" }]}>
+                <Text style={styles.badgeNumberText}>{selectedServices.length}</Text>
+              </View>
+            </View>
+            <View style={{ marginLeft: 12 }}>
+              <Text style={[styles.footerCountText, selectedServices.some(isVipService) && { color: "#7c3aed", fontWeight: "700" }]}>
+                {selectedServices.some(isVipService)
+                  ? "👑 1 VIP Service (Dedicated Timeline)"
+                  : `${selectedServices.length} Item(s) Selected`}
+              </Text>
+              <Text style={styles.footerPriceText}>₹{totalPrice}</Text>
+            </View>
+          </View>
+
+          <Pressable
+            style={[
+              styles.floatingBookBtn,
+              selectedServices.some(isVipService) && { backgroundColor: "#7c3aed" },
+              isOwnShop ? { backgroundColor: "#64748b" } : !tailor.isShopOpen && { backgroundColor: "#ef4444" }
+            ]}
+            onPress={handleProceed}
+          >
+            <Text style={styles.floatingBookBtnText}>
+              {isOwnShop
+                ? "Your Own Shop"
+                : tailor.isShopOpen
+                ? selectedServices.some(isVipService)
+                  ? "Book VIP Express →"
+                  : "Place Order →"
+                : "Shop Closed"}
+            </Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* ================= ZOOM IMAGE MODAL ================= */}
+      <Modal visible={zoomModalVisible} transparent animationType="fade">
         <View style={styles.zoomModalBg}>
           <Pressable style={styles.zoomCloseBtn} onPress={() => setZoomModalVisible(false)}>
             <Ionicons name="close" size={28} color="#ffffff" />
           </Pressable>
-          <ScrollView
-            ref={zoomScrollRef}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            style={{ width: "100%", height: "100%" }}
-          >
-            {zoomImagesList.map((imgUrl, idx) => (
-              <View key={idx} style={{ width: Dimensions.get("window").width, height: "100%", justifyContent: "center", alignItems: "center" }}>
-                <View style={styles.zoomImageWrapper}>
-                  <ScrollView
-                    minimumZoomScale={1}
-                    maximumZoomScale={5}
-                    showsHorizontalScrollIndicator={false}
-                    showsVerticalScrollIndicator={false}
-                    contentContainerStyle={styles.zoomScrollContent}
-                  >
-                    <Image source={{ uri: imgUrl }} style={styles.zoomImage} resizeMode="contain" />
-                  </ScrollView>
-                  
-                  {/* Watermarks Container directly on the image box */}
-                  <View style={styles.watermarkContainer}>
-                    <Text style={styles.watermarkLeft}>Tap to zoom</Text>
-                    <Text style={styles.watermarkRight}>Roopsy</Text>
-                  </View>
-                </View>
-              </View>
-            ))}
-          </ScrollView>
+          <Image
+            source={{ uri: zoomImagesList[zoomImageIndex] || shopAvatar }}
+            style={styles.fullscreenImage}
+            resizeMode="contain"
+          />
         </View>
       </Modal>
     </View>
@@ -477,215 +901,786 @@ export function TailorDetailScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-  mainWrapper: { flex: 1, backgroundColor: "#ffffff" },
-  container: { flex: 1, backgroundColor: "#ffffff" },
-  scrollContent: { paddingBottom: 120 },
-  centered: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#ffffff" },
-  errorText: { fontSize: 16, color: "#64748b" },
-  
-  heroContainer: { width: "100%", height: 320, position: "relative", backgroundColor: "#0f172a" },
-  heroImage: { width: "100%", height: "100%", resizeMode: "contain" },
-  heroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.15)" },
+  container: {
+    flex: 1,
+    backgroundColor: "#ffffff",
+  },
+  centered: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+  },
+  errorText: {
+    fontSize: 16,
+    color: "#64748b",
+    marginTop: 8,
+  },
+  mainScroll: {
+    flex: 1,
+  },
+
+  /* Top Header */
+  topHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    backgroundColor: "#ffffff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f5f9",
+  },
+  backBtn: {
+    padding: 4,
+    marginRight: 10,
+  },
+  avatarWrapper: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    overflow: "hidden",
+    borderWidth: 2,
+    borderColor: "#ccfbf1",
+    backgroundColor: "#f0fdfa",
+  },
+  shopAvatar: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+  },
+  headerInfoCol: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  headerShopName: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  verifiedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 2,
+  },
+  verifiedText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#16a34a",
+    marginLeft: 3,
+  },
+  locationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 2,
+  },
+  locationText: {
+    fontSize: 11,
+    color: "#475569",
+    marginLeft: 3,
+    maxWidth: 160,
+  },
+  followBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#0d9488",
+    backgroundColor: "#ffffff",
+  },
+  followingBtn: {
+    backgroundColor: "#0d9488",
+    borderColor: "#0d9488",
+  },
+  followBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0d9488",
+  },
+  followingBtnText: {
+    color: "#ffffff",
+  },
+
+  /* Search & Filter */
+  searchBarWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    marginTop: 14,
+  },
+  searchInputCard: {
+    flex: 1,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: "#0f172a",
+    paddingVertical: 0,
+  },
+  filterBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 10,
+  },
+
+  /* Categories */
+  categoriesScroll: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 6,
+  },
+  categoryCard: {
+    width: 76,
+    height: 80,
+    borderRadius: 16,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+  categoryCardSelected: {
+    backgroundColor: "#f0fdfa",
+    borderColor: "#2dd4bf",
+    borderWidth: 1.5,
+  },
+  categoryIconWrap: {
+    marginBottom: 4,
+  },
+  categoryLabel: {
+    fontSize: 11,
+    fontWeight: "500",
+    color: "#334155",
+    textAlign: "center",
+    paddingHorizontal: 4,
+  },
+  categoryLabelSelected: {
+    color: "#0d9488",
+    fontWeight: "700",
+  },
+
+  /* Hero Banner */
+  bannerContainer: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 20,
+    backgroundColor: "#0f766e",
+    height: 180,
+    flexDirection: "row",
+    overflow: "hidden",
+    position: "relative",
+    shadowColor: "#0f766e",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  bannerContentLeft: {
+    flex: 1.1,
+    padding: 16,
+    justifyContent: "center",
+    zIndex: 2,
+  },
+  specialOfferBadge: {
+    backgroundColor: "rgba(255,255,255,0.22)",
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    alignSelf: "flex-start",
+    marginBottom: 8,
+  },
+  specialOfferText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#ffffff",
+  },
+  bannerHeading: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#ffffff",
+    lineHeight: 20,
+  },
+  bannerSubheading: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.9)",
+    marginTop: 4,
+  },
+  bannerActionBtn: {
+    backgroundColor: "#ffffff",
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    alignSelf: "flex-start",
+    marginTop: 10,
+  },
+  bannerActionBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  bannerImageWrapper: {
+    flex: 0.9,
+    height: "100%",
+  },
+  bannerImage: {
+    width: "100%",
+    height: "100%",
+  },
+  bannerDotsRow: {
+    position: "absolute",
+    bottom: 8,
+    right: 14,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  bannerDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "rgba(255,255,255,0.4)",
+    marginLeft: 4,
+  },
+  bannerDotActive: {
+    backgroundColor: "#ffffff",
+    width: 14,
+  },
+
+  /* Section Header */
+  sectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    marginTop: 20,
+  },
+  sectionHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  sectionIconWrap: {
+    marginRight: 8,
+  },
+  sectionMainTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  viewAllBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0d9488",
+  },
+  sectionSubTitleText: {
+    fontSize: 12,
+    color: "#64748b",
+    paddingHorizontal: 16,
+    marginTop: 2,
+    marginBottom: 12,
+  },
+
+  /* Horizontal Service Cards */
+  noServicesBox: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+    paddingVertical: 32,
+    backgroundColor: "#f0fdfa",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#99f6e4",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  noServicesTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#0f766e",
+    marginTop: 10,
+  },
+  noServicesSub: {
+    fontSize: 12,
+    color: "#115e59",
+    marginTop: 4,
+    textAlign: "center",
+    paddingHorizontal: 20,
+    lineHeight: 17,
+  },
+  horizontalServicesScroll: {
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+  },
+  serviceItemCard: {
+    width: SCREEN_WIDTH * 0.58,
+    borderRadius: 18,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    marginRight: 14,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  serviceImageContainer: {
+    height: 140,
+    width: "100%",
+    position: "relative",
+  },
+  serviceImage: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+  },
+  emptyServiceImagePlaceholder: {
+    backgroundColor: "#f0fdfa",
+    justifyContent: "center",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: "#ccfbf1",
+  },
+  emptyServiceImageText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#14b8a6",
+    marginTop: 6,
+    textTransform: "capitalize",
+  },
+  popularBadge: {
+    position: "absolute",
+    top: 10,
+    left: 10,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  popularBadgeText: {
+    color: "#ffffff",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  cardHeartBtn: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  serviceBody: {
+    padding: 12,
+  },
+  serviceNameText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  serviceDescText: {
+    fontSize: 11,
+    color: "#64748b",
+    marginTop: 4,
+    lineHeight: 15,
+    height: 30,
+  },
+  serviceFooterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 10,
+  },
+  servicePriceText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  originalPriceStrike: {
+    fontSize: 12,
+    color: "#94a3b8",
+    textDecorationLine: "line-through",
+    fontWeight: "600",
+  },
+  durationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 2,
+  },
+  durationText: {
+    fontSize: 11,
+    color: "#64748b",
+  },
+  bookNowBtn: {
+    backgroundColor: "#0d9488",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 18,
+  },
+  bookNowBtnSelected: {
+    backgroundColor: "#16a34a",
+  },
+  bookNowBtnText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+
+  /* Meta Cards */
+  metaCardsContainer: {
+    paddingHorizontal: 16,
+    marginTop: 14,
+    gap: 10,
+  },
+  locationMetaCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    backgroundColor: "#f8fafc",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  hoursMetaCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    backgroundColor: "#f8fafc",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  bioCard: {
+    padding: 14,
+    backgroundColor: "#f8fafc",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  bioCardTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0f172a",
+    marginBottom: 4,
+  },
+  bioCardText: {
+    fontSize: 12,
+    color: "#475569",
+    lineHeight: 18,
+  },
+  metaIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  metaCardTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  metaCardSub: {
+    fontSize: 11,
+    color: "#64748b",
+    marginTop: 1,
+  },
+
+  /* Floating Footer */
+  floatingFooter: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: "#ffffff",
+    borderTopWidth: 1,
+    borderTopColor: "#e2e8f0",
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  footerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  footerCartBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#f0fdfa",
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  badgeNumber: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    backgroundColor: "#0d9488",
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeNumberText: {
+    color: "#ffffff",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  footerCountText: {
+    fontSize: 12,
+    color: "#64748b",
+  },
+  footerPriceText: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  floatingBookBtn: {
+    backgroundColor: "#0d9488",
+    borderRadius: 24,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
+  floatingBookBtnText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
+  /* Zoom Modal */
   zoomModalBg: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.95)",
+    backgroundColor: "rgba(0,0,0,0.95)",
     justifyContent: "center",
     alignItems: "center",
   },
   zoomCloseBtn: {
     position: "absolute",
-    top: 50,
+    top: 40,
     right: 20,
-    zIndex: 999,
-    padding: 10,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    borderRadius: 25,
-  },
-  zoomScrollContent: {
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: "100%",
-  },
-  zoomImage: {
-    width: Dimensions.get("window").width,
-    height: Dimensions.get("window").height * 0.75,
-  },
-  zoomImageWrapper: {
-    width: Dimensions.get("window").width,
-    height: Dimensions.get("window").height * 0.75,
-    position: "relative",
-    justifyContent: "center",
-  },
-  watermarkContainer: {
-    position: "absolute",
-    bottom: 12,
-    left: 16,
-    right: 16,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    zIndex: 999,
-  },
-  watermarkLeft: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "rgba(255, 255, 255, 0.45)",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    textShadowColor: "rgba(0, 0, 0, 0.5)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-  },
-  watermarkRight: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: "rgba(255, 255, 255, 0.6)",
-    letterSpacing: 1,
-    textShadowColor: "rgba(0, 0, 0, 0.5)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-  },
-  paginationContainer: {
-    position: "absolute",
-    bottom: 40,
-    width: "100%",
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 6,
-  },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "rgba(255, 255, 255, 0.5)" },
-  activeDot: { width: 20, backgroundColor: "#ffffff" },
-  heroWatermarkContainer: {
-    position: "absolute",
-    bottom: 24,
-    left: 20,
-    right: 20,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
     zIndex: 10,
+    padding: 8,
   },
-  heroWatermarkLeft: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "rgba(255, 255, 255, 0.7)",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    textShadowColor: "rgba(0, 0, 0, 0.6)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+  fullscreenImage: {
+    width: "100%",
+    height: "80%",
   },
-  heroWatermarkRight: {
+
+  /* Live Open/Closed Status Badges & Banners */
+  statusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  statusPillOpen: {
+    backgroundColor: "#dcfce7",
+  },
+  statusPillClosed: {
+    backgroundColor: "#fee2e2",
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 4,
+  },
+  statusPillText: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  closedTopBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fef2f2",
+    borderBottomWidth: 1,
+    borderBottomColor: "#fecaca",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  closedTopBannerTitle: {
     fontSize: 12,
-    fontWeight: "900",
-    color: "rgba(255, 255, 255, 0.8)",
-    letterSpacing: 1.5,
-    textShadowColor: "rgba(0, 0, 0, 0.6)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+    fontWeight: "700",
+    color: "#991b1b",
   },
-  
-  navBar: {
-    position: "absolute",
-    left: 20,
-    right: 20,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  navBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.9)",
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+  closedTopBannerSub: {
+    fontSize: 11,
+    color: "#b91c1c",
+    marginTop: 1,
   },
 
-  infoSheet: {
-    backgroundColor: "#ffffff",
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
-    marginTop: -40,
-    paddingHorizontal: 24,
-    paddingTop: 30,
-  },
-  titleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
-  shopTitle: { fontSize: 26, fontWeight: "900", color: "#0f172a", marginBottom: 4 },
-  shopCategory: { fontSize: 14, fontWeight: "600", color: "#0d9488" },
-
-  divider: { height: 1, backgroundColor: "#f1f5f9", marginVertical: 20 },
-
-  metaInfoRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 20 },
-  metaItem: { flexDirection: "row", alignItems: "center", flex: 1 },
-  metaTextCol: { marginLeft: 10 },
-  metaLabel: { fontSize: 12, color: "#64748b", fontWeight: "600" },
-  metaValue: { fontSize: 14, color: "#0f172a", fontWeight: "700", marginTop: 2 },
-
-  locationBox: { flexDirection: "row", alignItems: "center", backgroundColor: "#f8fafc", padding: 16, borderRadius: 20, marginBottom: 24, borderWidth: 1, borderColor: "#f1f5f9" },
-  locIconWrap: { width: 44, height: 44, borderRadius: 12, backgroundColor: "#e6f7f2", justifyContent: "center", alignItems: "center" },
-  locTextWrap: { flex: 1, marginHorizontal: 12 },
-  locTitle: { fontSize: 14, fontWeight: "700", color: "#0f172a" },
-  locAddress: { fontSize: 13, color: "#64748b", marginTop: 2, lineHeight: 18 },
-
-  aboutSection: { marginBottom: 24 },
-  sectionTitle: { fontSize: 18, fontWeight: "800", color: "#0f172a", marginBottom: 16 },
-  bioText: { fontSize: 14, color: "#475569", lineHeight: 22 },
-
-  workingHoursSection: { marginBottom: 24 },
-  workingHoursCard: { backgroundColor: "#f8fafc", borderRadius: 16, padding: 16, borderWidth: 1, borderColor: "#f1f5f9" },
-  whRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "#f1f5f9" },
-  whDay: { fontSize: 14, color: "#334155", fontWeight: "600", textTransform: "capitalize" },
-  whTime: { fontSize: 14, color: "#0f172a", fontWeight: "700" },
-  whClosed: { color: "#ef4444" },
-
-  servicesSection: { marginBottom: 24 },
-  serviceCard: { padding: 16, borderRadius: 20, backgroundColor: "#ffffff", borderWidth: 2, borderColor: "#f1f5f9", marginBottom: 12 },
-  serviceCardActive: { borderColor: "#0d9488", backgroundColor: "#f0fdf4" },
-  serviceMainRow: { flexDirection: "row", alignItems: "center" },
-  svcIconBox: { width: 40, height: 40, borderRadius: 12, backgroundColor: "#f1f5f9", justifyContent: "center", alignItems: "center" },
-  svcInfo: { flex: 1, marginLeft: 12 },
-  svcName: { fontSize: 15, fontWeight: "700", color: "#0f172a" },
-  svcNameActive: { color: "#0d9488" },
-  svcMeta: { fontSize: 13, color: "#64748b", marginTop: 4 },
-  svcPriceBox: { alignItems: "flex-end" },
-  svcPrice: { fontSize: 16, fontWeight: "800", color: "#0f172a", marginBottom: 6 },
-  svcPriceActive: { color: "#0d9488" },
-  radioCircle: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: "#cbd5e1", justifyContent: "center", alignItems: "center" },
-  radioCircleActive: { borderColor: "#0d9488" },
-  radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: "#0d9488" },
-  
-  warningBox: { flexDirection: "row", alignItems: "center", backgroundColor: "#fef3c7", padding: 16, borderRadius: 16 },
-  warningText: { fontSize: 13, color: "#92400e", flex: 1, marginLeft: 10, lineHeight: 20 },
-
-  bottomBar: {
-    position: "absolute",
-    bottom: 0, left: 0, right: 0,
-    backgroundColor: "#ffffff",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 24,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.05,
+  /* VIP Styling & Highlights */
+  serviceItemCardVIP: {
+    borderColor: "#a855f7",
+    borderWidth: 2,
+    backgroundColor: "#fdfbfe",
+    shadowColor: "#7c3aed",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
     shadowRadius: 10,
-    elevation: 10,
+    elevation: 6,
   },
-  bottomSummary: { flex: 1 },
-  summaryLabel: { fontSize: 12, color: "#64748b", fontWeight: "600" },
-  summaryPrice: { fontSize: 22, fontWeight: "900", color: "#0f172a", marginTop: 2 },
-  
-  bookBtn: { flex: 1.5, backgroundColor: "#0d9488", height: 56, borderRadius: 16, justifyContent: "center", alignItems: "center" },
-  bookBtnDisabled: { backgroundColor: "#cbd5e1" },
-  bookBtnText: { color: "#ffffff", fontSize: 16, fontWeight: "700" },
+  vipTopRibbon: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "#7c3aed",
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+  },
+  vipTopRibbonText: {
+    fontSize: 10,
+    fontWeight: "900",
+    color: "#ffffff",
+    letterSpacing: 0.6,
+  },
+  vipPopularBadge: {
+    backgroundColor: "#7c3aed",
+    borderWidth: 1,
+    borderColor: "#c084fc",
+  },
+  cardHeartBtnVIP: {
+    backgroundColor: "rgba(124, 58, 237, 0.6)",
+  },
+  serviceBodyVIP: {
+    backgroundColor: "#fdfbfe",
+  },
+  vipServiceNameText: {
+    color: "#4c1d95",
+    fontWeight: "800",
+    flex: 1,
+  },
+  vipCrownBadge: {
+    backgroundColor: "#ede9fe",
+    borderWidth: 1,
+    borderColor: "#c084fc",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  vipCrownBadgeText: {
+    fontSize: 10,
+    fontWeight: "900",
+    color: "#7c3aed",
+  },
+  vipServiceDescText: {
+    color: "#6b21a8",
+  },
+  vipHighlightStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f3e8ff",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginTop: 6,
+    gap: 4,
+    borderWidth: 0.5,
+    borderColor: "#d8b4fe",
+  },
+  vipHighlightStripText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#6b21a8",
+    flex: 1,
+  },
+  vipPriceText: {
+    color: "#7c3aed",
+    fontWeight: "900",
+  },
+  discountPill: {
+    backgroundColor: "#ccfbf1",
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  discountPillText: {
+    fontSize: 10,
+    color: "#0d9488",
+    fontWeight: "700",
+  },
+  vipDeliveryTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f3e8ff",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginTop: 4,
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderColor: "#d8b4fe",
+  },
+  vipDeliveryTagText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#6b21a8",
+  },
+  bookNowBtnVIP: {
+    backgroundColor: "#7c3aed",
+  },
+  bookNowBtnVIPSelected: {
+    backgroundColor: "#059669",
+  },
+  vipCategoryCard: {
+    borderColor: "#d8b4fe",
+    backgroundColor: "#faf5ff",
+  },
+  vipCategoryCardSelected: {
+    backgroundColor: "#7c3aed",
+    borderColor: "#7c3aed",
+    borderWidth: 1.5,
+  },
+  vipCategoryLabel: {
+    color: "#7c3aed",
+    fontWeight: "700",
+  },
+  vipCategoryLabelSelected: {
+    color: "#ffffff",
+    fontWeight: "800",
+  },
+  vipHeaderNoticeBadge: {
+    backgroundColor: "#ede9fe",
+    borderWidth: 1,
+    borderColor: "#c084fc",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    marginLeft: 8,
+  },
+  vipHeaderNoticeBadgeText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#6b21a8",
+  },
 });

@@ -7,51 +7,89 @@ async function addReview(req, res) {
     const { barberId, bookingId, rating, comment } = req.body;
     const userId = req.user._id;
 
-    let targetBarberId = barberId;
-    if (barberId && typeof barberId === "object") {
-      targetBarberId = barberId._id || barberId.id;
+    if (!bookingId) {
+      return res.status(400).json({ error: "Booking ID is required" });
     }
 
-    if (!rating || rating < 1 || rating > 5) {
-      return res.status(400).json({ error: "Rating must be between 1 and 5" });
+    const ratingNum = Number(rating);
+    if (isNaN(ratingNum) || ratingNum < 1 || ratingNum > 5) {
+      return res.status(400).json({ error: "Rating must be between 1 and 5 stars" });
     }
 
-    // Verify booking belongs to user and is completed
-    const booking = await Booking.findOne({ _id: bookingId, customerId: userId, barberId: targetBarberId });
+    // Verify booking belongs to this user
+    const booking = await Booking.findOne({ _id: bookingId, customerId: userId });
     if (!booking) {
-      return res.status(404).json({ error: "Booking not found or not yours" });
+      return res.status(404).json({ error: "Booking not found or does not belong to you" });
     }
+
     if (booking.status !== "completed") {
-      return res.status(400).json({ error: "Can only review completed bookings" });
+      return res.status(400).json({ error: "You can only review a booking after service is completed." });
     }
 
-    // Check if review already exists
-    const existing = await Review.findOne({ bookingId });
-    if (existing) {
-      return res.status(400).json({ error: "You have already reviewed this booking" });
+    const targetBarberId = booking.barberId;
+    const cleanComment = typeof comment === "string" ? comment.trim() : "";
+
+    // Check if review already exists for this booking (allow edit/update)
+    let review = await Review.findOne({ bookingId });
+    let oldRating = 0;
+    const isUpdate = !!review;
+
+    if (review) {
+      oldRating = review.rating || 0;
+      review.rating = ratingNum;
+      review.comment = cleanComment;
+      await review.save();
+    } else {
+      review = await Review.create({
+        userId,
+        barberId: targetBarberId,
+        bookingId,
+        rating: ratingNum,
+        comment: cleanComment,
+      });
     }
 
-    // Create review
-    const review = await Review.create({
-      userId,
-      barberId: targetBarberId,
-      bookingId,
-      rating,
-      comment,
-    });
+    // Update Booking document
+    booking.rating = ratingNum;
+    booking.reviewComment = cleanComment;
+    booking.isRated = true;
+    booking.ratedAt = new Date();
+    await booking.save();
 
     // Update Barber rating stats
-    await Barber.findByIdAndUpdate(targetBarberId, {
-      $inc: { ratingSum: rating, ratingCount: 1 }
-    });
+    const barber = await Barber.findById(targetBarberId);
+    if (barber) {
+      if (isUpdate) {
+        barber.ratingSum = Math.max(0, (barber.ratingSum || 0) - oldRating + ratingNum);
+      } else {
+        barber.ratingSum = (barber.ratingSum || 0) + ratingNum;
+        barber.ratingCount = (barber.ratingCount || 0) + 1;
+      }
+      await barber.save();
 
-    res.json({ message: "Review added successfully", review });
-  } catch (error) {
-    if (error.code === 11000) {
-      return res.status(400).json({ error: "You have already reviewed this booking" });
+      // Send notification to Barber Partner
+      if (barber.userId) {
+        try {
+          const Notification = require("../models/Notification");
+          const custName = req.user?.name || "Customer";
+          const commentSnippet = cleanComment ? ` "${cleanComment}"` : "";
+          await Notification.create({
+            userId: barber.userId,
+            title: "New Customer Review ⭐️",
+            body: `${custName} rated your service ${ratingNum}/5 stars!${commentSnippet}`,
+            type: "barber_review",
+            data: { bookingId: booking._id, barberId: targetBarberId, rating: ratingNum }
+          });
+        } catch (nErr) {
+          console.error("Failed to notify barber of review", nErr);
+        }
+      }
     }
+
+    res.json({ message: isUpdate ? "Review updated successfully!" : "Thank you! Review submitted successfully!", review });
+  } catch (error) {
     console.error("addReview error", error);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ error: "Server error occurred while saving review." });
   }
 }
 

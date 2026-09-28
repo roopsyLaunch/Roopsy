@@ -136,9 +136,51 @@ export async function getCurrentGPSLocation() {
     const lat = loc.coords.latitude;
     const lng = loc.coords.longitude;
 
-    // Use OSM Nominatim for rich address details
-    const osmDetails = await reverseGeocodeOSM(lat, lng);
-    return osmDetails;
+    // Try OSM Nominatim first for rich address details
+    try {
+      const osmDetails = await reverseGeocodeOSM(lat, lng);
+      if (osmDetails && osmDetails.displayName && !osmDetails.displayName.includes(`${lat.toFixed(4)}`)) {
+        return osmDetails;
+      }
+    } catch (e) {
+      console.warn("OSM reverse geocode error, falling back to native:", e);
+    }
+
+    // Native fallback via Expo Location
+    try {
+      const nativeAddrs = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+      if (nativeAddrs && nativeAddrs.length > 0) {
+        const a = nativeAddrs[0];
+        const parts = [
+          a.name,
+          a.street,
+          a.district || a.subregion,
+          a.city,
+          a.region,
+          a.postalCode,
+        ].filter(Boolean);
+        const displayName = parts.join(", ");
+        return {
+          displayName: displayName || `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+          shortName: a.name || a.city || a.street || "Current Location",
+          line1: [a.name, a.street].filter(Boolean).join(", "),
+          city: a.city || "",
+          state: a.region || "",
+          pincode: a.postalCode || "",
+          lat,
+          lng,
+        };
+      }
+    } catch (e2) {
+      console.warn("Native reverse geocode error:", e2);
+    }
+
+    return {
+      displayName: `Location: ${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+      shortName: `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+      lat,
+      lng,
+    };
   } catch (error) {
     console.error("Error getting GPS location:", error);
     throw error;

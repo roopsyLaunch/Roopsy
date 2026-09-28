@@ -351,6 +351,7 @@ function MainTabs() {
             {/* Hidden screens */}
             <Tab.Screen name="BarberDetail" component={BarberDetailScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
             <Tab.Screen name="BeautyParlorDetail" component={BeautyParlorDetailScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
+            <Tab.Screen name="TailorDetail" component={TailorDetailScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
             <Tab.Screen name="Search" component={SearchScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
           </>
         ) : isTailorPartner ? (
@@ -364,6 +365,7 @@ function MainTabs() {
             {/* Hidden screens */}
             <Tab.Screen name="BarberDetail" component={BarberDetailScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
             <Tab.Screen name="BeautyParlorDetail" component={BeautyParlorDetailScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
+            <Tab.Screen name="TailorDetail" component={TailorDetailScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
             <Tab.Screen name="Search" component={SearchScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
           </>
         ) : isPartner ? (
@@ -377,6 +379,7 @@ function MainTabs() {
             {/* Hidden screens */}
             <Tab.Screen name="BarberDetail" component={BarberDetailScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
             <Tab.Screen name="BeautyParlorDetail" component={BeautyParlorDetailScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
+            <Tab.Screen name="TailorDetail" component={TailorDetailScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
             <Tab.Screen name="Search" component={SearchScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
           </>
         ) : (
@@ -394,6 +397,7 @@ function MainTabs() {
             {/* Hidden screens */}
             <Tab.Screen name="BarberDetail" component={BarberDetailScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
             <Tab.Screen name="BeautyParlorDetail" component={BeautyParlorDetailScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
+            <Tab.Screen name="TailorDetail" component={TailorDetailScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
             <Tab.Screen name="Search" component={SearchScreen} options={{ tabBarItemStyle: { display: "none" }, unmountOnBlur: true }} />
           </>
         )}

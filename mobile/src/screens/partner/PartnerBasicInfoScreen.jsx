@@ -65,12 +65,12 @@ export function PartnerBasicInfoScreen({ navigation, route }) {
 
   const StepIndicator = () => (
     <View style={styles.stepContainer}>
-      {[1,2,3,4,5,6].map(step => (
+      {[1,2,3,4].map(step => (
         <React.Fragment key={step}>
           <View style={[styles.stepCircle, step === 1 && styles.stepActive]}>
             <Text style={[styles.stepText, step === 1 && styles.stepTextActive]}>{step}</Text>
           </View>
-          {step < 6 && <View style={styles.stepLine} />}
+          {step < 4 && <View style={styles.stepLine} />}
         </React.Fragment>
       ))}
     </View>

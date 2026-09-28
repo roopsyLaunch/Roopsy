@@ -181,9 +181,10 @@ export function ExploreScreen({ navigation, route }) {
               style={styles.card}
               onPress={() => {
                 const cat = (item.businessCategory || "").toLowerCase();
+                const sName = (item.shopName || "").toLowerCase();
                 if (cat.includes("tailor") || cat.includes("stitching") || cat.includes("center")) {
                   navigation.navigate("TailorDetail", { tailorId: item.id, shopName: item.shopName });
-                } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour")) {
+                } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour") || cat.includes("salon") || sName.includes("beauty") || sName.includes("salon") || sName.includes("parlor")) {
                   navigation.navigate("BeautyParlorDetail", { barberId: item.id, shopName: item.shopName });
                 } else {
                   navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName });

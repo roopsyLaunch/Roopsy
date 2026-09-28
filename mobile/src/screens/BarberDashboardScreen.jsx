@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -22,9 +22,11 @@ import * as Sharing from "expo-sharing";
 import { api } from "../api/client";
 import { uploadImageAsync } from "../api/upload";
 import * as ImagePicker from "expo-image-picker";
+import { promptServiceImagePicker } from "../services/imagePickerService";
 import { useAuth } from "../context/AuthContext";
 import { TailorServicesScreen } from "./tailor/TailorServicesScreen";
 import { getSocket } from "../api/socket";
+import { NotificationBell } from "../components/NotificationModal";
 
 const BACKEND_CATEGORIES = ["haircut", "beard", "massage", "facial", "makeup", "waxing", "manicure", "pedicure", "threading", "suit_stitching", "blouse_stitching", "kurta_stitching", "alteration", "combo", "other"];
 
@@ -170,36 +172,81 @@ export function BarberDashboardScreen() {
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
   const [showBusinessTypeOnboarding, setShowBusinessTypeOnboarding] = useState(false);
 
-  // Beauty Parlor Bulk Add State
   const [beautyParlorModalVisible, setBeautyParlorModalVisible] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState(null);
   const [selectedParlorServices, setSelectedParlorServices] = useState([]);
   const [customServiceName, setCustomServiceName] = useState("");
   const [customServicePrice, setCustomServicePrice] = useState("");
+  const [customServiceDiscount, setCustomServiceDiscount] = useState("");
   const [customServiceDuration, setCustomServiceDuration] = useState("");
+  const [customServiceImage, setCustomServiceImage] = useState(null);
+  const [customServiceSubmitting, setCustomServiceSubmitting] = useState(false);
+  const customServiceSubmittingRef = useRef(false);
+  const [savingParlorServices, setSavingParlorServices] = useState(false);
+  const savingParlorServicesRef = useRef(false);
+  const [savingService, setSavingService] = useState(false);
+  const savingServiceRef = useRef(false);
 
   const handleAddCustomServiceDirect = async () => {
+    if (customServiceSubmittingRef.current || customServiceSubmitting) return;
     if (!customServiceName.trim()) return Alert.alert("Error", "Please enter a custom service name");
+    customServiceSubmittingRef.current = true;
+    setCustomServiceSubmitting(true);
     try {
-      const res = await api.get(`/barbers/me?t=${Date.now()}`);
-      const bId = String(res.data.barber.id);
+      let uploadedImages = [];
+      if (customServiceImage) {
+        try {
+          const uploadedUrl = await uploadImageAsync(customServiceImage);
+          if (uploadedUrl) uploadedImages.push(uploadedUrl);
+        } catch (err) {
+          console.error("Failed to upload service photo:", err);
+        }
+      }
 
-      await api.post("/services", {
-        barberId: bId,
-        name: customServiceName.trim(),
-        category: "Custom",
-        durationMinutes: Number(customServiceDuration || "60"),
-        price: Number(customServicePrice || "500"),
-        isHomeService: activeTab === "Home Services",
-        images: [],
-      });
+      const orig = Number(customServicePrice || "500");
+      const disc = Number(customServiceDiscount || "0");
+      const finalPrice = Math.max(0, orig - disc);
+
+      if (form.categoryType === "Tailor" || user?.role === "tailor") {
+        await api.post("/tailors/services", {
+          name: customServiceName.trim(),
+          category: "Custom Stitching",
+          price: finalPrice,
+          originalPrice: orig,
+          discountAmount: disc,
+          estimatedDays: 3,
+          serviceMode: activeTab === "Home Services" ? "home" : "shop",
+          images: uploadedImages,
+        });
+      } else {
+        const res = await api.get(`/barbers/me?t=${Date.now()}`);
+        const bId = String(res.data.barber.id);
+
+        await api.post("/services", {
+          barberId: bId,
+          name: customServiceName.trim(),
+          category: "Custom",
+          durationMinutes: Number(customServiceDuration || "60"),
+          price: finalPrice,
+          originalPrice: orig,
+          discountAmount: disc,
+          isHomeService: activeTab === "Home Services",
+          images: uploadedImages,
+        });
+      }
+
       Alert.alert("Success", "Custom service added successfully!");
       setCustomServiceName("");
       setCustomServicePrice("");
+      setCustomServiceDiscount("");
       setCustomServiceDuration("");
-      fetchData(); // refresh the main dashboard list
+      setCustomServiceImage(null);
+      await load(); // refresh the main dashboard list
     } catch (e) {
       Alert.alert("Error", "Failed to add custom service");
+    } finally {
+      customServiceSubmittingRef.current = false;
+      setCustomServiceSubmitting(false);
     }
   };
 
@@ -212,7 +259,18 @@ export function BarberDashboardScreen() {
     if (exists) {
       setSelectedParlorServices(selectedParlorServices.filter(s => s.name !== serviceName));
     } else {
-      setSelectedParlorServices([...selectedParlorServices, { name: serviceName, category: catName, price: "500", durationMinutes: "60" }]);
+      setSelectedParlorServices([
+        ...selectedParlorServices,
+        {
+          name: serviceName,
+          category: catName,
+          price: "500",
+          originalPrice: "500",
+          discountAmount: "0",
+          durationMinutes: "60",
+          image: null,
+        }
+      ]);
     }
   };
 
@@ -221,31 +279,70 @@ export function BarberDashboardScreen() {
   };
 
   const handleSaveParlorServices = async () => {
+    if (savingParlorServicesRef.current || savingParlorServices) return;
     if (selectedParlorServices.length === 0) return Alert.alert("Error", "No services selected.");
+    savingParlorServicesRef.current = true;
+    setSavingParlorServices(true);
     try {
-      if (form.categoryType === "Tailor" || user?.role === "tailor") {
-        for (const svc of selectedParlorServices) {
-          await api.post("/tailors/services", {
-            name: svc.name,
-            category: svc.category,
-            price: Number(svc.price) || 0,
-            estimatedDays: 3,
-            isHomeService: activeTab === "Home Services",
-          });
-        }
-      } else {
+      const isTailor = form.categoryType === "Tailor" || user?.role === "tailor";
+      let barberId = null;
+      if (!isTailor) {
         const res = await api.get(`/barbers/me?t=${Date.now()}`);
-        const barberId = String(res.data.barber.id);
+        barberId = String(res.data.barber.id);
+      }
 
-        for (const svc of selectedParlorServices) {
+      // Deduplicate selected services by normalized name
+      const uniqueSelected = [];
+      const seenNames = new Set();
+      for (const s of selectedParlorServices) {
+        const normalized = (s.name || "").trim().toLowerCase();
+        if (!seenNames.has(normalized)) {
+          seenNames.add(normalized);
+          uniqueSelected.push(s);
+        }
+      }
+
+      for (const svc of uniqueSelected) {
+        let uploadedImages = [];
+        if (svc.image) {
+          if (svc.image.startsWith("http")) {
+            uploadedImages.push(svc.image);
+          } else {
+            try {
+              const uploadedUrl = await uploadImageAsync(svc.image);
+              if (uploadedUrl) uploadedImages.push(uploadedUrl);
+            } catch (err) {
+              console.error("Failed to upload service image:", err);
+            }
+          }
+        }
+
+        const orig = Number(svc.originalPrice || svc.price || 0);
+        const disc = Number(svc.discountAmount || 0);
+        const finalPrice = Math.max(0, orig - disc);
+
+        if (isTailor) {
+          await api.post("/tailors/services", {
+            name: svc.name.trim(),
+            category: svc.category,
+            price: finalPrice,
+            originalPrice: orig,
+            discountAmount: disc,
+            estimatedDays: 3,
+            serviceMode: activeTab === "Home Services" ? "home" : "shop",
+            images: uploadedImages,
+          });
+        } else {
           await api.post("/services", {
             barberId,
-            name: svc.name,
+            name: svc.name.trim(),
             category: svc.category,
-            durationMinutes: Number(svc.durationMinutes),
-            price: Number(svc.price),
+            durationMinutes: Number(svc.durationMinutes || 60),
+            price: finalPrice,
+            originalPrice: orig,
+            discountAmount: disc,
             isHomeService: activeTab === "Home Services",
-            images: [],
+            images: uploadedImages,
           });
         }
       }
@@ -253,9 +350,12 @@ export function BarberDashboardScreen() {
       setBeautyParlorModalVisible(false);
       setSelectedParlorServices([]);
       await load();
-      Alert.alert("Success", "Services added successfully!");
+      Alert.alert("Success", "Services saved successfully!");
     } catch (e) {
       Alert.alert("Error", e?.response?.data?.error || e.message);
+    } finally {
+      savingParlorServicesRef.current = false;
+      setSavingParlorServices(false);
     }
   };
 
@@ -449,7 +549,10 @@ export function BarberDashboardScreen() {
   };
 
   const handleSaveService = async () => {
+    if (savingServiceRef.current || savingService) return;
     if (!serviceForm.name.trim()) return Alert.alert("Error", "Service name is required.");
+    savingServiceRef.current = true;
+    setSavingService(true);
     try {
       const res = await api.get(`/barbers/me?t=${Date.now()}`);
       const barberId = String(res.data.barber.id);
@@ -486,6 +589,9 @@ export function BarberDashboardScreen() {
       Alert.alert("Success", `Service ${editingServiceId ? "updated" : "added"} successfully!`);
     } catch (e) {
       Alert.alert("Error", e?.response?.data?.error || e.message);
+    } finally {
+      savingServiceRef.current = false;
+      setSavingService(false);
     }
   };
 
@@ -577,6 +683,7 @@ export function BarberDashboardScreen() {
       {/* Top Header */}
       <View style={styles.headerTitleContainer}>
         <Text style={styles.headerTitleText}>Manage Shop</Text>
+        <NotificationBell size={24} color="#0f172a" badgeColor="#ef4444" />
       </View>
 
       {barber?.approvalStatus === "pending" && (
@@ -824,16 +931,20 @@ export function BarberDashboardScreen() {
             renderItem={({ item }) => (
               <View style={styles.servicePremiumCard}>
                 <View style={styles.svcHeader}>
-                  <View style={styles.svcIconWrapper}>
-                    {item.category?.includes("💇") || item.category?.includes("🧔") || item.category?.includes("💆") ? (
-                      <Text style={{ fontSize: 20 }}>{item.category.split(" ")[0]}</Text>
-                    ) : (
-                      <Ionicons
-                        name={item.category === "haircut" ? "cut" : item.category === "beard" ? "sparkles" : "grid"}
-                        size={20} color="#6d28d9"
-                      />
-                    )}
-                  </View>
+                  {item.images && item.images.length > 0 && item.images[0] ? (
+                    <Image source={{ uri: item.images[0] }} style={styles.svcThumbImage} />
+                  ) : (
+                    <View style={styles.svcIconWrapper}>
+                      {item.category?.includes("💇") || item.category?.includes("🧔") || item.category?.includes("💆") ? (
+                        <Text style={{ fontSize: 20 }}>{item.category.split(" ")[0]}</Text>
+                      ) : (
+                        <Ionicons
+                          name={item.category === "haircut" ? "cut" : item.category === "beard" ? "sparkles" : "grid"}
+                          size={20} color="#6d28d9"
+                        />
+                      )}
+                    </View>
+                  )}
                   <View style={styles.svcInfo}>
                     <Text style={styles.svcNameText}>{item.name}</Text>
                     {item.originalPrice > item.price ? (
@@ -968,30 +1079,6 @@ export function BarberDashboardScreen() {
               </Text>
             </View>
 
-            <View style={styles.sectionDivider} />
-
-            <View style={styles.whHeaderRow}>
-              <Text style={styles.sectionHeaderTxt}>Working Hours</Text>
-              <Pressable onPress={() => navigation.navigate("BarberProfileEdit")}>
-                <Text style={styles.whEditText}>Edit</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.workingHoursContainer}>
-              {DAYS.map((day) => {
-                const d = form.workingHours[day.key];
-                return (
-                  <View key={day.key} style={styles.whDisplayRow}>
-                    <Text style={styles.whDisplayDay}>{day.label}</Text>
-                    {d.isClosed ? (
-                      <Text style={styles.whClosedDisplay}>Closed</Text>
-                    ) : (
-                      <Text style={styles.whTimeText}>{d.open} - {d.close}</Text>
-                    )}
-                  </View>
-                );
-              })}
-            </View>
 
           </View>
         </ScrollView>
@@ -1063,16 +1150,10 @@ export function BarberDashboardScreen() {
                   {serviceForm.images.length < 5 && (
                     <Pressable
                       style={styles.addGalleryBtn}
-                      onPress={async () => {
-                        const result = await ImagePicker.launchImageLibraryAsync({
-                          mediaTypes: ['images'],
-                          allowsEditing: true,
-                          aspect: [4, 3],
-                          quality: 0.8,
+                      onPress={() => {
+                        promptServiceImagePicker((uri) => {
+                          setServiceForm((prev) => ({ ...prev, images: [...prev.images, uri] }));
                         });
-                        if (!result.canceled) {
-                          setServiceForm(prev => ({ ...prev, images: [...prev.images, result.assets[0].uri] }));
-                        }
                       }}
                     >
                       <Ionicons name="add" size={32} color="#6d28d9" />
@@ -1186,8 +1267,16 @@ export function BarberDashboardScreen() {
               </View>
 
 
-              <Pressable style={styles.primarySolidBtn} onPress={handleSaveService}>
-                <Text style={styles.primarySolidBtnText}>Save Service</Text>
+              <Pressable
+                style={[styles.primarySolidBtn, savingService && { opacity: 0.6 }]}
+                onPress={handleSaveService}
+                disabled={savingService}
+              >
+                {savingService ? (
+                  <ActivityIndicator color="#ffffff" />
+                ) : (
+                  <Text style={styles.primarySolidBtnText}>Save Service</Text>
+                )}
               </Pressable>
             </ScrollView>
           </View>
@@ -1232,26 +1321,89 @@ export function BarberDashboardScreen() {
 
                             {isSelected && (
                               <View style={styles.parlorServiceInputs}>
-                                <View style={styles.inputGroup}>
-                                  <Text style={styles.inputLabel}>Price (₹)</Text>
-                                  <TextInput
-                                    style={styles.smallInput}
-                                    value={isSelected.price}
-                                    keyboardType="number-pad"
-                                    onChangeText={(val) => updateParlorService(svcName, 'price', val)}
-                                  />
+                                {/* Service Photo for this category option */}
+                                <View style={{ marginBottom: 6, width: "100%" }}>
+                                  <Text style={styles.inputLabel}>Service Photo (Optional)</Text>
+                                  {isSelected.image ? (
+                                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
+                                      <Image source={{ uri: isSelected.image }} style={{ width: 46, height: 46, borderRadius: 8 }} />
+                                      <Pressable
+                                        onPress={() => updateParlorService(svcName, 'image', null)}
+                                        style={{ padding: 6, backgroundColor: "#fee2e2", borderRadius: 6 }}
+                                      >
+                                        <Ionicons name="trash-outline" size={14} color="#ef4444" />
+                                      </Pressable>
+                                    </View>
+                                  ) : (
+                                    <Pressable
+                                      style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#f8fafc", padding: 8, borderRadius: 8, borderWidth: 1, borderColor: "#cbd5e1", borderStyle: "dashed", marginTop: 4 }}
+                                      onPress={() => {
+                                        promptServiceImagePicker((uri) => {
+                                          updateParlorService(svcName, 'image', uri);
+                                        });
+                                      }}
+                                    >
+                                      <Ionicons name="camera-outline" size={16} color="#6d28d9" />
+                                      <Text style={{ fontSize: 12, color: "#6d28d9", fontWeight: "600" }}>+ Add Photo (Optional)</Text>
+                                    </Pressable>
+                                  )}
                                 </View>
-                                {!(form.categoryType === "Tailor" || user?.role === "tailor") && (
-                                  <View style={styles.inputGroup}>
-                                    <Text style={styles.inputLabel}>Time (Mins)</Text>
+
+                                <View style={{ flexDirection: "row", gap: 10, width: "100%" }}>
+                                  <View style={[styles.inputGroup, { flex: 1 }]}>
+                                    <Text style={styles.inputLabel}>Price (₹)</Text>
                                     <TextInput
                                       style={styles.smallInput}
-                                      value={isSelected.durationMinutes}
+                                      value={isSelected.price}
                                       keyboardType="number-pad"
-                                      onChangeText={(val) => updateParlorService(svcName, 'durationMinutes', val)}
+                                      onChangeText={(val) => updateParlorService(svcName, 'price', val)}
                                     />
                                   </View>
-                                )}
+                                  <View style={[styles.inputGroup, { flex: 1 }]}>
+                                    <Text style={styles.inputLabel}>Discount (₹)</Text>
+                                    <TextInput
+                                      style={styles.smallInput}
+                                      value={isSelected.discountAmount || ""}
+                                      placeholder="0 (Optional)"
+                                      placeholderTextColor="#94a3b8"
+                                      keyboardType="number-pad"
+                                      onChangeText={(val) => updateParlorService(svcName, 'discountAmount', val)}
+                                    />
+                                  </View>
+                                  {!(form.categoryType === "Tailor" || user?.role === "tailor") && (
+                                    <View style={[styles.inputGroup, { flex: 1 }]}>
+                                      <Text style={styles.inputLabel}>Time (Mins)</Text>
+                                      <TextInput
+                                        style={styles.smallInput}
+                                        value={isSelected.durationMinutes}
+                                        keyboardType="number-pad"
+                                        onChangeText={(val) => updateParlorService(svcName, 'durationMinutes', val)}
+                                      />
+                                    </View>
+                                  )}
+                                </View>
+
+                                {/* Live percentage conversion preview */}
+                                {(() => {
+                                  const orig = parseFloat(isSelected.price || "0");
+                                  const disc = parseFloat(isSelected.discountAmount || "0");
+                                  const final = Math.max(0, orig - disc);
+                                  const pct = orig > 0 && disc > 0 ? Math.round((disc / orig) * 100) : 0;
+                                  return (
+                                    <View style={{ backgroundColor: "#f0fdf4", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, marginTop: 4, width: "100%", borderWidth: 1, borderColor: "#bbf7d0", flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                                      <Text style={{ fontSize: 12, color: "#166534", fontWeight: "700" }}>
+                                        Final Price: ₹{final}
+                                      </Text>
+                                      {pct > 0 ? (
+                                        <View style={{ backgroundColor: "#dcfce7", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                          <Text style={{ fontSize: 11, color: "#15803d", fontWeight: "800" }}>{pct}% OFF</Text>
+                                        </View>
+                                      ) : (
+                                        <Text style={{ fontSize: 11, color: "#64748b" }}>No Discount</Text>
+                                      )}
+                                    </View>
+                                  );
+                                })()}
                               </View>
                             )}
                           </View>
@@ -1273,7 +1425,7 @@ export function BarberDashboardScreen() {
                     onChangeText={setCustomServiceName}
                   />
                 </View>
-                <View style={{ flexDirection: "row", gap: 12 }}>
+                <View style={{ flexDirection: "row", gap: 10, marginTop: 8 }}>
                   <View style={[styles.inputGroup, { flex: 1 }]}>
                     <Text style={styles.inputLabel}>Price (₹)</Text>
                     <TextInput
@@ -1282,6 +1434,17 @@ export function BarberDashboardScreen() {
                       keyboardType="number-pad"
                       onChangeText={setCustomServicePrice}
                       placeholder="500"
+                    />
+                  </View>
+                  <View style={[styles.inputGroup, { flex: 1 }]}>
+                    <Text style={styles.inputLabel}>Discount (₹)</Text>
+                    <TextInput
+                      style={styles.smallInput}
+                      value={customServiceDiscount}
+                      keyboardType="number-pad"
+                      onChangeText={setCustomServiceDiscount}
+                      placeholder="0 (Optional)"
+                      placeholderTextColor="#94a3b8"
                     />
                   </View>
                   {!(form.categoryType === "Tailor" || user?.role === "tailor") && (
@@ -1297,13 +1460,81 @@ export function BarberDashboardScreen() {
                     </View>
                   )}
                 </View>
-                <Pressable style={[styles.primarySolidBtn, { marginTop: 10 }]} onPress={handleAddCustomServiceDirect}>
-                  <Text style={styles.primarySolidBtnText}>Add Custom Service</Text>
+
+                {/* Custom Service Live Calculation */}
+                {(() => {
+                  const orig = parseFloat(customServicePrice || "0");
+                  const disc = parseFloat(customServiceDiscount || "0");
+                  const final = Math.max(0, orig - disc);
+                  const pct = orig > 0 && disc > 0 ? Math.round((disc / orig) * 100) : 0;
+                  return (
+                    <View style={{ backgroundColor: "#f0fdf4", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, marginTop: 8, borderWidth: 1, borderColor: "#bbf7d0", flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                      <Text style={{ fontSize: 12, color: "#166534", fontWeight: "700" }}>
+                        Final Price: ₹{final}
+                      </Text>
+                      {pct > 0 ? (
+                        <View style={{ backgroundColor: "#dcfce7", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                          <Text style={{ fontSize: 11, color: "#15803d", fontWeight: "800" }}>{pct}% OFF</Text>
+                        </View>
+                      ) : (
+                        <Text style={{ fontSize: 11, color: "#64748b" }}>No Discount</Text>
+                      )}
+                    </View>
+                  );
+                })()}
+
+                {/* Custom Service Image Picker */}
+                <View style={{ marginTop: 10 }}>
+                  <Text style={styles.inputLabel}>Service Photo (Optional)</Text>
+                  {customServiceImage ? (
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 4 }}>
+                      <Image source={{ uri: customServiceImage }} style={{ width: 50, height: 50, borderRadius: 10 }} />
+                      <Pressable onPress={() => setCustomServiceImage(null)} style={{ padding: 8, backgroundColor: "#fee2e2", borderRadius: 8 }}>
+                        <Ionicons name="trash-outline" size={16} color="#ef4444" />
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <Pressable
+                      style={{ flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#f1f5f9", padding: 12, borderRadius: 10, marginTop: 4, borderWidth: 1, borderColor: "#e2e8f0", borderStyle: "dashed" }}
+                      onPress={() => {
+                        promptServiceImagePicker((uri) => {
+                          setCustomServiceImage(uri);
+                        });
+                      }}
+                    >
+                      <Ionicons name="camera-outline" size={20} color="#6d28d9" />
+                      <Text style={{ fontSize: 13, color: "#6d28d9", fontWeight: "700" }}>+ Add Service Photo (Optional)</Text>
+                    </Pressable>
+                  )}
+                </View>
+
+                <Pressable
+                  style={[styles.primarySolidBtn, { marginTop: 14 }]}
+                  onPress={handleAddCustomServiceDirect}
+                  disabled={customServiceSubmitting}
+                >
+                  {customServiceSubmitting ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <Text style={styles.primarySolidBtnText}>Add Custom Service</Text>
+                  )}
                 </Pressable>
               </View>
 
-              <Pressable style={[styles.primarySolidBtn, { backgroundColor: "#16a34a", marginTop: 20 }]} onPress={handleSaveParlorServices}>
-                <Text style={styles.primarySolidBtnText}>Save Selected Services</Text>
+              <Pressable
+                style={[
+                  styles.primarySolidBtn,
+                  { backgroundColor: "#16a34a", marginTop: 20 },
+                  savingParlorServices && { opacity: 0.6 }
+                ]}
+                onPress={handleSaveParlorServices}
+                disabled={savingParlorServices}
+              >
+                {savingParlorServices ? (
+                  <ActivityIndicator color="#ffffff" />
+                ) : (
+                  <Text style={styles.primarySolidBtnText}>Save Selected Services</Text>
+                )}
               </Pressable>
             </ScrollView>
           </View>
@@ -1318,7 +1549,14 @@ const styles = StyleSheet.create({
   mainContainer: { flex: 1, backgroundColor: "#f8fafc" },
   centered: { flex: 1, justifyContent: "center", alignItems: "center" },
 
-  headerTitleContainer: { paddingHorizontal: 20, paddingTop: 0, paddingBottom: 4 },
+  headerTitleContainer: {
+    paddingHorizontal: 20,
+    paddingTop: 0,
+    paddingBottom: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   headerTitleText: { fontSize: 28, fontWeight: "900", color: "#0f172a" },
 
   segmentedControl: {
@@ -1360,6 +1598,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   svcHeader: { flexDirection: "row", alignItems: "center", padding: 16 },
+  svcThumbImage: { width: 44, height: 44, borderRadius: 12, backgroundColor: "#f1f5f9" },
   svcIconWrapper: { width: 44, height: 44, borderRadius: 12, backgroundColor: "#f3e8ff", justifyContent: "center", alignItems: "center" },
   svcInfo: { flex: 1, marginLeft: 14 },
   svcNameText: { fontSize: 16, fontWeight: "800", color: "#0f172a" },
@@ -1488,7 +1727,7 @@ const styles = StyleSheet.create({
   parlorServiceItem: { marginBottom: 16 },
   checkboxContainer: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
   parlorServiceName: { fontSize: 14, fontWeight: "500", color: "#334155", marginLeft: 8 },
-  parlorServiceInputs: { flexDirection: "row", marginLeft: 32, gap: 12 },
+  parlorServiceInputs: { marginLeft: 32, marginTop: 8, gap: 8 },
   inputGroup: { flex: 1 },
   inputLabel: { fontSize: 12, color: "#64748b", marginBottom: 4 },
   smallInput: { borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14, color: "#0f172a" },

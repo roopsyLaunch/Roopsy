@@ -36,7 +36,8 @@ export function ProfileScreen() {
   }
 
   const getInitial = () => {
-    return user?.name ? user.name.charAt(0).toUpperCase() : "U";
+    const clean = user?.name ? user.name.replace(/^(mr\.?|mrs\.?|ms\.?)\s+/i, "").trim() : "";
+    return clean ? clean.charAt(0).toUpperCase() : "U";
   };
 
   const [editModalVisible, setEditModalVisible] = React.useState(false);
@@ -46,9 +47,6 @@ export function ProfileScreen() {
   const [saving, setSaving] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
 
-  const [workingHoursModalVisible, setWorkingHoursModalVisible] = React.useState(false);
-  const [editWorkingHours, setEditWorkingHours] = React.useState({});
-  const [savingWH, setSavingWH] = React.useState(false);
 
   // New Modals State
   const [paymentModalVisible, setPaymentModalVisible] = React.useState(false);
@@ -90,7 +88,7 @@ export function ProfileScreen() {
   }, [refreshMe]);
 
   const openEditModal = () => {
-    setEditName(user?.name || "");
+    setEditName(user?.name ? user.name.replace(/^(mr\.?|mrs\.?|ms\.?)\s+/i, "").trim() : "");
     setEditPhone(user?.phone || "");
     setEditAvatar(user?.avatarUrl || "");
     setEditModalVisible(true);
@@ -140,50 +138,6 @@ export function ProfileScreen() {
     }
   };
 
-  const openWorkingHoursModal = () => {
-    const defaultWH = {
-      mon: { open: "09:00", close: "18:00", isClosed: false },
-      tue: { open: "09:00", close: "18:00", isClosed: false },
-      wed: { open: "09:00", close: "18:00", isClosed: false },
-      thu: { open: "09:00", close: "18:00", isClosed: false },
-      fri: { open: "09:00", close: "18:00", isClosed: false },
-      sat: { open: "09:00", close: "17:00", isClosed: false },
-      sun: { open: "10:00", close: "16:00", isClosed: false },
-    };
-    
-    setEditWorkingHours(barber?.workingHours ? JSON.parse(JSON.stringify(barber.workingHours)) : defaultWH);
-    setWorkingHoursModalVisible(true);
-  };
-
-  const saveWorkingHours = async () => {
-    setSavingWH(true);
-    try {
-      await api.patch("/barbers/me", {
-        workingHours: editWorkingHours,
-      });
-      if (refreshMe) await refreshMe();
-      alert("Working hours updated successfully!");
-      setWorkingHoursModalVisible(false);
-    } catch (e) {
-      console.error(e);
-      alert("Failed to update working hours");
-    } finally {
-      setSavingWH(false);
-    }
-  };
-
-  const updateDayHour = (day, field, value) => {
-    setEditWorkingHours(prev => {
-      const currentDay = prev[day] || { open: "09:00", close: "18:00", isClosed: false };
-      return {
-        ...prev,
-        [day]: {
-          ...currentDay,
-          [field]: value
-        }
-      };
-    });
-  };
 
   const openLocationModal = () => {
     setLocationModalVisible(true);
@@ -291,7 +245,7 @@ export function ProfileScreen() {
             )}
           </View>
           
-          <Text style={styles.userName}>{user?.name || "Premium User"}</Text>
+          <Text style={styles.userName}>{user?.name ? user.name.replace(/^(mr\.?|mrs\.?|ms\.?)\s+/i, "").trim() : "Premium User"}</Text>
           <Text style={styles.userEmail}>
             {user?.email && !user.email.startsWith("user_") && !user.email.endsWith("@roopsy.com")
               ? user.email
@@ -332,12 +286,6 @@ export function ProfileScreen() {
                 label="Location Settings" 
                 color="#0284c7" 
                 onPress={openLocationModal}
-              />
-              <OptionRow 
-                icon="time-outline" 
-                label="Working Hours" 
-                color="#f59e0b"
-                onPress={openWorkingHoursModal}
               />
             </View>
           </View>
@@ -468,67 +416,6 @@ export function ProfileScreen() {
         </View>
       </Modal>
 
-      {/* Working Hours Modal */}
-      <Modal visible={workingHoursModalVisible} transparent animationType="slide" onRequestClose={() => setWorkingHoursModalVisible(false)}>
-        <View style={styles.modalBg}>
-          <View style={[styles.modalSheet, { height: '80%' }]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Working Hours</Text>
-              <Pressable onPress={() => setWorkingHoursModalVisible(false)}>
-                <Ionicons name="close" size={28} color="#94a3b8" />
-              </Pressable>
-            </View>
-            <ScrollView contentContainerStyle={styles.modalScrollContent}>
-              {["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map(day => {
-                const dayData = editWorkingHours[day] || { open: "09:00", close: "18:00", isClosed: false };
-                return (
-                  <View key={day} style={{ marginBottom: 20, paddingBottom: 15, borderBottomWidth: 1, borderBottomColor: "#f1f5f9" }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                      <Text style={[styles.inputLabel, { marginBottom: 0, fontSize: 16 }]}>{day}</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                        <Text style={{ marginRight: 8, color: "#64748b" }}>Closed</Text>
-                        <Switch 
-                          value={dayData.isClosed} 
-                          onValueChange={(val) => updateDayHour(day, 'isClosed', val)}
-                          trackColor={{ false: "#cbd5e1", true: "#ef4444" }}
-                          thumbColor="#fff"
-                        />
-                      </View>
-                    </View>
-                    {!dayData.isClosed && (
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                        <View style={{ flex: 1, marginRight: 10 }}>
-                          <Text style={styles.inputLabel}>Open (HH:MM AM/PM)</Text>
-                          <TextInput 
-                            style={[styles.inputBox, { marginBottom: 0 }]} 
-                            value={dayData.open} 
-                            onChangeText={(val) => updateDayHour(day, 'open', val)}
-                            placeholder="09:00 AM"
-                            maxLength={8}
-                          />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.inputLabel}>Close (HH:MM AM/PM)</Text>
-                          <TextInput 
-                            style={[styles.inputBox, { marginBottom: 0 }]} 
-                            value={dayData.close} 
-                            onChangeText={(val) => updateDayHour(day, 'close', val)}
-                            placeholder="06:00 PM"
-                            maxLength={8}
-                          />
-                        </View>
-                      </View>
-                    )}
-                  </View>
-                );
-              })}
-              <Pressable style={styles.saveBtn} onPress={saveWorkingHours} disabled={savingWH}>
-                {savingWH ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Save Working Hours</Text>}
-              </Pressable>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
 
       {/* Payment Methods Modal */}
       <Modal visible={paymentModalVisible} transparent animationType="slide" onRequestClose={() => setPaymentModalVisible(false)}>

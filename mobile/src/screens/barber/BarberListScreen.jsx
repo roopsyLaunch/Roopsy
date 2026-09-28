@@ -1,11 +1,11 @@
 import React, { useState, useCallback, useEffect } from "react";
-import { View, Text, FlatList, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl, TextInput, ScrollView, Dimensions } from "react-native";
+import { View, Text, FlatList, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl, TextInput, ScrollView, Dimensions, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
 import { api } from "../../api/client";
-
-import { Alert } from "react-native";
 import { getCurrentGPSLocation } from "../../services/locationService";
 import { LinearGradient } from "expo-linear-gradient";
+import { NotificationBell } from "../../components/NotificationModal";
 
 const { width } = Dimensions.get("window");
 const FALLBACK_IMAGE = "https://images.unsplash.com/photo-1585747860715-2ba37e788b70?w=500&auto=format&fit=crop&q=80";
@@ -46,6 +46,12 @@ export function BarberListScreen({ navigation }) {
   useEffect(() => {
     load().finally(() => setLoading(false));
   }, [load]);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -111,10 +117,7 @@ export function BarberListScreen({ navigation }) {
             <Text style={styles.headerSubtitle}>Find & book the best barber near you</Text>
           </View>
         </View>
-        <Pressable style={styles.notifBtn}>
-          <Ionicons name="notifications-outline" size={24} color="#0f172a" />
-          <View style={styles.notifBadge} />
-        </Pressable>
+        <NotificationBell style={styles.notifBtn} size={24} color="#0f172a" badgeColor="#2563eb" />
       </View>
     </View>
   );
@@ -274,11 +277,14 @@ export function BarberListScreen({ navigation }) {
                   <View style={styles.cardHeader}>
                     <View style={styles.shopNameRow}>
                       <Text style={styles.shopName} numberOfLines={1}>{item.shopName || "Barber Shop"}</Text>
-                      <Ionicons name="checkmark-circle" size={16} color="#2563eb" style={{ marginLeft: 4 }} />
+                      <Ionicons name="checkmark-circle" size={16} color="#2563eb" style={{ marginLeft: 4, flexShrink: 0 }} />
                     </View>
-                    <Text style={[styles.openText, !item.isShopOpen && styles.closedText]}>
-                      {item.isShopOpen ? "Open Now" : "Closed"}
-                    </Text>
+                    <View style={[styles.statusBadge, !item.isShopOpen && styles.statusBadgeClosed]}>
+                      <View style={[styles.statusDot, !item.isShopOpen && styles.statusDotClosed]} />
+                      <Text style={[styles.openText, !item.isShopOpen && styles.closedText]}>
+                        {item.isShopOpen ? "Open Now" : "Closed"}
+                      </Text>
+                    </View>
                   </View>
                   
                   <Text style={styles.specialtyText} numberOfLines={1}>
@@ -392,11 +398,15 @@ const styles = StyleSheet.create({
   card: { flexDirection: "row", marginHorizontal: 20, backgroundColor: "#ffffff", borderRadius: 16, marginBottom: 16, padding: 12, borderWidth: 1, borderColor: "#f1f5f9", shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.03, shadowRadius: 8, elevation: 1 },
   cardImage: { width: 100, height: 120, borderRadius: 12, backgroundColor: "#f1f5f9" },
   cardInfo: { flex: 1, marginLeft: 16, justifyContent: "space-between" },
-  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
-  shopNameRow: { flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 },
-  shopName: { fontSize: 16, fontWeight: "800", color: "#0f172a" },
-  openText: { fontSize: 11, fontWeight: "700", color: "#16a34a" },
-  closedText: { color: "#ef4444" },
+  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  shopNameRow: { flexDirection: "row", alignItems: "center", flex: 1, flexShrink: 1, marginRight: 6 },
+  shopName: { fontSize: 15, fontWeight: "800", color: "#0f172a", flexShrink: 1 },
+  statusBadge: { flexDirection: "row", alignItems: "center", backgroundColor: "#dcfce7", paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, flexShrink: 0, gap: 4 },
+  statusBadgeClosed: { backgroundColor: "#fee2e2" },
+  statusDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#16a34a" },
+  statusDotClosed: { backgroundColor: "#ef4444" },
+  openText: { fontSize: 10, fontWeight: "700", color: "#15803d" },
+  closedText: { color: "#b91c1c" },
   specialtyText: { fontSize: 13, color: "#475569", marginTop: 4 },
   
   ratingRow: { flexDirection: "row", alignItems: "center", marginTop: 6 },

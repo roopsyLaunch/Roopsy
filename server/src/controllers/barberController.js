@@ -4,37 +4,12 @@ const Service = require("../models/Service");
 const Booking = require("../models/Booking");
 const { buildSeats } = require("../utils/barberSeats");
 const { haversineDistance } = require("../utils/distance");
-
-function calculateIsShopOpen(b) {
-  if (b.autoShopStatus && b.dailyOpenTime && b.dailyCloseTime) {
-    try {
-      const formatter = new Intl.DateTimeFormat('en-US', {
-        timeZone: 'Asia/Kolkata',
-        hour12: false,
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-      const parts = formatter.formatToParts(new Date());
-      let hour = parts.find(p => p.type === 'hour').value;
-      const minute = parts.find(p => p.type === 'minute').value;
-      if (hour === '24') hour = '00';
-      const currentTime = `${hour}:${minute}`;
-      
-      // Handle cases where close time is past midnight (e.g., open 21:00, close 02:00)
-      if (b.dailyOpenTime > b.dailyCloseTime) {
-        return currentTime >= b.dailyOpenTime || currentTime <= b.dailyCloseTime;
-      }
-      return currentTime >= b.dailyOpenTime && currentTime <= b.dailyCloseTime;
-    } catch (e) {
-      console.error("Time calc error", e);
-    }
-  }
-  return b.isShopOpen;
-}
+const { calculateIsShopOpen } = require("../utils/time");
 
 function publicBarberCard(b) {
   return {
     id: b._id,
+    userId: b.userId ? (b.userId._id || b.userId) : null,
     shopName: b.shopName,
     businessCategory: b.businessCategory,
     ownerName: b.ownerName,
@@ -411,18 +386,9 @@ async function updateMine(req, res) {
     barber.lunchTime = { ...cur, ...p.lunchTime };
   }
 
-  // Auto-approve logic removed. Admin must approve.
   if (p.workingHours !== undefined) {
-    if (!barber.workingHours) barber.workingHours = {};
-    for (const [day, data] of Object.entries(p.workingHours)) {
-      if (barber.workingHours[day]) {
-        barber.workingHours[day].open = data.open;
-        barber.workingHours[day].close = data.close;
-        barber.workingHours[day].isClosed = data.isClosed;
-      } else {
-        barber.workingHours[day] = { open: data.open, close: data.close, isClosed: data.isClosed };
-      }
-    }
+    const { normalizeWorkingHours } = require("../utils/time");
+    barber.workingHours = normalizeWorkingHours(p.workingHours, barber.dailyOpenTime || "09:00", barber.dailyCloseTime || "21:00");
     barber.markModified('workingHours');
   }
   if (p.aadhaarLast4 !== undefined) barber.aadhaarLast4 = p.aadhaarLast4;
@@ -433,11 +399,18 @@ async function updateMine(req, res) {
   if (p.maxAdvanceBookingDays !== undefined) {
     barber.maxAdvanceBookingDays = p.maxAdvanceBookingDays;
   }
+  barber.isShopOpen = calculateIsShopOpen(barber);
   await barber.save();
   
   const io = req.app.get("io");
   if (io) {
     io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: barber.seats });
+    io.emit("shopStatusUpdated", {
+      barberId: barber._id.toString(),
+      shopId: barber._id.toString(),
+      isShopOpen: barber.isShopOpen,
+      shopName: barber.shopName
+    });
   }
 
   res.json({ barber: ownerBarberDetail(barber) });

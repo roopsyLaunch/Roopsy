@@ -1,8 +1,12 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { View, Text, FlatList, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl, TextInput, ScrollView, Dimensions, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
 import { api } from "../../api/client";
+import { getSocket } from "../../api/socket";
 import { LinearGradient } from "expo-linear-gradient";
+import { NotificationBell } from "../../components/NotificationModal";
+import { isTailorShopOpen } from "../../services/shopStatusService";
 
 const { width } = Dimensions.get("window");
 const FALLBACK_IMAGE = "https://images.unsplash.com/photo-1598522325754-046dd13ac1c0?w=500&auto=format&fit=crop&q=80";
@@ -23,7 +27,7 @@ export function TailorListScreen({ navigation }) {
     { label: "All Shops", icon: "grid-outline" },
     { label: "Top Rated", icon: "star-outline" },
     { label: "Open Now", icon: "time-outline" },
-    { label: "Filter", icon: "options-outline" }
+    { label: "Near Me", icon: "navigate-outline" },
   ];
 
   const load = useCallback(async () => {
@@ -34,7 +38,12 @@ export function TailorListScreen({ navigation }) {
         params.lng = gpsCoords.lng;
       }
       const res = await api.get("/tailors", { params });
-      setItems(res.data.tailors || []);
+      const raw = res.data.tailors || [];
+      const withStatus = raw.map((t) => ({
+        ...t,
+        isShopOpen: isTailorShopOpen(t),
+      }));
+      setItems(withStatus);
     } catch (err) {
       console.error("TailorListScreen load error:", err);
     }
@@ -43,6 +52,35 @@ export function TailorListScreen({ navigation }) {
   useEffect(() => {
     load().finally(() => setLoading(false));
   }, [load]);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
+
+  // Real-time shop status updates
+  useEffect(() => {
+    const socket = getSocket();
+    const handleStatusUpdate = (data) => {
+      if (data && (data.tailorId || data.shopId)) {
+        const id = String(data.tailorId || data.shopId);
+        setItems((prev) =>
+          prev.map((t) => {
+            if (String(t._id || t.id) === id) {
+              const updated = { ...t, ...data, isShopOpen: Boolean(data.isShopOpen) };
+              return { ...updated, isShopOpen: isTailorShopOpen(updated) };
+            }
+            return t;
+          })
+        );
+      }
+    };
+    socket.on("shopStatusUpdated", handleStatusUpdate);
+    return () => {
+      socket.off("shopStatusUpdated", handleStatusUpdate);
+    };
+  }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -77,7 +115,7 @@ export function TailorListScreen({ navigation }) {
     
     let matchesCategory = true;
     if (selectedCategory === "Open Now") {
-      matchesCategory = tailor.isShopOpen;
+      matchesCategory = isTailorShopOpen(tailor);
     } else if (selectedCategory === "Top Rated") {
       const ratingVal = parseFloat(tailor.averageRating || tailor.rating || 4.5);
       matchesCategory = ratingVal >= 4.0;
@@ -108,10 +146,7 @@ export function TailorListScreen({ navigation }) {
             <Text style={styles.headerSubtitle}>Find & book the best tailor near you</Text>
           </View>
         </View>
-        <Pressable style={styles.notifBtn}>
-          <Ionicons name="notifications-outline" size={24} color="#0f172a" />
-          <View style={styles.notifBadge} />
-        </Pressable>
+        <NotificationBell style={styles.notifBtn} size={24} color="#0f172a" badgeColor="#0d9488" />
       </View>
     </View>
   );
@@ -258,6 +293,8 @@ export function TailorListScreen({ navigation }) {
             const displayServices = services.slice(0, 3);
             const extraServicesCount = services.length > 3 ? services.length - 3 : 0;
 
+            const isOpen = isTailorShopOpen(item);
+
             return (
               <Pressable
                 style={styles.card}
@@ -269,11 +306,14 @@ export function TailorListScreen({ navigation }) {
                   <View style={styles.cardHeader}>
                     <View style={styles.shopNameRow}>
                       <Text style={styles.shopName} numberOfLines={1}>{item.shopName}</Text>
-                      <Ionicons name="checkmark-circle" size={16} color="#0d9488" style={{ marginLeft: 4 }} />
+                      <Ionicons name="checkmark-circle" size={16} color="#0d9488" style={{ marginLeft: 4, flexShrink: 0 }} />
                     </View>
-                    <Text style={[styles.openText, !item.isShopOpen && styles.closedText]}>
-                      {item.isShopOpen ? "Open Now" : "Closed"}
-                    </Text>
+                    <View style={[styles.statusBadge, !isOpen && styles.statusBadgeClosed]}>
+                      <View style={[styles.statusDot, !isOpen && styles.statusDotClosed]} />
+                      <Text style={[styles.openText, !isOpen && styles.closedText]}>
+                        {isOpen ? "Open Now" : "Closed"}
+                      </Text>
+                    </View>
                   </View>
                   
                   <Text style={styles.specialtyText} numberOfLines={1}>
@@ -387,11 +427,15 @@ const styles = StyleSheet.create({
   card: { flexDirection: "row", marginHorizontal: 20, backgroundColor: "#ffffff", borderRadius: 16, marginBottom: 16, padding: 12, borderWidth: 1, borderColor: "#f1f5f9", shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.03, shadowRadius: 8, elevation: 1 },
   cardImage: { width: 100, height: 120, borderRadius: 12, backgroundColor: "#f1f5f9" },
   cardInfo: { flex: 1, marginLeft: 16, justifyContent: "space-between" },
-  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
-  shopNameRow: { flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 },
-  shopName: { fontSize: 16, fontWeight: "800", color: "#0f172a" },
-  openText: { fontSize: 11, fontWeight: "700", color: "#16a34a" },
-  closedText: { color: "#ef4444" },
+  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  shopNameRow: { flexDirection: "row", alignItems: "center", flex: 1, flexShrink: 1, marginRight: 6 },
+  shopName: { fontSize: 15, fontWeight: "800", color: "#0f172a", flexShrink: 1 },
+  statusBadge: { flexDirection: "row", alignItems: "center", backgroundColor: "#dcfce7", paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, flexShrink: 0, gap: 4 },
+  statusBadgeClosed: { backgroundColor: "#fee2e2" },
+  statusDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#16a34a" },
+  statusDotClosed: { backgroundColor: "#ef4444" },
+  openText: { fontSize: 10, fontWeight: "700", color: "#15803d" },
+  closedText: { color: "#b91c1c" },
   specialtyText: { fontSize: 13, color: "#475569", marginTop: 4 },
   
   ratingRow: { flexDirection: "row", alignItems: "center", marginTop: 6 },

@@ -35,26 +35,26 @@ export function PartnerGalleryScreen({ navigation, route }) {
 
   const StepIndicator = () => (
     <View style={styles.stepContainer}>
-      {[1, 2, 3, 4, 5, 6].map((step) => (
+      {[1, 2, 3, 4].map((step) => (
         <React.Fragment key={step}>
           <View
             style={[
               styles.stepCircle,
-              step === 4 && styles.stepActive,
-              step < 4 && styles.stepDone,
+              step === 3 && styles.stepActive,
+              step < 3 && styles.stepDone,
             ]}
           >
             <Text
               style={[
                 styles.stepText,
-                step === 4 && styles.stepTextActive,
-                step < 4 && styles.stepTextActive,
+                step === 3 && styles.stepTextActive,
+                step < 3 && styles.stepTextActive,
               ]}
             >
               {step}
             </Text>
           </View>
-          {step < 6 && <View style={[styles.stepLine, step < 4 && styles.stepLineDone]} />}
+          {step < 4 && <View style={[styles.stepLine, step < 3 && styles.stepLineDone]} />}
         </React.Fragment>
       ))}
     </View>

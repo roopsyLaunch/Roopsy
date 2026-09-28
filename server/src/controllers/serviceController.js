@@ -69,6 +69,33 @@ async function create(req, res) {
   if (barber.userId.toString() !== req.user._id.toString() && req.user.role !== "admin") {
     return res.status(403).json({ error: "You can only add services to your own profile" });
   }
+
+  const cleanName = parsed.data.name.trim();
+  const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  // Prevent duplicate service for same barber with same name and same isHomeService flag
+  const existing = await Service.findOne({
+    barberId: parsed.data.barberId,
+    name: { $regex: new RegExp(`^${escapeRegex(cleanName)}$`, "i") },
+    isHomeService: !!parsed.data.isHomeService,
+  });
+  if (existing) {
+    Object.assign(existing, parsed.data);
+    await existing.save();
+
+    // Clean up any historical duplicate entries with same name
+    await Service.deleteMany({
+      barberId: parsed.data.barberId,
+      name: { $regex: new RegExp(`^${escapeRegex(cleanName)}$`, "i") },
+      isHomeService: !!parsed.data.isHomeService,
+      _id: { $ne: existing._id },
+    });
+
+    return res.status(200).json({
+      service: mapService(existing),
+    });
+  }
+
   const s = await Service.create(parsed.data);
   res.status(201).json({
     service: mapService(s),

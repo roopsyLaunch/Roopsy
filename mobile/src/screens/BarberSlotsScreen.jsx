@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "../api/client";
 import { getSocket } from "../api/socket";
 import { useAuth } from "../context/AuthContext";
+import { isTailorShopOpen } from "../services/shopStatusService";
 
 export function BarberSlotsScreen({ navigation, isNested }) {
   const insets = useSafeAreaInsets();
@@ -307,14 +308,18 @@ export function BarberSlotsScreen({ navigation, isNested }) {
                 <View style={styles.shopStatusInfo}>
                   <Text style={styles.shopStatusTitle}>Tailor Shop Open Status</Text>
                   <Text style={styles.shopStatusSub}>
-                    {tailor?.isShopOpen ? "Open for customer bookings" : "Currently closed"}
+                    {isTailorShopOpen(tailor) ? "Open for customer bookings" : "Currently closed"}
                   </Text>
                 </View>
                 <Switch
-                  value={!!tailor?.isShopOpen}
+                  value={isTailorShopOpen(tailor)}
                   onValueChange={async (val) => {
                     try {
-                      await api.patch("/tailors/me", { isShopOpen: val });
+                      await api.patch("/tailors/me", { 
+                        isShopOpen: val, 
+                        offersShopService: val, 
+                        autoShopStatus: false 
+                      });
                       await refreshMe();
                     } catch(e) {
                       alert("Failed to update status");
@@ -342,7 +347,10 @@ export function BarberSlotsScreen({ navigation, isNested }) {
                   value={tailor?.offersShopService !== false}
                   onValueChange={async (val) => {
                     try {
-                      await api.patch("/tailors/me", { offersShopService: val });
+                      await api.patch("/tailors/me", { 
+                        offersShopService: val,
+                        isShopOpen: val ? true : (tailor?.offersHomeService ? tailor?.isShopOpen : false)
+                      });
                       await refreshMe();
                     } catch(e) {
                       alert("Failed to update shop service status");

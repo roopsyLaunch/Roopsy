@@ -21,9 +21,15 @@ import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
 import { getApiBaseUrl } from "../config";
 
-// Enable LayoutAnimation for Android
-if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
+// Enable LayoutAnimation for Android (Old Architecture only)
+if (
+  Platform.OS === "android" &&
+  UIManager.setLayoutAnimationEnabledExperimental &&
+  !global?.nativeFabricUIManager
+) {
+  try {
+    UIManager.setLayoutAnimationEnabledExperimental(true);
+  } catch (e) {}
 }
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");

@@ -37,6 +37,15 @@ export function BarberProfileEditScreen({ navigation }) {
           setGallery(tailor.gallery || []);
           setOffersHomeService(tailor.offersHomeService || false);
           setHomeServiceFee(tailor.visitFee ? String(tailor.visitFee) : "0");
+          setWorkingHours(tailor.workingHours || {
+            mon: { open: "09:00", close: "18:00", isClosed: false },
+            tue: { open: "09:00", close: "18:00", isClosed: false },
+            wed: { open: "09:00", close: "18:00", isClosed: false },
+            thu: { open: "09:00", close: "18:00", isClosed: false },
+            fri: { open: "09:00", close: "18:00", isClosed: false },
+            sat: { open: "09:00", close: "17:00", isClosed: false },
+            sun: { open: "10:00", close: "16:00", isClosed: false },
+          });
           setLoading(false);
           return;
         }
@@ -153,6 +162,7 @@ export function BarberProfileEditScreen({ navigation }) {
           gallery: finalGallery,
           offersHomeService,
           visitFee: Number(homeServiceFee) || 0,
+          workingHours,
         });
       } else {
         await api.patch("/barbers/me", {
@@ -316,52 +326,6 @@ export function BarberProfileEditScreen({ navigation }) {
             )}
           </View>
 
-        <Text style={styles.sectionTitle}>Working Hours</Text>
-        <View style={{ backgroundColor: "#ffffff", borderRadius: 12, padding: 16, borderWidth: 1, borderColor: "#e2e8f0", marginBottom: 20 }}>
-          {["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map(day => {
-            const dayData = workingHours[day] || { open: "09:00", close: "18:00", isClosed: false };
-            return (
-              <View key={day} style={{ marginBottom: 15, paddingBottom: 15, borderBottomWidth: 1, borderBottomColor: "#f1f5f9" }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                  <Text style={[styles.label, { marginBottom: 0, fontSize: 15, textTransform: 'uppercase' }]}>{day}</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={{ marginRight: 8, color: "#64748b", fontSize: 12 }}>Closed</Text>
-                    <Switch 
-                      value={dayData.isClosed} 
-                      onValueChange={(val) => updateDayHour(day, 'isClosed', val)}
-                      trackColor={{ false: "#cbd5e1", true: "#ef4444" }}
-                      thumbColor="#fff"
-                    />
-                  </View>
-                </View>
-                {!dayData.isClosed && (
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                    <View style={{ flex: 1, marginRight: 10 }}>
-                      <Text style={[styles.label, { fontSize: 11 }]}>Open (HH:MM AM/PM)</Text>
-                      <TextInput 
-                        style={[styles.input, { padding: 10, fontSize: 14 }]} 
-                        value={dayData.open} 
-                        onChangeText={(val) => updateDayHour(day, 'open', val)}
-                        placeholder="09:00 AM"
-                        maxLength={8}
-                      />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.label, { fontSize: 11 }]}>Close (HH:MM AM/PM)</Text>
-                      <TextInput 
-                        style={[styles.input, { padding: 10, fontSize: 14 }]} 
-                        value={dayData.close} 
-                        onChangeText={(val) => updateDayHour(day, 'close', val)}
-                        placeholder="06:00 PM"
-                        maxLength={8}
-                      />
-                    </View>
-                  </View>
-                )}
-              </View>
-            );
-          })}
-        </View>
 
         <Text style={styles.sectionTitle}>Staff Members</Text>
         <View style={{ backgroundColor: "#ffffff", borderRadius: 12, padding: 16, borderWidth: 1, borderColor: "#e2e8f0", marginBottom: 20 }}>

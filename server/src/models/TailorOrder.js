@@ -10,6 +10,8 @@ const tailorOrderSchema = new mongoose.Schema(
         name: { type: String, required: true },
         price: { type: Number, required: true },
         quantity: { type: Number, default: 1 },
+        serviceMode: { type: String, default: "shop" },
+        completionTime: { type: String, default: "" },
       }
     ],
     totalAmount: { type: Number, required: true },
@@ -61,6 +63,7 @@ const tailorOrderSchema = new mongoose.Schema(
     fittingDate: { type: Date, required: false },
     deliveryDate: { type: Date, required: false },
     estimatedDays: { type: Number, default: 3 },
+    completionTime: { type: String, default: "" },
     
     // ERP Phase 1: Full production pipeline
     status: {

@@ -17,7 +17,9 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import { api } from "../api/client";
+import { getSocket } from "../api/socket";
 import { useAuth } from "../context/AuthContext";
 import LocationPickerModal from "../components/LocationPickerModal";
 import { getCurrentGPSLocation } from "../services/locationService";
@@ -91,6 +93,11 @@ export function HomeScreen({ navigation, route }) {
   const [selectionMode, setSelectionMode] = useState(false);
 
   const fetchNotifications = useCallback(async () => {
+    if (!user?._id && !user?.id) {
+      setNotifications([]);
+      setUnreadCount(0);
+      return;
+    }
     try {
       const res = await api.get("/auth/notifications");
       setNotifications(res.data.notifications || []);
@@ -98,7 +105,7 @@ export function HomeScreen({ navigation, route }) {
     } catch (err) {
       console.error("fetchNotifications error", err);
     }
-  }, []);
+  }, [user?._id, user?.id]);
 
   const openNotifModal = async () => {
     setSelectionMode(false);
@@ -106,7 +113,20 @@ export function HomeScreen({ navigation, route }) {
     setNotifModalVisible(true);
     setLoadingNotifs(true);
     try {
-      await fetchNotifications();
+      const res = await api.get("/auth/notifications");
+      const fetched = res.data.notifications || [];
+      const count = res.data.unreadCount || 0;
+      setNotifications(fetched);
+      if (count > 0) {
+        // Automatically mark all as read upon opening & viewing
+        await api.patch("/auth/notifications/read-all");
+        setUnreadCount(0);
+        setNotifications(fetched.map((n) => ({ ...n, isRead: true })));
+      } else {
+        setUnreadCount(0);
+      }
+    } catch (err) {
+      console.error("openNotifModal error", err);
     } finally {
       setLoadingNotifs(false);
     }
@@ -120,6 +140,32 @@ export function HomeScreen({ navigation, route }) {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const clearAllNotifications = () => {
+    if (notifications.length === 0) return;
+    Alert.alert(
+      "Clear All Notifications",
+      "Are you sure you want to permanently delete all notifications?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear All",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await api.delete("/auth/notifications");
+              setNotifications([]);
+              setUnreadCount(0);
+              setSelectedNotifIds([]);
+              setSelectionMode(false);
+            } catch (err) {
+              console.error("Failed to clear notifications", err);
+            }
+          }
+        }
+      ]
+    );
   };
 
   const toggleSelectNotification = (notifId) => {
@@ -152,7 +198,7 @@ export function HomeScreen({ navigation, route }) {
   const confirmDeleteNotification = (notifId) => {
     Alert.alert(
       "Delete Notification",
-      "Are you sure you want to remove this notification?",
+      "Are you sure you want to permanently delete this notification?",
       [
         { text: "Cancel", style: "cancel" },
         { 
@@ -167,7 +213,7 @@ export function HomeScreen({ navigation, route }) {
                 return isUnread ? Math.max(0, prev - 1) : prev;
               });
             } catch (err) {
-              console.error(err);
+              console.error("Delete notification error", err);
             }
           }
         }
@@ -179,7 +225,7 @@ export function HomeScreen({ navigation, route }) {
     if (selectedNotifIds.length === 0) return;
     Alert.alert(
       "Delete Selected",
-      `Are you sure you want to delete ${selectedNotifIds.length} selected notifications?`,
+      `Are you sure you want to permanently delete ${selectedNotifIds.length} selected notification${selectedNotifIds.length > 1 ? "s" : ""}?`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -244,6 +290,54 @@ export function HomeScreen({ navigation, route }) {
       }
     })();
   }, [load, fetchNotifications]);
+
+  // Real-time shop status updates (live open/closed sync)
+  React.useEffect(() => {
+    const socket = getSocket();
+    const handleStatusUpdate = (data) => {
+      if (data && (data.shopId || data.barberId || data.tailorId)) {
+        const targetId = data.shopId || data.barberId || data.tailorId;
+        setItems((prev) =>
+          prev.map((item) =>
+            (item.id === targetId || item._id === targetId)
+              ? { ...item, isShopOpen: Boolean(data.isShopOpen) }
+              : item
+          )
+        );
+      }
+    };
+    socket.on("shopStatusUpdated", handleStatusUpdate);
+    return () => {
+      socket.off("shopStatusUpdated", handleStatusUpdate);
+    };
+  }, []);
+
+  // Real-time notification updates & room joining
+  React.useEffect(() => {
+    const socket = getSocket();
+    const uId = user?.id || user?._id;
+    if (uId) {
+      socket.emit("joinUserRoom", uId);
+    }
+    const handleNotif = () => {
+      fetchNotifications();
+    };
+    socket.on("notificationReceived", handleNotif);
+    socket.on("bookingUpdated", handleNotif);
+    socket.on("tailorOrderUpdated", handleNotif);
+    return () => {
+      if (uId) socket.emit("leaveUserRoom", uId);
+      socket.off("notificationReceived", handleNotif);
+      socket.off("bookingUpdated", handleNotif);
+      socket.off("tailorOrderUpdated", handleNotif);
+    };
+  }, [user?.id, user?._id, fetchNotifications]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchNotifications();
+    }, [fetchNotifications])
+  );
 
   React.useEffect(() => {
     (async () => {
@@ -358,8 +452,8 @@ export function HomeScreen({ navigation, route }) {
         <View style={styles.topBar}>
         <View style={styles.leftHeader}>
           <View style={styles.userInfoTop}>
-            <Text style={styles.greetTitle}>
-              Mr. {user?.name ? user.name.split(" ")[0] : "Hridesh"}
+            <Text style={styles.greetTitle} numberOfLines={1}>
+              {user?.name ? user.name.replace(/^(mr\.?|mrs\.?|ms\.?)\s+/i, "").trim() : "User"}
             </Text>
           </View>
         </View>
@@ -522,9 +616,10 @@ export function HomeScreen({ navigation, route }) {
               style={styles.carouselCard}
               onPress={() => {
                 const cat = (item.businessCategory || "").toLowerCase();
+                const sName = (item.shopName || "").toLowerCase();
                 if (cat.includes("tailor") || cat.includes("stitching") || cat.includes("center")) {
                   navigation.navigate("TailorDetail", { tailorId: item.id, shopName: item.shopName });
-                } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour")) {
+                } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour") || cat.includes("salon") || sName.includes("beauty") || sName.includes("salon") || sName.includes("parlor")) {
                   navigation.navigate("BeautyParlorDetail", { barberId: item.id, shopName: item.shopName });
                 } else {
                   navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName });
@@ -576,9 +671,10 @@ export function HomeScreen({ navigation, route }) {
                   style={[styles.bookBtn, { backgroundColor: accentColor }]}
                   onPress={() => {
                     const cat = (item.businessCategory || "").toLowerCase();
+                    const sName = (item.shopName || "").toLowerCase();
                     if (cat.includes("tailor") || cat.includes("stitching") || cat.includes("center")) {
                       navigation.navigate("TailorDetail", { tailorId: item.id, shopName: item.shopName });
-                    } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour")) {
+                    } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour") || cat.includes("salon") || sName.includes("beauty") || sName.includes("salon") || sName.includes("parlor")) {
                       navigation.navigate("BeautyParlorDetail", { barberId: item.id, shopName: item.shopName });
                     } else {
                       navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName });
@@ -672,9 +768,10 @@ export function HomeScreen({ navigation, route }) {
             style={styles.salonRowCard}
             onPress={() => {
               const cat = (item.businessCategory || "").toLowerCase();
+              const sName = (item.shopName || "").toLowerCase();
               if (cat.includes("tailor") || cat.includes("stitching") || cat.includes("center")) {
                 navigation.navigate("TailorDetail", { tailorId: item.id, shopName: item.shopName });
-              } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour")) {
+              } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour") || cat.includes("salon") || sName.includes("beauty") || sName.includes("salon") || sName.includes("parlor")) {
                 navigation.navigate("BeautyParlorDetail", { barberId: item.id, shopName: item.shopName });
               } else {
                 navigation.navigate("BarberDetail", { barberId: item.id, shopName: item.shopName });
@@ -798,9 +895,20 @@ export function HomeScreen({ navigation, route }) {
                     <Ionicons name="notifications" size={22} color="#7c3aed" style={{ marginRight: 8 }} />
                     <Text style={styles.modalSheetTitle}>Notifications 🔔</Text>
                   </View>
-                  <Pressable onPress={() => setNotifModalVisible(false)}>
-                    <Ionicons name="close-circle" size={26} color="#94a3b8" />
-                  </Pressable>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                    {notifications.length > 0 && (
+                      <Pressable 
+                        onPress={clearAllNotifications} 
+                        style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#fee2e2", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}
+                      >
+                        <Ionicons name="trash-outline" size={13} color="#dc2626" style={{ marginRight: 4 }} />
+                        <Text style={{ fontSize: 11, fontWeight: "700", color: "#dc2626" }}>Clear All</Text>
+                      </Pressable>
+                    )}
+                    <Pressable onPress={() => setNotifModalVisible(false)}>
+                      <Ionicons name="close-circle" size={26} color="#94a3b8" />
+                    </Pressable>
+                  </View>
                 </View>
               )}
             </View>
@@ -862,13 +970,22 @@ export function HomeScreen({ navigation, route }) {
                       
                       <View style={{ flex: 1 }}>
                         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                          <Text style={{ fontSize: 13, fontWeight: "800", color: "#0f172a", flex: 1 }}>{item.title}</Text>
+                          <Text style={{ fontSize: 13, fontWeight: "800", color: "#0f172a", flex: 1, marginRight: 8 }}>{item.title}</Text>
                           <Text style={{ fontSize: 10, color: "#94a3b8", fontWeight: "600" }}>
                             {new Date(item.createdAt).toLocaleDateString([], { month: "short", day: "numeric" })}
                           </Text>
                         </View>
                         <Text style={{ fontSize: 12, color: "#475569", lineHeight: 17 }}>{item.body}</Text>
                       </View>
+                      {!selectionMode && (
+                        <Pressable 
+                          onPress={() => confirmDeleteNotification(item._id)} 
+                          hitSlop={8}
+                          style={{ padding: 6, marginLeft: 8 }}
+                        >
+                          <Ionicons name="trash-outline" size={17} color="#94a3b8" />
+                        </Pressable>
+                      )}
                     </Pressable>
                   );
                 })
