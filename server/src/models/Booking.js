@@ -52,6 +52,9 @@ const bookingSchema = new mongoose.Schema(
     reviewComment: { type: String, default: "" },
     isRated: { type: Boolean, default: false },
     ratedAt: { type: Date },
+    // Turn reminder notification
+    isTurnReminderSent: { type: Boolean, default: false },
+    turnReminderSentAt: { type: Date },
   },
   { timestamps: true }
 );

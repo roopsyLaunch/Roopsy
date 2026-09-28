@@ -73,10 +73,14 @@ export function NotificationModal({ visible, onClose, onUnreadCountChange }) {
       fetchNotifications();
     };
     socket.on("notification", handleUpdate);
+    socket.on("notificationReceived", handleUpdate);
+    socket.on("turnUpcoming", handleUpdate);
     socket.on("bookingUpdated", handleUpdate);
     socket.on("queueUpdated", handleUpdate);
     return () => {
       socket.off("notification", handleUpdate);
+      socket.off("notificationReceived", handleUpdate);
+      socket.off("turnUpcoming", handleUpdate);
       socket.off("bookingUpdated", handleUpdate);
       socket.off("queueUpdated", handleUpdate);
     };
@@ -494,10 +498,14 @@ export function NotificationBell({
       fetchUnread();
     };
     socket.on("notification", handleUpdate);
+    socket.on("notificationReceived", handleUpdate);
+    socket.on("turnUpcoming", handleUpdate);
     socket.on("bookingUpdated", handleUpdate);
     socket.on("queueUpdated", handleUpdate);
     return () => {
       socket.off("notification", handleUpdate);
+      socket.off("notificationReceived", handleUpdate);
+      socket.off("turnUpcoming", handleUpdate);
       socket.off("bookingUpdated", handleUpdate);
       socket.off("queueUpdated", handleUpdate);
     };

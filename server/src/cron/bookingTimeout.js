@@ -97,45 +97,179 @@ function startBookingTimeoutCron(app) {
         }
       }
 
-      // Reminder Notifications
-      const reminderWindow30Start = new Date(now.getTime() + 30 * 60000);
-      const reminderWindow30End = new Date(now.getTime() + 31 * 60000);
-      
-      const reminderWindow10Start = new Date(now.getTime() + 10 * 60000);
-      const reminderWindow10End = new Date(now.getTime() + 11 * 60000);
+      // ==========================================
+      // 10-Minute Upcoming Turn Notifications
+      // For Barber & Beauty Parlour styling chairs
+      // ==========================================
 
-      const upcomingBookings = await Booking.find({
+      // Condition A: Customer is currently in-progress on a chair (e.g. 50 mins into a 60 min session)
+      // When 10 minutes or fewer remain on the active service, notify the NEXT customer waiting for that same chair.
+      const activeChairBookings = await Booking.find({
+        status: "in-progress",
+        isHomeService: false,
+        seatIndex: { $ne: null }
+      }).populate("barberId");
+
+      for (const curBooking of activeChairBookings) {
+        if (!curBooking.barberId) continue;
+        const barberId = curBooking.barberId._id || curBooking.barberId;
+        const startTimeRef = curBooking.startedAt || curBooking.startTime;
+        if (!startTimeRef) continue;
+
+        const duration = curBooking.expectedDuration || Math.round((new Date(curBooking.endTime).getTime() - new Date(curBooking.startTime).getTime()) / 60000) || 30;
+        const elapsedMinutes = (now.getTime() - new Date(startTimeRef).getTime()) / 60000;
+        const remainingMinutes = duration - elapsedMinutes;
+
+        // When around 10 minutes remain on the active service (e.g., 50 minutes of 60 have completed)
+        if (remainingMinutes <= 10.5 && remainingMinutes >= -15) {
+          // Find the next customer in queue or booked on this exact chair
+          const nextBooking = await Booking.findOne({
+            barberId: barberId,
+            seatIndex: curBooking.seatIndex,
+            status: { $in: ["pending", "confirmed"] },
+            isHomeService: false,
+            isTurnReminderSent: { $ne: true },
+            _id: { $ne: curBooking._id }
+          })
+            .sort({ startTime: 1 })
+            .populate("barberId")
+            .populate("customerId");
+
+          if (nextBooking && nextBooking.customerId) {
+            const custId = (nextBooking.customerId._id || nextBooking.customerId).toString();
+            const shopName = nextBooking.barberId?.shopName || curBooking.barberId?.shopName || "the salon";
+            const chairLabel = nextBooking.seatLabel || (nextBooking.seatIndex !== undefined && nextBooking.seatIndex !== null ? `Chair ${nextBooking.seatIndex + 1}` : "Styling Chair");
+
+            const title = "Your Turn is in 10 Minutes! ⏰";
+            const body = `Get ready! The current service on ${chairLabel} at ${shopName} is almost complete (approx. 10 minutes remaining). Please arrive at the shop on time for your turn.`;
+
+            // 1. Save Notification (automatically sends Expo Push notification)
+            await Notification.create({
+              userId: nextBooking.customerId._id || nextBooking.customerId,
+              title,
+              body,
+              type: "reminder",
+              data: {
+                bookingId: nextBooking._id,
+                type: "turn_reminder",
+                shopName,
+                seatLabel: chairLabel
+              }
+            });
+
+            // 2. Mark reminder sent to avoid duplicate alerts
+            nextBooking.isTurnReminderSent = true;
+            nextBooking.turnReminderSentAt = now;
+            await nextBooking.save();
+
+            // 3. Emit real-time socket events
+            const io = app.get("io");
+            if (io) {
+              io.to(`user_${custId}`).emit("turnUpcoming", {
+                bookingId: nextBooking._id,
+                shopName,
+                seatLabel: chairLabel,
+                message: body
+              });
+              io.to(`user_${custId}`).emit("notificationReceived");
+              io.to(`user_${custId}`).emit("bookingUpdated", { bookingId: nextBooking._id });
+            }
+
+            console.log(`[Cron] Sent 10-min turn reminder to Customer ${custId} for booking ${nextBooking._id} on ${chairLabel} (${shopName})`);
+          }
+        }
+      }
+
+      // Condition B: Scheduled appointment approaching within 10 minutes
+      const tenMinutesFromNow = new Date(now.getTime() + 10.5 * 60000);
+      const scheduledTurnBookings = await Booking.find({
+        status: { $in: ["pending", "confirmed"] },
+        isHomeService: false,
+        isTurnReminderSent: { $ne: true },
+        startTime: {
+          $gte: new Date(now.getTime() - 2 * 60000), // from 2 mins ago
+          $lte: tenMinutesFromNow                   // up to 10.5 minutes ahead
+        }
+      })
+        .populate("barberId")
+        .populate("customerId");
+
+      for (const b of scheduledTurnBookings) {
+        if (!b.customerId) continue;
+        const custId = (b.customerId._id || b.customerId).toString();
+        const shopName = b.barberId?.shopName || "the salon";
+        const chairLabel = b.seatLabel || (b.seatIndex !== undefined && b.seatIndex !== null ? `Chair ${b.seatIndex + 1}` : "Styling Chair");
+        const minutesLeft = Math.max(1, Math.round((new Date(b.startTime).getTime() - now.getTime()) / 60000));
+
+        const title = "Your Turn is in 10 Minutes! ⏰";
+        const body = `Your appointment for ${chairLabel} at ${shopName} starts in approximately ${minutesLeft} minute${minutesLeft === 1 ? "" : "s"}. Please arrive at the shop now.`;
+
+        // 1. Save Notification (automatically sends Expo Push notification)
+        await Notification.create({
+          userId: b.customerId._id || b.customerId,
+          title,
+          body,
+          type: "reminder",
+          data: {
+            bookingId: b._id,
+            type: "turn_reminder",
+            shopName,
+            seatLabel: chairLabel
+          }
+        });
+
+        // 2. Mark reminder sent
+        b.isTurnReminderSent = true;
+        b.turnReminderSentAt = now;
+        await b.save();
+
+        // 3. Emit real-time socket events
+        const io = app.get("io");
+        if (io) {
+          io.to(`user_${custId}`).emit("turnUpcoming", {
+            bookingId: b._id,
+            shopName,
+            seatLabel: chairLabel,
+            message: body
+          });
+          io.to(`user_${custId}`).emit("notificationReceived");
+          io.to(`user_${custId}`).emit("bookingUpdated", { bookingId: b._id });
+        }
+
+        console.log(`[Cron] Sent scheduled 10-min turn reminder to Customer ${custId} for booking ${b._id}`);
+      }
+
+      // 30-Minute Advance Courtesy Reminder
+      const reminderWindow30Start = new Date(now.getTime() + 29 * 60000);
+      const reminderWindow30End = new Date(now.getTime() + 31 * 60000);
+
+      const upcoming30MinBookings = await Booking.find({
         status: "confirmed",
-        $or: [
-           { startTime: { $gte: reminderWindow30Start, $lt: reminderWindow30End } },
-           { startTime: { $gte: reminderWindow10Start, $lt: reminderWindow10End } }
-        ]
+        startTime: { $gte: reminderWindow30Start, $lt: reminderWindow30End }
       });
 
-      for (const b of upcomingBookings) {
-         if (!b.customerId) continue;
-         const diff = b.startTime.getTime() - now.getTime();
-         const is30 = diff > 20 * 60000;
-         const title = is30 ? "Booking in 30 minutes" : "Booking in 10 minutes";
-         const body = is30 ? "Your salon appointment starts in 30 minutes. Be ready!" : "Your salon appointment starts in 10 minutes. Please arrive now.";
-         
-         const existingReminder = await Notification.findOne({
-            userId: b.customerId,
-            "data.bookingId": b._id,
-            title
-         });
-         if (existingReminder) continue;
+      for (const b of upcoming30MinBookings) {
+        if (!b.customerId) continue;
+        const title = "Booking in 30 minutes";
+        const body = "Your salon appointment starts in 30 minutes. Please be ready!";
+        
+        const existingReminder = await Notification.findOne({
+          userId: b.customerId,
+          "data.bookingId": b._id,
+          title
+        });
+        if (existingReminder) continue;
 
-         await Notification.create({
-            userId: b.customerId,
-            title,
-            body,
-            type: "reminder",
-            data: { bookingId: b._id }
-         });
+        await Notification.create({
+          userId: b.customerId,
+          title,
+          body,
+          type: "reminder",
+          data: { bookingId: b._id }
+        });
 
-         const io = app.get("io");
-         if (io) io.to(`user_${b.customerId.toString()}`).emit("notificationReceived");
+        const io = app.get("io");
+        if (io) io.to(`user_${b.customerId.toString()}`).emit("notificationReceived");
       }
 
       // Seat Auto-Release (Manual Blocks)
@@ -159,7 +293,7 @@ function startBookingTimeoutCron(app) {
     } catch (err) {
       console.error("[Cron] Error:", err);
     }
-  }, 60000); 
+  }, 30000); 
 }
 
 function stopBookingTimeoutCron() {

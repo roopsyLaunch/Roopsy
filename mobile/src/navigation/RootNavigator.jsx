@@ -253,6 +253,7 @@ function ProfileStackNavigator() {
 
 function MainTabs() {
   const { user, barber, tailor } = useAuth();
+  const navigation = useNavigation();
   const isAdmin = user?.role === "admin";
   const isApprovedBarber = user?.role === "barber" && barber?.approvalStatus === "approved";
   const isPendingBarber = user?.role === "barber" && barber?.approvalStatus === "pending";
@@ -276,16 +277,37 @@ function MainTabs() {
            Alert.alert("Booking Confirmed", "Your booking has been confirmed.");
         }
       };
+      const handleTurnUpcoming = (data) => {
+        Alert.alert(
+          "Your Turn is in 10 Minutes! ⏰",
+          data?.message || `Your turn is in 10 minutes at ${data?.shopName || "the salon"}. Please arrive at the shop on time!`,
+          [
+            { text: "Dismiss", style: "cancel" },
+            {
+              text: "View Booking",
+              onPress: () => {
+                try {
+                  navigation.navigate("MyBookings");
+                } catch (e) {
+                  console.log("Navigation error:", e);
+                }
+              },
+            },
+          ]
+        );
+      };
 
       socket.on("newBooking", handleNewBooking);
       socket.on("bookingUpdated", handleBookingUpdated);
+      socket.on("turnUpcoming", handleTurnUpcoming);
 
       return () => {
         socket.off("newBooking", handleNewBooking);
         socket.off("bookingUpdated", handleBookingUpdated);
+        socket.off("turnUpcoming", handleTurnUpcoming);
       };
     }
-  }, [user, isPartner]);
+  }, [user, isPartner, navigation]);
 
   // Pending barber should be able to configure their shop
   // We'll show a warning banner in their Dashboard instead of blocking them completely.
