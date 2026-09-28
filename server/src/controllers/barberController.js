@@ -211,7 +211,11 @@ async function getById(req, res) {
     return res.status(404).json({ error: "Barber not found" });
   }
   const services = await Service.find({ barberId: barber._id }).sort({ category: 1, name: 1 });
+  const { enrichBarberSeats } = require("../utils/barberSeats");
+  const enrichedSeats = await enrichBarberSeats(barber);
   const card = publicBarberCard(barber);
+  card.seats = enrichedSeats;
+  card.availableSeats = enrichedSeats.filter((s) => s.isAvailable).length;
   res.json({
     barber: card,
     services: services.map((s) => ({

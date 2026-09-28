@@ -237,30 +237,15 @@ async function create(req, res) {
       finalSeatIndex = seat.index;
       finalSeatLabel = seat.label || `Chair ${seatIndex + 1}`;
       
-      // Calculate when this specific chair will be free
-      const existingForChair = await Booking.find({
-        barberId: barber._id,
-        seatIndex: seatIndex,
-        status: { $in: ["confirmed", "arrived", "in-progress", "pending"] },
-        startTime: { $lt: new Date(start.getTime() + 24 * 3600000) },
-        endTime: { $gt: new Date(start.getTime() - 24 * 3600000) }
-      }).sort({ startTime: 1 });
-
-      let chairFreeTime = new Date();
-      for (const b of existingForChair) {
-        let bEnd = new Date(b.endTime);
-        if (b.status === "in-progress" && b.startedAt) {
-          bEnd = new Date(new Date(b.startedAt).getTime() + b.expectedDuration * 60000);
-          if (bEnd < new Date()) bEnd = new Date(Date.now() + 5 * 60000); 
-        }
-        bEnd = new Date(bEnd.getTime() + 5 * 60000); // 5 min buffer
-        if (bEnd > chairFreeTime) chairFreeTime = bEnd;
-      }
-      
-      if (chairFreeTime > finalStartTime) {
-        finalStartTime = chairFreeTime;
-        finalEndTime = new Date(finalStartTime.getTime() + totalMinutes * 60000);
-      }
+      const { calculateNextChairFreeTime } = require("../utils/barberSeats");
+      const { startTime: nextStart, endTime: nextEnd } = await calculateNextChairFreeTime(
+        barber,
+        seatIndex,
+        start,
+        totalMinutes
+      );
+      finalStartTime = nextStart;
+      finalEndTime = nextEnd;
     }
   }
 
@@ -329,11 +314,22 @@ async function create(req, res) {
     }
   }
 
-
+  // Update barber's live seats with latest occupancy & waiting times
+  const { enrichBarberSeats } = require("../utils/barberSeats");
+  const enrichedSeats = await enrichBarberSeats(barber);
+  barber.seats = enrichedSeats.map(s => ({
+    index: s.index,
+    label: s.label,
+    isAvailable: s.isAvailable,
+    status: s.status,
+    occupiedUntil: s.occupiedUntil ? new Date(s.occupiedUntil) : null,
+  }));
+  await barber.save();
 
   const io = req.app.get("io");
   if (io) {
-    io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: barber.seats });
+    io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: enrichedSeats });
+    io.emit(`shop_${barber._id.toString()}_seats`, { seats: enrichedSeats });
     io.to(`barber_${barber._id.toString()}`).emit("queueUpdated");
   }
 
@@ -576,6 +572,23 @@ async function patch(req, res) {
       });
     } catch (e) {
       console.error("Failed to create booking update notification", e);
+    }
+  }
+
+  if (barber) {
+    const { enrichBarberSeats } = require("../utils/barberSeats");
+    const enrichedSeats = await enrichBarberSeats(barber);
+    barber.seats = enrichedSeats.map(s => ({
+      index: s.index,
+      label: s.label,
+      isAvailable: s.isAvailable,
+      status: s.status,
+      occupiedUntil: s.occupiedUntil ? new Date(s.occupiedUntil) : null,
+    }));
+    await barber.save();
+    if (io) {
+      io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: enrichedSeats });
+      io.emit(`shop_${barber._id.toString()}_seats`, { seats: enrichedSeats });
     }
   }
 
@@ -1041,8 +1054,22 @@ async function verifyCompletionOtp(req, res) {
 
   const io = req.app.get("io");
   if (io) {
+    let enrichedSeats = barber ? barber.seats : [];
+    if (barber) {
+      const { enrichBarberSeats } = require("../utils/barberSeats");
+      enrichedSeats = await enrichBarberSeats(barber);
+      barber.seats = enrichedSeats.map(s => ({
+        index: s.index,
+        label: s.label,
+        isAvailable: s.isAvailable,
+        status: s.status,
+        occupiedUntil: s.occupiedUntil ? new Date(s.occupiedUntil) : null,
+      }));
+      await barber.save();
+    }
     io.to(`barber_${barber._id.toString()}`).emit("queueUpdated");
-    io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: barber.seats });
+    io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: enrichedSeats });
+    io.emit(`shop_${barber._id.toString()}_seats`, { seats: enrichedSeats });
     if (booking.customerId) {
       io.to(`user_${booking.customerId.toString()}`).emit("bookingUpdated", {
         bookingId: booking._id,
@@ -1216,9 +1243,21 @@ async function cancel(req, res) {
     if (booking.customerId) io.to(`user_${booking.customerId.toString()}`).emit("bookingUpdated", { bookingId: booking._id });
     const barber = await Barber.findById(booking.barberId);
     if(barber) {
+        const { enrichBarberSeats } = require("../utils/barberSeats");
+        const enrichedSeats = await enrichBarberSeats(barber);
+        barber.seats = enrichedSeats.map(s => ({
+          index: s.index,
+          label: s.label,
+          isAvailable: s.isAvailable,
+          status: s.status,
+          occupiedUntil: s.occupiedUntil ? new Date(s.occupiedUntil) : null,
+        }));
+        await barber.save();
+
         io.to(`user_${barber.userId.toString()}`).emit("bookingUpdated", { bookingId: booking._id });
         io.to(`barber_${barber._id.toString()}`).emit("queueUpdated");
-        io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: barber.seats });
+        io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: enrichedSeats });
+        io.emit(`shop_${barber._id.toString()}_seats`, { seats: enrichedSeats });
     }
   }
   res.json({ message: "Cancelled successfully", booking: formatBooking(booking) });

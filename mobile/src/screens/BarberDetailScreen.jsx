@@ -392,6 +392,10 @@ export function BarberDetailScreen({ route, navigation }) {
     if (!isHomeServiceSelected) {
       setSelectedSlot(null);
     }
+    if (!isHomeServiceSelected && liveSeats.length > 0 && selectedChairIndex === null) {
+      const firstAvail = liveSeats.find((s) => s.isAvailable !== false);
+      setSelectedChairIndex(firstAvail ? firstAvail.index : liveSeats[0].index);
+    }
     setConfirmModalVisible(true);
     if (isHomeServiceSelected) {
       autoFetchHomeServiceLocation();
@@ -474,7 +478,10 @@ export function BarberDetailScreen({ route, navigation }) {
       return;
     }
 
-    if (!selectedSlot && selectedETA === null && !isHomeServiceSelected) {
+    const chosenChair = liveSeats.find((s) => s.index === selectedChairIndex);
+    const isChairOccupied = !isHomeServiceSelected && isToday && chosenChair && !chosenChair.isAvailable;
+
+    if (!selectedSlot && selectedETA === null && !isHomeServiceSelected && !isChairOccupied) {
       Alert.alert("Time Selection Required", "Please select your estimated arrival time (ETA).");
       return;
     }
@@ -485,7 +492,10 @@ export function BarberDetailScreen({ route, navigation }) {
     }
 
     let startTimeIso;
-    if (selectedSlot) {
+    if (isChairOccupied) {
+      // Chair is occupied: start time is automatically when this chair becomes free!
+      startTimeIso = chosenChair.nextAvailableAt || chosenChair.occupiedUntil || new Date(Date.now() + (chosenChair.freeInMinutes || 15) * 60000).toISOString();
+    } else if (selectedSlot) {
       startTimeIso = selectedSlot;
     } else if (selectedETA !== null && !isHomeServiceSelected) {
       startTimeIso = new Date(Date.now() + selectedETA * 60000).toISOString();
@@ -507,7 +517,7 @@ export function BarberDetailScreen({ route, navigation }) {
         isHomeService: isHomeServiceSelected,
         homeServiceAddress: (homeAddress || "").trim() || undefined,
         homeServiceLocation: homeLocation || undefined,
-        customerETA: !isHomeServiceSelected && selectedETA !== null ? selectedETA : undefined,
+        customerETA: !isHomeServiceSelected && !isChairOccupied && selectedETA !== null ? selectedETA : undefined,
         seatIndex: !isHomeServiceSelected && selectedChairIndex !== null ? selectedChairIndex : undefined,
       };
 
@@ -528,9 +538,12 @@ export function BarberDetailScreen({ route, navigation }) {
       }
 
       setConfirmModalVisible(false);
+      const turnTimeFormatted = new Date(startTimeIso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
       Alert.alert(
         "Booking Confirmed 🎉",
-        "Your grooming appointment has been successfully scheduled! You can review details in the bookings panel.",
+        isChairOccupied
+          ? `Your appointment for Chair ${selectedChairIndex + 1} has been booked! Your turn will start around ${turnTimeFormatted}.`
+          : "Your grooming appointment has been successfully scheduled! You can review details in the bookings panel.",
         [
           {
             text: "View Bookings",
@@ -956,8 +969,12 @@ export function BarberDetailScreen({ route, navigation }) {
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 6 }}>
               {liveSeats.map((seat) => {
-                const available = seat.isAvailable;
+                const available = seat.isAvailable !== false;
                 const isChosen = selectedChairIndex === seat.index;
+                const freeInMins = seat.freeInMinutes || 0;
+                const nextTimeStr = seat.nextAvailableAt
+                  ? new Date(seat.nextAvailableAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
+                  : "";
                 return (
                   <Pressable
                     key={seat.index}
@@ -968,13 +985,18 @@ export function BarberDetailScreen({ route, navigation }) {
                       isChosen && styles.chairChosen,
                     ]}
                   >
-                    <Ionicons name="person" size={20} color={available ? "#16a34a" : "#ef4444"} />
-                    <Text style={[styles.chairLabel, { color: available ? "#16a34a" : "#ef4444" }]}>
+                    <Ionicons name="person" size={20} color={available ? "#16a34a" : "#ea580c"} />
+                    <Text style={[styles.chairLabel, { color: available ? "#16a34a" : "#ea580c" }]}>
                       {seat.label || `Chair ${seat.index + 1}`}
                     </Text>
-                    <Text style={[styles.chairStatusText, { color: available ? "#16a34a" : "#ef4444" }]}>
-                      {available ? "Available" : "Occupied"}
+                    <Text style={[styles.chairStatusText, { color: available ? "#16a34a" : "#ea580c" }]}>
+                      {available ? "Available" : `Free in ${freeInMins}m`}
                     </Text>
+                    {!available && nextTimeStr ? (
+                      <Text style={styles.chairFreeAtSubText}>
+                        at {nextTimeStr}
+                      </Text>
+                    ) : null}
                   </Pressable>
                 );
               })}
@@ -1079,30 +1101,102 @@ export function BarberDetailScreen({ route, navigation }) {
                 </View>
               </View>
 
-              {/* Arrival ETA selection for Shop Visit on today */}
-              {!isHomeServiceSelected && isToday && (
+              {/* Chair selection - Placed right after Today's banner */}
+              {!isHomeServiceSelected && liveSeats.length > 0 && (
                 <View style={{ marginBottom: 16 }}>
-                  <Text style={styles.modalSectionLabel}>Immediate Walk-in (ETA)</Text>
-                  <View style={styles.etaOptionsRow}>
-                    {[5, 10, 15, 30].map((mins) => {
-                      const isActive = selectedETA === mins;
+                  <Text style={styles.modalSectionLabel}>Choose Styling Chair</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 4 }}>
+                    {liveSeats.map((seat) => {
+                      const isChosen = selectedChairIndex === seat.index;
+                      const isAvail = seat.isAvailable !== false;
+                      const freeInMins = seat.freeInMinutes || 0;
                       return (
                         <Pressable
-                          key={mins}
-                          style={[styles.etaBtn, isActive && styles.etaBtnActive]}
-                          onPress={() => {
-                            setSelectedETA(mins);
-                            setSelectedSlot(null);
-                            setCustomETA("");
-                          }}
+                          key={seat.index}
+                          style={[
+                            styles.modalChairOption,
+                            isChosen && styles.modalChairOptionActive,
+                            !isAvail && !isChosen && { borderColor: "#fdba74", backgroundColor: "#fff7ed" }
+                          ]}
+                          onPress={() => setSelectedChairIndex(seat.index)}
                         >
-                          <Text style={[styles.etaBtnText, isActive && styles.etaBtnTextActive]}>{mins} mins</Text>
+                          <Ionicons
+                            name="person"
+                            size={16}
+                            color={isChosen ? "#ffffff" : isAvail ? "#16a34a" : "#ea580c"}
+                          />
+                          <View style={{ marginLeft: 6 }}>
+                            <Text style={[styles.modalChairOptionText, isChosen && { color: "#ffffff" }]}>
+                              {seat.label || `Chair ${seat.index + 1}`}
+                            </Text>
+                            <Text style={[
+                              styles.modalChairTag,
+                              isChosen ? { color: "#e0e7ff" } : isAvail ? { color: "#16a34a" } : { color: "#ea580c" }
+                            ]}>
+                              {isAvail ? "Vacant" : `Free in ${freeInMins}m`}
+                            </Text>
+                          </View>
                         </Pressable>
                       );
                     })}
-                  </View>
+                  </ScrollView>
                 </View>
               )}
+
+              {/* Arrival ETA selection for Shop Visit on today - ONLY if chair is available */}
+              {!isHomeServiceSelected && isToday && (() => {
+                const modalChosenChair = liveSeats.find((s) => s.index === selectedChairIndex);
+                const isOccupied = modalChosenChair && modalChosenChair.isAvailable === false;
+                if (isOccupied) {
+                  const freeTimeFormatted = modalChosenChair.nextAvailableAt || modalChosenChair.occupiedUntil
+                    ? new Date(modalChosenChair.nextAvailableAt || modalChosenChair.occupiedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
+                    : "";
+                  return (
+                    <View style={styles.chairQueueNoticeBox}>
+                      <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
+                        <Ionicons name="time" size={20} color="#ea580c" style={{ marginRight: 8 }} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.chairQueueNoticeTitle}>
+                            Chair {modalChosenChair.index + 1} is currently booked
+                          </Text>
+                          <Text style={styles.chairQueueNoticeSub}>
+                            Next turn in ~{modalChosenChair.freeInMinutes || 15} mins {freeTimeFormatted ? `(around ${freeTimeFormatted})` : ""}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={styles.chairQueueBadge}>
+                        <Ionicons name="checkmark-circle" size={14} color="#16a34a" style={{ marginRight: 4 }} />
+                        <Text style={styles.chairQueueBadgeText}>
+                          Your turn will automatically start when the chair is free. No arrival ETA needed!
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                }
+                return (
+                  <View style={{ marginBottom: 16 }}>
+                    <Text style={styles.modalSectionLabel}>Immediate Walk-in (ETA)</Text>
+                    <View style={styles.etaOptionsRow}>
+                      {[5, 10, 15, 30].map((mins) => {
+                        const isActive = selectedETA === mins;
+                        return (
+                          <Pressable
+                            key={mins}
+                            style={[styles.etaBtn, isActive && styles.etaBtnActive]}
+                            onPress={() => {
+                              setSelectedETA(mins);
+                              setSelectedSlot(null);
+                              setCustomETA("");
+                            }}
+                          >
+                            <Text style={[styles.etaBtnText, isActive && styles.etaBtnTextActive]}>{mins} mins</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
+                );
+              })()}
 
               {/* Time Slots Section (Only for Home Service) */}
               {isHomeServiceSelected && (
@@ -1148,34 +1242,6 @@ export function BarberDetailScreen({ route, navigation }) {
                       </Text>
                     </View>
                   )}
-                </View>
-              )}
-
-              {/* Chair selection */}
-              {!isHomeServiceSelected && liveSeats.length > 0 && (
-                <View style={{ marginBottom: 16 }}>
-                  <Text style={styles.modalSectionLabel}>Choose Styling Chair</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                    {liveSeats.map((seat) => {
-                      const isChosen = selectedChairIndex === seat.index;
-                      return (
-                        <Pressable
-                          key={seat.index}
-                          style={[styles.modalChairOption, isChosen && styles.modalChairOptionActive]}
-                          onPress={() => setSelectedChairIndex(seat.index)}
-                        >
-                          <Ionicons
-                            name="person"
-                            size={16}
-                            color={isChosen ? "#ffffff" : seat.isAvailable ? "#16a34a" : "#ef4444"}
-                          />
-                          <Text style={[styles.modalChairOptionText, isChosen && { color: "#ffffff" }]}>
-                            {seat.label || `Chair ${seat.index + 1}`}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </ScrollView>
                 </View>
               )}
 
@@ -2144,6 +2210,53 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#334155",
     marginLeft: 6,
+  },
+  modalChairTag: {
+    fontSize: 10,
+    fontWeight: "600",
+    marginTop: 1,
+  },
+  chairFreeAtSubText: {
+    fontSize: 9,
+    fontWeight: "600",
+    color: "#ea580c",
+    marginTop: 1,
+  },
+  chairQueueNoticeBox: {
+    backgroundColor: "#fff7ed",
+    borderWidth: 1,
+    borderColor: "#fed7aa",
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+  },
+  chairQueueNoticeTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#9a3412",
+  },
+  chairQueueNoticeSub: {
+    fontSize: 11,
+    color: "#c2410c",
+    marginTop: 2,
+    fontWeight: "500",
+  },
+  chairQueueBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginTop: 8,
+  },
+  chairQueueBadgeText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#065f46",
+    flex: 1,
   },
   addressInput: {
     borderWidth: 1,
