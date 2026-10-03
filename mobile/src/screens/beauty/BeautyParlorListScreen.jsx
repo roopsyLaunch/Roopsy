@@ -23,9 +23,10 @@ export function BeautyParlorListScreen({ navigation }) {
 
   const CATEGORIES = [
     { label: "All Shops", icon: "grid-outline" },
+    { label: "Home Service", icon: "home-outline" },
+    { label: "Shop Visit", icon: "storefront-outline" },
     { label: "Top Rated", icon: "star-outline" },
     { label: "Open Now", icon: "time-outline" },
-    { label: "Filter", icon: "options-outline" }
   ];
 
   const load = useCallback(async () => {
@@ -89,6 +90,10 @@ export function BeautyParlorListScreen({ navigation }) {
     } else if (selectedCategory === "Top Rated") {
       const ratingVal = parseFloat(parlor.averageRating || parlor.rating || 4.5);
       matchesCategory = ratingVal >= 4.0;
+    } else if (selectedCategory === "Home Service") {
+      matchesCategory = Boolean(parlor.offersHomeService);
+    } else if (selectedCategory === "Shop Visit") {
+      matchesCategory = parlor.offersShopService !== false;
     }
     return matchesSearch && matchesCategory;
   });
@@ -310,6 +315,26 @@ export function BeautyParlorListScreen({ navigation }) {
                     </Text>
                   </View>
 
+                  {/* Delivery Mode Badges: Shop Visit & Home Service */}
+                  <View style={styles.deliveryModeRow}>
+                    <View style={styles.deliveryModePillShop}>
+                      <Ionicons name="storefront-outline" size={11} color="#2563eb" style={{ marginRight: 3 }} />
+                      <Text style={styles.deliveryModePillShopText}>Shop Visit</Text>
+                    </View>
+                    {item.offersHomeService ? (
+                      <View style={styles.deliveryModePillHome}>
+                        <Ionicons name="home" size={11} color="#db2777" style={{ marginRight: 3 }} />
+                        <Text style={styles.deliveryModePillHomeText}>
+                          Home Service{Number(item.homeServiceFee) > 0 ? ` (+₹${item.homeServiceFee})` : ""}
+                        </Text>
+                      </View>
+                    ) : (
+                      <View style={styles.deliveryModePillShopOnly}>
+                        <Text style={styles.deliveryModePillShopOnlyText}>In-Shop Only</Text>
+                      </View>
+                    )}
+                  </View>
+
                   <View style={styles.cardFooter}>
                     <View style={styles.serviceTags}>
                       {displayServices.map((srv, idx) => (
@@ -413,6 +438,14 @@ const styles = StyleSheet.create({
   ratingCount: { color: "#64748b", fontWeight: "400" },
   dot: { color: "#cbd5e1", marginHorizontal: 8 },
   distanceText: { fontSize: 13, color: "#64748b" },
+
+  deliveryModeRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 6 },
+  deliveryModePillShop: { flexDirection: "row", alignItems: "center", backgroundColor: "#eff6ff", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, borderWidth: 1, borderColor: "#dbeafe" },
+  deliveryModePillShopText: { fontSize: 10, fontWeight: "700", color: "#2563eb" },
+  deliveryModePillHome: { flexDirection: "row", alignItems: "center", backgroundColor: "#fdf2f8", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, borderWidth: 1, borderColor: "#fbcfe8" },
+  deliveryModePillHomeText: { fontSize: 10, fontWeight: "700", color: "#db2777" },
+  deliveryModePillShopOnly: { backgroundColor: "#f1f5f9", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  deliveryModePillShopOnlyText: { fontSize: 10, fontWeight: "600", color: "#64748b" },
 
   cardFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginTop: 12 },
   serviceTags: { flexDirection: "row", flex: 1, flexWrap: "wrap", gap: 6, paddingRight: 8 },

@@ -1,4 +1,5 @@
 import * as Location from "expo-location";
+import { Alert, Linking, Platform } from "react-native";
 
 const NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org";
 
@@ -184,5 +185,63 @@ export async function getCurrentGPSLocation() {
   } catch (error) {
     console.error("Error getting GPS location:", error);
     throw error;
+  }
+}
+
+/**
+ * Opens turn-by-turn navigation or map location for a given address or coordinates.
+ * Opens Google Maps Navigation (directions) so shop partner can reach the customer easily.
+ * @param {string} address Text address
+ * @param {{ lat: number, lng: number } | null} location Coordinates object
+ * @param {string} [label] Optional location label
+ */
+export async function openMapForNavigation(address, location, label = "Customer Location") {
+  const hasCoords = location?.lat != null && location?.lng != null;
+  const hasAddr = typeof address === "string" && address.trim().length > 0;
+
+  if (!hasCoords && !hasAddr) {
+    Alert.alert("Address Missing", "No address or GPS coordinates available for navigation.");
+    return;
+  }
+
+  const destination = hasCoords
+    ? `${location.lat},${location.lng}`
+    : encodeURIComponent(address.trim());
+
+  // Universal Google Maps directions URL (works seamlessly across Android, iOS & Web)
+  const webDirectionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${destination}`;
+
+  // Native intent scheme for direct turn-by-turn driving navigation
+  let nativeUrl = "";
+  if (Platform.OS === "android") {
+    nativeUrl = hasCoords
+      ? `google.navigation:q=${location.lat},${location.lng}`
+      : `google.navigation:q=${destination}`;
+  } else if (Platform.OS === "ios") {
+    nativeUrl = hasCoords
+      ? `maps://?daddr=${location.lat},${location.lng}&q=${encodeURIComponent(label)}`
+      : `maps://?daddr=${destination}`;
+  }
+
+  if (nativeUrl) {
+    try {
+      const canOpen = await Linking.canOpenURL(nativeUrl);
+      if (canOpen) {
+        await Linking.openURL(nativeUrl);
+        return;
+      }
+    } catch (err) {
+      console.warn("Could not open native navigation URL, using web fallback:", err);
+    }
+  }
+
+  try {
+    await Linking.openURL(webDirectionsUrl);
+  } catch (err) {
+    // Final fallback to search query
+    const searchUrl = `https://www.google.com/maps/search/?api=1&query=${destination}`;
+    await Linking.openURL(searchUrl).catch(() => {
+      Alert.alert("Unable to Open Maps", "Could not launch map application on this device.");
+    });
   }
 }

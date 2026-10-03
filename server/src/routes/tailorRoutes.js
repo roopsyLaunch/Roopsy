@@ -21,7 +21,9 @@ const {
   cancelCustomerOrder,
   getTailorNotifications,
   getTailorServicesMe,
-  rateTailorOrder
+  rateTailorOrder,
+  uploadClothProof,
+  uploadDeliveryProof
 } = require("../controllers/tailorController");
 
 // Public routes
@@ -34,6 +36,7 @@ router.post("/register", authRequired, registerTailor); // Upgrades user to tail
 router.post("/orders", authRequired, createOrder);
 router.get("/me/orders/customer", authRequired, getCustomerOrders);
 router.patch("/orders/:id/cancel", authRequired, cancelCustomerOrder);
+router.patch("/orders/:id/cloth-proof", authRequired, uploadClothProof);
 router.post("/orders/:id/rate", authRequired, rateTailorOrder);
 
 // Tailor only routes
@@ -43,6 +46,7 @@ router.get("/me/services", authRequired, requireRole("tailor"), getTailorService
 router.get("/me/notifications", authRequired, requireRole("tailor"), getTailorNotifications);
 router.get("/orders/:id", authRequired, requireRole("tailor"), getOrderById);
 router.patch("/orders/:id/status", authRequired, requireRole("tailor"), updateOrderStatus);
+router.patch("/orders/:id/delivery-proof", authRequired, requireRole("tailor"), uploadDeliveryProof);
 router.post("/orders/:id/verify-otp", authRequired, requireRole("tailor"), verifyOrderOtp);
 router.post("/orders/:id/generate-delivery-otp", authRequired, requireRole("tailor"), generateDeliveryOtp);
 router.post("/orders/:id/verify-delivery-otp", authRequired, requireRole("tailor"), verifyDeliveryOtp);

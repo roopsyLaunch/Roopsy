@@ -1,12 +1,15 @@
 import React, { useState, useCallback } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable,
-  ActivityIndicator, Alert, TextInput, Modal
+  ActivityIndicator, Alert, TextInput, Modal, Image
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "../../api/client";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { openMapForNavigation } from "../../services/locationService";
+import { pickOrCaptureImage } from "../../services/imagePickerService";
+import { uploadImageAsync } from "../../api/upload";
 
 const STAGE_COLORS = {
   pending: "#f59e0b", accepted: "#3b82f6", declined: "#ef4444", cancelled: "#ef4444",
@@ -99,8 +102,54 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
   const [deliveryOtpInput, setDeliveryOtpInput] = useState("");
   const [generatingDeliveryOtp, setGeneratingDeliveryOtp] = useState(false);
   const [verifyingDeliveryOtp, setVerifyingDeliveryOtp] = useState(false);
+  const [deliveryProofUri, setDeliveryProofUri] = useState(null);
+  const [uploadingDeliveryProof, setUploadingDeliveryProof] = useState(false);
+  const [uploadingClothProof, setUploadingClothProof] = useState(false);
+
+  // Full-screen image preview state
+  const [previewImageModalVisible, setPreviewImageModalVisible] = useState(false);
+  const [previewImageUrl, setPreviewImageUrl] = useState("");
+  const [previewImageTitle, setPreviewImageTitle] = useState("");
+
+  const handleCaptureClothProof = async () => {
+    try {
+      const uri = await pickOrCaptureImage({
+        title: "Cloth Handover Photo 📸",
+        message: "Click or choose photo of the cloth received from customer:"
+      });
+      if (!uri) return;
+
+      setUploadingClothProof(true);
+      const uploadedUrl = await uploadImageAsync(uri);
+      if (!uploadedUrl) return Alert.alert("Error", "Could not upload image");
+
+      await api.patch(`/tailors/orders/${orderId}/cloth-proof`, {
+        clothProofImageUrl: uploadedUrl
+      });
+      await loadOrder();
+      Alert.alert("Photo Saved! 📸", "Cloth handover photo has been recorded.");
+    } catch (err) {
+      console.error(err);
+      Alert.alert("Error", "Could not save cloth photo.");
+    } finally {
+      setUploadingClothProof(false);
+    }
+  };
+
+  const handlePickDeliveryPhoto = async () => {
+    const uri = await pickOrCaptureImage({
+      title: "Finished Outfit Delivery Photo 📸",
+      message: "Click photo of the finished delivered outfit (डिलीवरी प्रमाण):"
+    });
+    if (uri) {
+      setDeliveryProofUri(uri);
+    }
+  };
 
   const handleVerifyOtp = async () => {
+    if (order?.status === "cancelled" || order?.status === "declined") {
+      return Alert.alert("Order Cancelled", "This order is cancelled. OTP verification cannot be performed.");
+    }
     if (!otpInput || otpInput.trim().length !== 4) {
       return Alert.alert("Required", "Please enter the 4-digit OTP code.");
     }
@@ -119,6 +168,9 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
   };
 
   const handleGenerateDeliveryOtp = async () => {
+    if (order?.status === "cancelled" || order?.status === "declined") {
+      return Alert.alert("Order Cancelled", "Cannot generate delivery OTP for a cancelled order.");
+    }
     setGeneratingDeliveryOtp(true);
     try {
       const res = await api.post(`/tailors/orders/${orderId}/generate-delivery-otp`);
@@ -133,13 +185,26 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
   };
 
   const handleVerifyDeliveryOtp = async () => {
+    if (order?.status === "cancelled" || order?.status === "declined") {
+      return Alert.alert("Order Cancelled", "This order is cancelled. Delivery OTP verification cannot be performed.");
+    }
     if (!deliveryOtpInput || deliveryOtpInput.trim().length !== 4) {
       return Alert.alert("Required", "Please enter the 4-digit Delivery OTP code.");
     }
     setVerifyingDeliveryOtp(true);
     try {
-      const res = await api.post(`/tailors/orders/${orderId}/verify-delivery-otp`, { otp: deliveryOtpInput });
+      let finalDeliveryPhotoUrl = order?.deliveryProofImageUrl || "";
+      if (deliveryProofUri) {
+        setUploadingDeliveryProof(true);
+        finalDeliveryPhotoUrl = await uploadImageAsync(deliveryProofUri);
+      }
+
+      const res = await api.post(`/tailors/orders/${orderId}/verify-delivery-otp`, {
+        otp: deliveryOtpInput,
+        deliveryProofImageUrl: finalDeliveryPhotoUrl
+      });
       setDeliveryOtpInput("");
+      setDeliveryProofUri(null);
       await loadOrder();
       Alert.alert("Order Completed! 🎉", res.data?.message || "Delivery OTP verified & order marked completed!");
     } catch (err) {
@@ -147,6 +212,7 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
       Alert.alert("Verification Failed", err?.response?.data?.error || "Invalid Delivery OTP code.");
     } finally {
       setVerifyingDeliveryOtp(false);
+      setUploadingDeliveryProof(false);
     }
   };
 
@@ -243,50 +309,131 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
           </View>
         ) : null}
 
-        {/* Initial OTP Verification Box */}
-        <Section title="Initial Booking OTP Verification" icon="shield-checkmark">
-          <View style={{ backgroundColor: order.isOtpVerified ? "#ecfdf5" : isExpired ? "#fef2f2" : "#fffbeb", padding: 14, borderRadius: 14, borderWidth: 1, borderColor: order.isOtpVerified ? "#a7f3d0" : isExpired ? "#fca5a5" : "#fef08a" }}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: order.isOtpVerified ? 0 : 12 }}>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Ionicons name={order.isOtpVerified ? "checkmark-circle" : isExpired ? "alert-circle" : "key"} size={22} color={order.isOtpVerified ? "#059669" : isExpired ? "#dc2626" : "#d97706"} style={{ marginRight: 10 }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 13, fontWeight: "800", color: order.isOtpVerified ? "#047857" : isExpired ? "#991b1b" : "#b45309" }}>
-                    {order.isOtpVerified ? "INITIAL OTP VERIFIED ✅" : isExpired ? "OTP EXPIRED (4 HOURS EXCEEDED) ⚠️" : "ENTER CUSTOMER INITIAL OTP"}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: isExpired ? "#dc2626" : "#64748b", marginTop: 2 }}>
-                    {order.isOtpVerified
-                      ? `Verified on ${new Date(order.otpVerifiedAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                      : isExpired
-                        ? "Shop service OTP expired 4 hours after confirmation."
-                        : !order.isHomeService && expTimeStr
-                          ? `Shop service OTP valid for 4 hours (Expires at ${expTimeStr})`
-                          : "Customer will provide 4-digit code on arrival"}
-                  </Text>
+        {/* Initial OTP Verification Box - ONLY show if not cancelled/declined */}
+        {!["cancelled", "declined"].includes(order.status) ? (
+          <Section title="Initial Booking OTP Verification" icon="shield-checkmark">
+            <View style={{ backgroundColor: order.isOtpVerified ? "#ecfdf5" : isExpired ? "#fef2f2" : "#fffbeb", padding: 14, borderRadius: 14, borderWidth: 1, borderColor: order.isOtpVerified ? "#a7f3d0" : isExpired ? "#fca5a5" : "#fef08a" }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: order.isOtpVerified ? 0 : 12 }}>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Ionicons name={order.isOtpVerified ? "checkmark-circle" : isExpired ? "alert-circle" : "key"} size={22} color={order.isOtpVerified ? "#059669" : isExpired ? "#dc2626" : "#d97706"} style={{ marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13, fontWeight: "800", color: order.isOtpVerified ? "#047857" : isExpired ? "#991b1b" : "#b45309" }}>
+                      {order.isOtpVerified ? "INITIAL OTP VERIFIED ✅" : isExpired ? "OTP EXPIRED (4 HOURS EXCEEDED) ⚠️" : "ENTER CUSTOMER INITIAL OTP"}
+                    </Text>
+                    <Text style={{ fontSize: 12, color: isExpired ? "#dc2626" : "#64748b", marginTop: 2 }}>
+                      {order.isOtpVerified
+                        ? `Verified on ${new Date(order.otpVerifiedAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                        : isExpired
+                          ? "Shop service OTP expired 4 hours after confirmation."
+                          : !order.isHomeService && expTimeStr
+                            ? `Shop service OTP valid for 4 hours (Expires at ${expTimeStr})`
+                            : "Customer will provide 4-digit code on arrival"}
+                    </Text>
+                  </View>
                 </View>
               </View>
-            </View>
 
-            {!order.isOtpVerified && (
-              <View style={{ flexDirection: "row", gap: 10, marginTop: 8 }}>
-                <TextInput
-                  style={{ flex: 1, backgroundColor: "#ffffff", borderRadius: 10, borderWidth: 1, borderColor: isExpired ? "#fca5a5" : "#cbd5e1", fontSize: 18, fontWeight: "800", textAlign: "center", paddingVertical: 8, letterSpacing: 4 }}
-                  placeholder="0000"
-                  keyboardType="number-pad"
-                  maxLength={4}
-                  value={otpInput}
-                  onChangeText={setOtpInput}
-                />
-                <Pressable
-                  style={{ backgroundColor: isExpired ? "#94a3b8" : "#6d28d9", paddingHorizontal: 16, borderRadius: 10, justifyContent: "center", alignItems: "center" }}
-                  onPress={handleVerifyOtp}
-                  disabled={verifyingOtp}
-                >
-                  {verifyingOtp ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 14 }}>Verify</Text>}
-                </Pressable>
-              </View>
-            )}
+              {/* Cloth Handover Photo Section */}
+              {order.clothProofImageUrl ? (
+                <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: order.isOtpVerified ? "#a7f3d0" : "#fef08a" }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <Text style={{ fontSize: 11, fontWeight: "800", color: "#6d28d9" }}>
+                      CLOTH HANDOVER PHOTO (कपड़े की फोटो) 📸
+                    </Text>
+                    <View style={{ backgroundColor: "#ede9fe", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                      <Text style={{ fontSize: 9, fontWeight: "800", color: "#6d28d9" }}>Uploaded by {order.clothProofUploadedBy || "Customer"}</Text>
+                    </View>
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <Pressable
+                      onPress={() => {
+                        setPreviewImageUrl(order.clothProofImageUrl);
+                        setPreviewImageTitle("Cloth Handover Photo (कपड़े की फोटो)");
+                        setPreviewImageModalVisible(true);
+                      }}
+                      style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", borderWidth: 1.5, borderColor: "#c4b5fd", marginRight: 10, backgroundColor: "#000" }}
+                    >
+                      <Image source={{ uri: order.clothProofImageUrl }} style={{ width: "100%", height: "100%", resizeMode: "cover" }} />
+                    </Pressable>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 11, color: "#475569" }}>Photo of cloth handed over by customer.</Text>
+                      <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+                        <Pressable
+                          onPress={() => {
+                            setPreviewImageUrl(order.clothProofImageUrl);
+                            setPreviewImageTitle("Cloth Handover Photo (कपड़े की फोटो)");
+                            setPreviewImageModalVisible(true);
+                          }}
+                          style={{ backgroundColor: "#7c3aed", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}
+                        >
+                          <Text style={{ fontSize: 10, fontWeight: "700", color: "#fff" }}>View Full Photo 🔍</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={handleCaptureClothProof}
+                          disabled={uploadingClothProof}
+                          style={{ backgroundColor: "#f3e8ff", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: "#d8b4fe" }}
+                        >
+                          {uploadingClothProof ? <ActivityIndicator size="small" color="#7c3aed" /> : <Text style={{ fontSize: 10, fontWeight: "700", color: "#7c3aed" }}>Retake 📷</Text>}
+                        </Pressable>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: order.isOtpVerified ? "#a7f3d0" : "#fef08a" }}>
+                  <Pressable
+                    onPress={handleCaptureClothProof}
+                    disabled={uploadingClothProof}
+                    style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "#f5f3ff", paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: "#ddd6fe" }}
+                  >
+                    {uploadingClothProof ? (
+                      <ActivityIndicator size="small" color="#7c3aed" />
+                    ) : (
+                      <>
+                        <Ionicons name="camera" size={16} color="#7c3aed" style={{ marginRight: 6 }} />
+                        <Text style={{ fontSize: 11, fontWeight: "800", color: "#7c3aed" }}>
+                          Click / Attach Cloth Photo (कपड़े की फोटो) 📸
+                        </Text>
+                      </>
+                    )}
+                  </Pressable>
+                </View>
+              )}
+
+              {!order.isOtpVerified && (
+                <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+                  <TextInput
+                    style={{ flex: 1, backgroundColor: "#ffffff", borderRadius: 10, borderWidth: 1, borderColor: isExpired ? "#fca5a5" : "#cbd5e1", fontSize: 18, fontWeight: "800", textAlign: "center", paddingVertical: 8, letterSpacing: 4 }}
+                    placeholder="0000"
+                    keyboardType="number-pad"
+                    maxLength={4}
+                    value={otpInput}
+                    onChangeText={setOtpInput}
+                  />
+                  <Pressable
+                    style={{ backgroundColor: isExpired ? "#94a3b8" : "#6d28d9", paddingHorizontal: 16, borderRadius: 10, justifyContent: "center", alignItems: "center" }}
+                    onPress={handleVerifyOtp}
+                    disabled={verifyingOtp}
+                  >
+                    {verifyingOtp ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 14 }}>Verify</Text>}
+                  </Pressable>
+                </View>
+              )}
+            </View>
+          </Section>
+        ) : (
+          <View style={{ backgroundColor: "#fee2e2", padding: 14, borderRadius: 14, marginBottom: 14, borderWidth: 1, borderColor: "#fca5a5", flexDirection: "row", alignItems: "center" }}>
+            <Ionicons name="close-circle" size={22} color="#dc2626" style={{ marginRight: 10 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontWeight: "800", color: "#991b1b" }}>
+                ORDER CANCELLED / DECLINED ❌
+              </Text>
+              <Text style={{ fontSize: 12, color: "#b91c1c", marginTop: 2 }}>
+                This order has been {order.status}. OTP verification is disabled.
+              </Text>
+            </View>
           </View>
-        </Section>
+        )}
 
         {/* Final Delivery OTP Verification Box */}
         {order.isOtpVerified && !["cancelled", "declined"].includes(order.status) && (
@@ -310,6 +457,99 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
                 </View>
               </View>
 
+              {/* Delivery Proof Photo Capture for Tailor */}
+              {!order.isDeliveryOtpVerified && order.deliveryOtp && (
+                <View style={{ marginTop: 8, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#bae6fd" }}>
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: "#0369a1", marginBottom: 6 }}>
+                    📸 CLICK DELIVERY PHOTO (कपड़ा डिलीवरी फोटो)
+                  </Text>
+                  {deliveryProofUri || order.deliveryProofImageUrl ? (
+                    <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}>
+                      <Pressable
+                        onPress={() => {
+                          setPreviewImageUrl(deliveryProofUri || order.deliveryProofImageUrl);
+                          setPreviewImageTitle("Finished Delivery Photo");
+                          setPreviewImageModalVisible(true);
+                        }}
+                        style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", borderWidth: 1.5, borderColor: "#0284c7", marginRight: 10, backgroundColor: "#000" }}
+                      >
+                        <Image source={{ uri: deliveryProofUri || order.deliveryProofImageUrl }} style={{ width: "100%", height: "100%", resizeMode: "cover" }} />
+                      </Pressable>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 11, color: "#0369a1", fontWeight: "600" }}>
+                          {deliveryProofUri ? "New photo attached (will save with OTP)" : "Delivery photo recorded"}
+                        </Text>
+                        <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+                          <Pressable
+                            onPress={handlePickDeliveryPhoto}
+                            style={{ backgroundColor: "#e0f2fe", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: "#bae6fd" }}
+                          >
+                            <Text style={{ fontSize: 10, fontWeight: "700", color: "#0369a1" }}>Change / Retake 📷</Text>
+                          </Pressable>
+                          {deliveryProofUri && (
+                            <Pressable
+                              onPress={() => setDeliveryProofUri(null)}
+                              style={{ backgroundColor: "#fee2e2", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}
+                            >
+                              <Text style={{ fontSize: 10, fontWeight: "700", color: "#dc2626" }}>Remove</Text>
+                            </Pressable>
+                          )}
+                        </View>
+                      </View>
+                    </View>
+                  ) : (
+                    <Pressable
+                      onPress={handlePickDeliveryPhoto}
+                      style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "#e0f2fe", paddingVertical: 9, borderRadius: 8, borderWidth: 1, borderColor: "#bae6fd", marginBottom: 8 }}
+                    >
+                      <Ionicons name="camera" size={16} color="#0284c7" style={{ marginRight: 6 }} />
+                      <Text style={{ fontSize: 11, fontWeight: "800", color: "#0284c7" }}>
+                        Click Delivered Outfit Photo (कपड़ा डिलीवरी फोटो) 📸
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+              )}
+
+              {/* Show Delivered Proof if already completed */}
+              {order.isDeliveryOtpVerified && order.deliveryProofImageUrl && (
+                <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#a7f3d0" }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <Text style={{ fontSize: 11, fontWeight: "800", color: "#047857" }}>
+                      DELIVERED OUTFIT PROOF (डिलीवरी प्रमाण फोटो) 📦📸
+                    </Text>
+                    <View style={{ backgroundColor: "#d1fae5", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                      <Text style={{ fontSize: 9, fontWeight: "800", color: "#047857" }}>Delivered Proof ✅</Text>
+                    </View>
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <Pressable
+                      onPress={() => {
+                        setPreviewImageUrl(order.deliveryProofImageUrl);
+                        setPreviewImageTitle("Delivered Outfit Proof");
+                        setPreviewImageModalVisible(true);
+                      }}
+                      style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", borderWidth: 1.5, borderColor: "#6ee7b7", marginRight: 10, backgroundColor: "#000" }}
+                    >
+                      <Image source={{ uri: order.deliveryProofImageUrl }} style={{ width: "100%", height: "100%", resizeMode: "cover" }} />
+                    </Pressable>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 11, color: "#065f46" }}>Delivery confirmation photo recorded.</Text>
+                      <Pressable
+                        onPress={() => {
+                          setPreviewImageUrl(order.deliveryProofImageUrl);
+                          setPreviewImageTitle("Delivered Outfit Proof");
+                          setPreviewImageModalVisible(true);
+                        }}
+                        style={{ backgroundColor: "#059669", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, alignSelf: "flex-start", marginTop: 4 }}
+                      >
+                        <Text style={{ fontSize: 10, fontWeight: "700", color: "#fff" }}>View Full Photo 🔍</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              )}
+
               {!order.isDeliveryOtpVerified && (
                 order.deliveryOtp ? (
                   <View style={{ flexDirection: "row", gap: 10, marginTop: 8 }}>
@@ -324,9 +564,9 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
                     <Pressable
                       style={{ backgroundColor: "#0284c7", paddingHorizontal: 16, borderRadius: 10, justifyContent: "center", alignItems: "center" }}
                       onPress={handleVerifyDeliveryOtp}
-                      disabled={verifyingDeliveryOtp}
+                      disabled={verifyingDeliveryOtp || uploadingDeliveryProof}
                     >
-                      {verifyingDeliveryOtp ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 14 }}>Verify Delivery</Text>}
+                      {verifyingDeliveryOtp || uploadingDeliveryProof ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 14 }}>Verify Delivery</Text>}
                     </Pressable>
                   </View>
                 ) : (
@@ -357,17 +597,56 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
           />
           {order.isHomeService && (
             <>
-              <InfoRow label="Visit Address" value={order.homeServiceAddress} />
+              <View style={{ marginBottom: 12 }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <Text style={{ fontSize: 13, color: "#64748b", fontWeight: "600" }}>Visit Address</Text>
+                  {order.homeServiceAddress ? (
+                    <Pressable
+                      onPress={() => openMapForNavigation(order.homeServiceAddress, order.homeServiceLocation, `${order.customerId?.name || "Customer"}'s Home`)}
+                      style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#0d9488", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}
+                    >
+                      <Ionicons name="navigate" size={12} color="#ffffff" style={{ marginRight: 4 }} />
+                      <Text style={{ fontSize: 11, color: "#ffffff", fontWeight: "700" }}>Open Map</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+                <Pressable
+                  onPress={() => {
+                    if (order.homeServiceAddress) {
+                      openMapForNavigation(order.homeServiceAddress, order.homeServiceLocation, `${order.customerId?.name || "Customer"}'s Home`);
+                    }
+                  }}
+                  style={({ pressed }) => [
+                    { backgroundColor: "#f0fdfa", padding: 10, borderRadius: 8, borderWidth: 1, borderColor: "#ccfbf1", marginTop: 2 },
+                    pressed && { opacity: 0.8 }
+                  ]}
+                >
+                  <Text style={{ fontSize: 13, color: "#134e4a", fontWeight: "600", lineHeight: 18 }}>
+                    {order.homeServiceAddress || "—"}
+                  </Text>
+                  {order.homeServiceAddress && (
+                    <Text style={{ fontSize: 11, color: "#0d9488", fontWeight: "700", marginTop: 4 }}>
+                      📍 Tap to navigate with Google Maps
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
               {order.visitDate && (
                 <InfoRow label="Visit Date" value={new Date(order.visitDate).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })} />
               )}
             </>
           )}
-          {(order.completionTime || order.estimatedDays) ? (
+          {order.status !== "pending" && (order.completionTime || order.estimatedDays) ? (
             <InfoRow
               label="Estimated Completion"
               value={`${order.completionTime || `${order.estimatedDays} Days`} (${order.deliveryDate ? new Date(order.deliveryDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "Target"})`}
               valueColor={order.isPremiumService ? "#7c3aed" : "#059669"}
+            />
+          ) : order.isPremiumService && order.completionTime ? (
+            <InfoRow
+              label="Estimated Completion"
+              value={order.completionTime}
+              valueColor="#7c3aed"
             />
           ) : null}
         </Section>
@@ -473,6 +752,33 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
               </Pressable>
             </View>
           </View>
+        </View>
+      </Modal>
+
+      {/* Full-Screen Photo Preview Modal */}
+      <Modal visible={previewImageModalVisible} transparent animationType="fade" onRequestClose={() => setPreviewImageModalVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "center", alignItems: "center", padding: 20 }}>
+          <View style={{ width: "100%", flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <Text style={{ color: "#ffffff", fontSize: 16, fontWeight: "800", flex: 1 }}>{previewImageTitle || "Photo Preview"}</Text>
+            <Pressable
+              onPress={() => setPreviewImageModalVisible(false)}
+              style={{ backgroundColor: "rgba(255,255,255,0.2)", width: 36, height: 36, borderRadius: 18, justifyContent: "center", alignItems: "center" }}
+            >
+              <Ionicons name="close" size={24} color="#ffffff" />
+            </Pressable>
+          </View>
+          {previewImageUrl ? (
+            <Image
+              source={{ uri: previewImageUrl }}
+              style={{ width: "100%", height: "75%", borderRadius: 16, resizeMode: "contain" }}
+            />
+          ) : null}
+          <Pressable
+            onPress={() => setPreviewImageModalVisible(false)}
+            style={{ marginTop: 20, backgroundColor: "#ffffff", paddingVertical: 10, paddingHorizontal: 24, borderRadius: 12 }}
+          >
+            <Text style={{ color: "#0f172a", fontWeight: "800", fontSize: 14 }}>Close Preview</Text>
+          </Pressable>
         </View>
       </Modal>
     </View>

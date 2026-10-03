@@ -74,6 +74,9 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
   const [homeAddress, setHomeAddress] = useState(
     user?.address?.line1 ? `${user.address.line1}, ${user.address.city || ""}` : ""
   );
+  const [homeLocation, setHomeLocation] = useState(
+    user?.address?.lat && user?.address?.lng ? { lat: user.address.lat, lng: user.address.lng } : null
+  );
 
   const [slots, setSlots] = useState([]);
   const [allSlots, setAllSlots] = useState([]);
@@ -101,6 +104,9 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
     setFetchingLocation(true);
     try {
       const gps = await getCurrentGPSLocation();
+      if (gps && gps.lat && gps.lng) {
+        setHomeLocation({ lat: gps.lat, lng: gps.lng });
+      }
       if (gps && gps.displayName) {
         setHomeAddress(gps.displayName);
       } else {
@@ -165,11 +171,19 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
 
   // Build active services list (filter by home/shop mode)
   const activeServices = useMemo(() => {
+    const hasDedicatedHomeServices = services.some((s) => s.isHomeService);
     return services.filter((s) => {
       if (s.isActive === false) return false;
-      if (isHomeServiceSelected && !s.isHomeService) return false;
-      if (!isHomeServiceSelected && s.isHomeService && !b.offersHomeService) return false;
-      return true;
+      if (isHomeServiceSelected) {
+        if (!b.offersHomeService) return false;
+        if (hasDedicatedHomeServices) return Boolean(s.isHomeService);
+        return true;
+      } else {
+        if (s.isHomeService && hasDedicatedHomeServices && !s.offersShopService) {
+          return false;
+        }
+        return true;
+      }
     });
   }, [services, isHomeServiceSelected, b.offersHomeService]);
 
@@ -417,8 +431,8 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
       return;
     }
     if (selectedServiceIds.length === 0) return;
-    if (isHomeServiceSelected && !homeAddress.trim()) {
-      Alert.alert("Address Required", "Please enter your address for the home service appointment.");
+    if (isHomeServiceSelected && !homeAddress?.trim() && !homeLocation) {
+      Alert.alert("Address Required", "Please enter your home address or tap 'Auto Address' so our stylist can navigate to your location.");
       return;
     }
     if (!isHomeServiceSelected && liveSeats.length > 0 && selectedChairIndex === null) {
@@ -471,6 +485,7 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
         notes: "",
         isHomeService: isHomeServiceSelected,
         homeServiceAddress: (homeAddress || "").trim() || undefined,
+        homeServiceLocation: homeLocation || undefined,
         customerETA: !isHomeServiceSelected && !isChairOccupied && selectedETA !== null ? selectedETA : undefined,
         seatIndex: !isHomeServiceSelected && selectedChairIndex !== null ? selectedChairIndex : undefined,
       };
@@ -599,14 +614,14 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
           </Pressable>
         </View>
 
-        {/* Follow Button */}
+        {/* Favourite Button */}
         <Pressable
           style={[styles.followBtn, isFollowing && styles.followingBtn]}
           onPress={() => toggleFavorite(barberId)}
         >
-          <Ionicons name="heart" size={15} color={isFollowing ? "#ffffff" : "#e11d48"} style={{ marginRight: 5 }} />
+          <Ionicons name={isFollowing ? "heart" : "heart-outline"} size={16} color={isFollowing ? "#ffffff" : "#e11d48"} style={{ marginRight: 5 }} />
           <Text style={[styles.followBtnText, isFollowing && styles.followingBtnText]}>
-            {isFollowing ? "Following" : "Follow"}
+            {isFollowing ? "Favourited" : "Favourite"}
           </Text>
         </Pressable>
       </View>
@@ -617,6 +632,103 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#db2777" />}
       >
+        {/* ================= SERVICE DELIVERY MODE TOGGLE (SHOP VISIT VS HOME SERVICE) ================= */}
+        <View style={styles.serviceModeToggleCard}>
+          <View style={styles.serviceModeHeaderRow}>
+            <View style={styles.serviceModeTitleRow}>
+              <Ionicons name="sparkles" size={15} color="#db2777" style={{ marginRight: 6 }} />
+              <Text style={styles.serviceModeTitle}>Service Delivery Mode</Text>
+            </View>
+            <View style={[styles.serviceModeStatusBadge, !b.offersHomeService && styles.serviceModeStatusBadgeShopOnly]}>
+              <Text style={[styles.serviceModeStatusText, !b.offersHomeService && styles.serviceModeStatusTextShopOnly]}>
+                {b.offersHomeService ? "2 Modes Available" : "Shop Visit Only"}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.serviceModePillRow}>
+            {/* Shop Visit Pill */}
+            <Pressable
+              style={[
+                styles.serviceModePill,
+                !isHomeServiceSelected && styles.serviceModePillActive
+              ]}
+              onPress={() => setIsHomeServiceSelected(false)}
+            >
+              <Ionicons
+                name="storefront-outline"
+                size={18}
+                color={!isHomeServiceSelected ? "#ffffff" : "#475569"}
+                style={{ marginRight: 8 }}
+              />
+              <View>
+                <Text style={[styles.serviceModePillText, !isHomeServiceSelected && styles.serviceModePillTextActive]}>
+                  Shop Visit
+                </Text>
+                <Text style={[styles.serviceModePillSub, !isHomeServiceSelected && styles.serviceModePillSubActive]}>
+                  Visit Parlor
+                </Text>
+              </View>
+            </Pressable>
+
+            {/* Home Service Pill */}
+            <Pressable
+              style={[
+                styles.serviceModePill,
+                isHomeServiceSelected && styles.serviceModePillActive,
+                !b.offersHomeService && styles.serviceModePillDisabled
+              ]}
+              onPress={() => {
+                if (!b.offersHomeService) {
+                  return Alert.alert(
+                    "Home Service Unavailable",
+                    "This beauty parlor currently only accepts bookings at the shop. Doorstep home visits are not offered."
+                  );
+                }
+                setIsHomeServiceSelected(true);
+              }}
+            >
+              <Ionicons
+                name="home-outline"
+                size={18}
+                color={isHomeServiceSelected ? "#ffffff" : b.offersHomeService ? "#475569" : "#94a3b8"}
+                style={{ marginRight: 8 }}
+              />
+              <View>
+                <Text style={[
+                  styles.serviceModePillText,
+                  isHomeServiceSelected && styles.serviceModePillTextActive,
+                  !b.offersHomeService && { color: "#94a3b8" }
+                ]}>
+                  Home Service
+                </Text>
+                <Text style={[
+                  styles.serviceModePillSub,
+                  isHomeServiceSelected && styles.serviceModePillSubActive,
+                  !b.offersHomeService && { color: "#cbd5e1" }
+                ]}>
+                  {b.offersHomeService ? (Number(b.homeServiceFee) > 0 ? `+₹${b.homeServiceFee} Visit Fee` : "Free Visit") : "Not Offered"}
+                </Text>
+              </View>
+            </Pressable>
+          </View>
+
+          {/* Mode explanation banner */}
+          <View style={[styles.modeInfoBanner, isHomeServiceSelected ? styles.modeInfoBannerHome : styles.modeInfoBannerShop]}>
+            <Ionicons
+              name={isHomeServiceSelected ? "home" : "storefront"}
+              size={14}
+              color={isHomeServiceSelected ? "#db2777" : "#2563eb"}
+              style={{ marginRight: 6 }}
+            />
+            <Text style={[styles.modeInfoBannerText, { color: isHomeServiceSelected ? "#9d174d" : "#1e40af" }]}>
+              {isHomeServiceSelected
+                ? `🏡 Home Service Mode: Beautician visits your address${Number(b.homeServiceFee) > 0 ? ` (+₹${b.homeServiceFee} visit fee)` : ""}`
+                : "🏪 Shop Visit Mode: You will visit the parlor for your scheduled appointment"}
+            </Text>
+          </View>
+        </View>
+
         {/* ================= SEARCH & FILTER BAR ================= */}
         <View style={styles.searchBarWrapper}>
           <View style={styles.searchInputCard}>
@@ -857,6 +969,24 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
                           <Ionicons name="time-outline" size={13} color="#64748b" style={{ marginRight: 3 }} />
                           <Text style={styles.durationText}>{service.durationMinutes} mins</Text>
                         </View>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginTop: 4 }}>
+                          <View style={[styles.serviceCardModeBadge, isHomeServiceSelected ? styles.serviceCardModeBadgeHome : styles.serviceCardModeBadgeShop]}>
+                            <Ionicons
+                              name={isHomeServiceSelected ? "home" : "storefront"}
+                              size={10}
+                              color={isHomeServiceSelected ? "#db2777" : "#2563eb"}
+                              style={{ marginRight: 2 }}
+                            />
+                            <Text style={[styles.serviceCardModeBadgeText, { color: isHomeServiceSelected ? "#db2777" : "#2563eb" }]}>
+                              {isHomeServiceSelected ? "Home Service" : "Shop Visit"}
+                            </Text>
+                          </View>
+                          {b.offersHomeService && !isHomeServiceSelected && (
+                            <View style={styles.serviceCardHomeEligible}>
+                              <Text style={styles.serviceCardHomeEligibleText}>🏡 Home Avail.</Text>
+                            </View>
+                          )}
+                        </View>
                       </View>
 
                       <Pressable
@@ -871,44 +1001,6 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
               );
             })}
           </ScrollView>
-        )}
-
-        {/* ================= SHOP VISIT / HOME SERVICE TOGGLE ================= */}
-        {b.offersHomeService && (
-          <View style={styles.serviceModeToggleCard}>
-            <Text style={styles.serviceModeTitle}>Service Delivery Mode</Text>
-            <View style={styles.serviceModePillRow}>
-              <Pressable
-                style={[styles.serviceModePill, !isHomeServiceSelected && styles.serviceModePillActive]}
-                onPress={() => setIsHomeServiceSelected(false)}
-              >
-                <Ionicons
-                  name="storefront-outline"
-                  size={16}
-                  color={!isHomeServiceSelected ? "#ffffff" : "#475569"}
-                  style={{ marginRight: 6 }}
-                />
-                <Text style={[styles.serviceModePillText, !isHomeServiceSelected && styles.serviceModePillTextActive]}>
-                  Shop Visit
-                </Text>
-              </Pressable>
-
-              <Pressable
-                style={[styles.serviceModePill, isHomeServiceSelected && styles.serviceModePillActive]}
-                onPress={() => setIsHomeServiceSelected(true)}
-              >
-                <Ionicons
-                  name="home-outline"
-                  size={16}
-                  color={isHomeServiceSelected ? "#ffffff" : "#475569"}
-                  style={{ marginRight: 6 }}
-                />
-                <Text style={[styles.serviceModePillText, isHomeServiceSelected && styles.serviceModePillTextActive]}>
-                  Home Service (+₹{b.homeServiceFee || 0})
-                </Text>
-              </Pressable>
-            </View>
-          </View>
         )}
 
         {/* ================= LIVE CHAIRS STATUS ================= */}
@@ -998,8 +1090,21 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
               </View>
             </View>
             <View style={{ marginLeft: 12 }}>
-              <Text style={styles.footerCountText}>{selectedServiceIds.length} Service Selected</Text>
-              <Text style={styles.footerPriceText}>₹{totalPrice + homeServiceFee}</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Text style={styles.footerCountText}>{selectedServiceIds.length} Service Selected</Text>
+                <View style={[styles.footerModeTag, isHomeServiceSelected ? styles.footerModeTagHome : styles.footerModeTagShop]}>
+                  <Ionicons name={isHomeServiceSelected ? "home" : "storefront"} size={10} color={isHomeServiceSelected ? "#db2777" : "#2563eb"} />
+                  <Text style={[styles.footerModeTagText, { color: isHomeServiceSelected ? "#db2777" : "#2563eb" }]}>
+                    {isHomeServiceSelected ? "Home" : "Shop"}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.footerPriceText}>
+                ₹{totalPrice + homeServiceFee}
+                {isHomeServiceSelected && homeServiceFee > 0 ? (
+                  <Text style={{ fontSize: 11, fontWeight: "500", color: "#64748b" }}> (incl. ₹{homeServiceFee} visit fee)</Text>
+                ) : null}
+              </Text>
             </View>
           </View>
 
@@ -1056,6 +1161,26 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+              {/* Prominent Service Delivery Mode Banner */}
+              <View style={[styles.modalModeBanner, isHomeServiceSelected ? styles.modalModeBannerHome : styles.modalModeBannerShop]}>
+                <Ionicons
+                  name={isHomeServiceSelected ? "home" : "storefront"}
+                  size={20}
+                  color={isHomeServiceSelected ? "#db2777" : "#2563eb"}
+                  style={{ marginRight: 10 }}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.modalModeBannerTitle, { color: isHomeServiceSelected ? "#9d174d" : "#1e40af" }]}>
+                    {isHomeServiceSelected ? "🏡 Home Service Booking (Doorstep Visit)" : "🏪 Shop Visit Booking (At Parlor)"}
+                  </Text>
+                  <Text style={[styles.modalModeBannerSub, { color: isHomeServiceSelected ? "#be185d" : "#3b82f6" }]}>
+                    {isHomeServiceSelected
+                      ? `Beautician will visit your home • ${homeServiceFee > 0 ? `+₹${homeServiceFee} visit fee` : "Doorstep service"}`
+                      : "You will visit the beauty parlor at your scheduled time"}
+                  </Text>
+                </View>
+              </View>
+
               {/* Date Selection */}
               <Text style={styles.modalSectionLabel}>Select Date</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
@@ -1268,12 +1393,14 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
                   <Text style={styles.billLabel}>Service(s) Total</Text>
                   <Text style={styles.billVal}>₹{totalPrice}</Text>
                 </View>
-                {isHomeServiceSelected && (
-                  <View style={styles.billRow}>
-                    <Text style={styles.billLabel}>Home Visit Fee</Text>
-                    <Text style={styles.billVal}>₹{homeServiceFee}</Text>
-                  </View>
-                )}
+                <View style={styles.billRow}>
+                  <Text style={styles.billLabel}>
+                    {isHomeServiceSelected ? "🏡 Home Visit Fee" : "🏪 Shop Visit Fee"}
+                  </Text>
+                  <Text style={[styles.billVal, !isHomeServiceSelected && { color: "#16a34a" }]}>
+                    {isHomeServiceSelected ? `₹${homeServiceFee}` : "₹0 (At Shop)"}
+                  </Text>
+                </View>
                 <View style={[styles.billRow, styles.billTotalRow]}>
                   <Text style={styles.billTotalLabel}>Grand Total</Text>
                   <Text style={styles.billTotalVal}>₹{totalPrice + homeServiceFee}</Text>
@@ -1391,12 +1518,12 @@ const styles = StyleSheet.create({
   followBtn: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 14,
+    paddingHorizontal: 13,
     paddingVertical: 7,
     borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#f43f5e",
-    backgroundColor: "#ffffff",
+    borderWidth: 1.5,
+    borderColor: "#e11d48",
+    backgroundColor: "#fff1f2",
   },
   followingBtn: {
     backgroundColor: "#e11d48",
@@ -1749,21 +1876,56 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
-  /* Delivery Mode */
+  /* Service Delivery Mode Toggle */
   serviceModeToggleCard: {
     marginHorizontal: 16,
-    marginTop: 10,
+    marginTop: 14,
+    marginBottom: 8,
     padding: 14,
     borderRadius: 16,
-    backgroundColor: "#f8fafc",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
+    backgroundColor: "#ffffff",
+    borderWidth: 1.5,
+    borderColor: "#fce7f3",
+    shadowColor: "#db2777",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  serviceModeHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  serviceModeTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   serviceModeTitle: {
-    fontSize: 13,
-    fontWeight: "700",
+    fontSize: 14,
+    fontWeight: "800",
     color: "#0f172a",
-    marginBottom: 8,
+  },
+  serviceModeStatusBadge: {
+    backgroundColor: "#fdf2f8",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#fbcfe8",
+  },
+  serviceModeStatusBadgeShopOnly: {
+    backgroundColor: "#f1f5f9",
+    borderColor: "#e2e8f0",
+  },
+  serviceModeStatusText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#db2777",
+  },
+  serviceModeStatusTextShopOnly: {
+    color: "#64748b",
   },
   serviceModePillRow: {
     flexDirection: "row",
@@ -1773,24 +1935,145 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 8,
+    justifyContent: "flex-start",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: 12,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1.5,
     borderColor: "#e2e8f0",
   },
   serviceModePillActive: {
     backgroundColor: "#db2777",
     borderColor: "#db2777",
   },
+  serviceModePillDisabled: {
+    opacity: 0.65,
+    backgroundColor: "#f1f5f9",
+    borderColor: "#e2e8f0",
+  },
   serviceModePillText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#475569",
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#334155",
   },
   serviceModePillTextActive: {
     color: "#ffffff",
+  },
+  serviceModePillSub: {
+    fontSize: 10,
+    fontWeight: "500",
+    color: "#64748b",
+    marginTop: 1,
+  },
+  serviceModePillSubActive: {
+    color: "rgba(255,255,255,0.9)",
+  },
+  modeInfoBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  modeInfoBannerHome: {
+    backgroundColor: "#fdf2f8",
+    borderWidth: 1,
+    borderColor: "#fce7f3",
+  },
+  modeInfoBannerShop: {
+    backgroundColor: "#eff6ff",
+    borderWidth: 1,
+    borderColor: "#dbeafe",
+  },
+  modeInfoBannerText: {
+    fontSize: 11,
+    fontWeight: "600",
+    flex: 1,
+  },
+
+  /* Service Card Badges */
+  serviceCardModeBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  serviceCardModeBadgeHome: {
+    backgroundColor: "#fdf2f8",
+    borderWidth: 1,
+    borderColor: "#fbcfe8",
+  },
+  serviceCardModeBadgeShop: {
+    backgroundColor: "#eff6ff",
+    borderWidth: 1,
+    borderColor: "#dbeafe",
+  },
+  serviceCardModeBadgeText: {
+    fontSize: 9,
+    fontWeight: "700",
+  },
+  serviceCardHomeEligible: {
+    backgroundColor: "#faf5ff",
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: "#e9d5ff",
+  },
+  serviceCardHomeEligibleText: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#7e22ce",
+  },
+
+  /* Floating Footer Mode Tag */
+  footerModeTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    gap: 2,
+  },
+  footerModeTagHome: {
+    backgroundColor: "#fce7f3",
+  },
+  footerModeTagShop: {
+    backgroundColor: "#eff6ff",
+  },
+  footerModeTagText: {
+    fontSize: 10,
+    fontWeight: "700",
+  },
+
+  /* Modal Mode Banner */
+  modalModeBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: 0,
+    marginBottom: 16,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  modalModeBannerHome: {
+    backgroundColor: "#fdf2f8",
+    borderColor: "#fbcfe8",
+  },
+  modalModeBannerShop: {
+    backgroundColor: "#eff6ff",
+    borderColor: "#dbeafe",
+  },
+  modalModeBannerTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  modalModeBannerSub: {
+    fontSize: 11,
+    marginTop: 2,
   },
 
   /* Live Seats */

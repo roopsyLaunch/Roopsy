@@ -10,11 +10,14 @@ import {
   Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useNavigation } from "@react-navigation/native";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { getSocket } from "../api/socket";
+import { navigateByNotification } from "../services/notificationNavigation";
 
 export function NotificationModal({ visible, onClose, onUnreadCountChange }) {
+  const navigation = useNavigation();
   const { user } = useAuth();
   const [notifications, setNotifications] = useState([]);
   const [loadingNotifs, setLoadingNotifs] = useState(false);
@@ -269,11 +272,29 @@ export function NotificationModal({ visible, onClose, onUnreadCountChange }) {
                 return (
                   <Pressable
                     key={item._id}
-                    onPress={() => {
+                    onPress={async () => {
                       if (selectionMode) {
                         toggleSelectNotification(item._id);
                       } else {
-                        confirmDeleteNotification(item._id);
+                        // Mark as read
+                        try {
+                          if (!item.isRead) {
+                            api.patch(`/auth/notifications/${item._id}/read`).catch(() => {});
+                            setNotifications((prev) =>
+                              prev.map((n) => (n._id === item._id ? { ...n, isRead: true } : n))
+                            );
+                            if (onUnreadCountChange) {
+                              const unread = notifications.filter((n) => !n.isRead && n._id !== item._id).length;
+                              onUnreadCountChange(unread);
+                            }
+                          }
+                        } catch (e) {}
+
+                        // Close modal
+                        if (onClose) onClose();
+
+                        // Navigate according to notification content & role
+                        navigateByNotification(navigation, item, user);
                       }
                     }}
                     onLongPress={() => {
@@ -307,6 +328,11 @@ export function NotificationModal({ visible, onClose, onUnreadCountChange }) {
                         </Text>
                       </View>
                       <Text style={styles.cardBody}>{item.body}</Text>
+                      {!selectionMode && (
+                        <View style={{ flexDirection: "row", alignItems: "center", marginTop: 5 }}>
+                          <Text style={{ fontSize: 11, fontWeight: "700", color: "#6d28d9" }}>View Booking / Details →</Text>
+                        </View>
+                      )}
                     </View>
                     {!selectionMode && (
                       <Pressable

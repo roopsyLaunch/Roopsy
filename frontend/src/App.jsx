@@ -1185,7 +1185,15 @@ export default function App() {
                             {b.isHomeService && (
                               <div style={{ marginTop: '6px', fontSize: '11px', color: '#eab308', display: 'flex', flexDirection: 'column', gap: '2px' }}>
                                 <span className="badge" style={{ backgroundColor: '#fffbeb', color: '#d97706', fontSize: '9.5px', padding: '2px 6px', fontWeight: '800', width: 'fit-content' }}>🏠 Home Service</span>
-                                <span style={{ color: '#78350f', maxWidth: '200px', display: 'inline-block' }}>{b.homeServiceAddress}</span>
+                                <a
+                                  href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(b.homeServiceAddress)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: '#7c3aed', fontWeight: '600', maxWidth: '220px', display: 'inline-block', textDecoration: 'underline' }}
+                                  title="Open in Google Maps to navigate"
+                                >
+                                  📍 {b.homeServiceAddress} ↗
+                                </a>
                               </div>
                             )}
                           </td>
@@ -1335,7 +1343,15 @@ export default function App() {
                             {o.isHomeService && (
                               <div style={{ marginTop: '6px', fontSize: '11px', color: '#eab308', display: 'flex', flexDirection: 'column', gap: '2px' }}>
                                 <span className="badge" style={{ backgroundColor: '#fffbeb', color: '#d97706', fontSize: '9.5px', padding: '2px 6px', fontWeight: '800', width: 'fit-content' }}>🏠 Home Measurement</span>
-                                <span style={{ color: '#78350f', maxWidth: '200px', display: 'inline-block' }}>{o.homeServiceAddress}</span>
+                                <a
+                                  href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(o.homeServiceAddress)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: '#0d9488', fontWeight: '600', maxWidth: '220px', display: 'inline-block', textDecoration: 'underline' }}
+                                  title="Open in Google Maps to navigate"
+                                >
+                                  📍 {o.homeServiceAddress} ↗
+                                </a>
                               </div>
                             )}
                           </td>

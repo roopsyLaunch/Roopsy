@@ -235,7 +235,7 @@ exports.createOrder = async (req, res) => {
     const { 
       tailorId, services, totalAmount, measurements, notes, fittingDate, deliveryDate,
       fabricSource, fabricDetails, designPreferences, measurementProfileId,
-      isHomeService, isPremiumService, homeServiceAddress, visitDate, visitFee
+      isHomeService, isPremiumService, homeServiceAddress, homeServiceLocation, visitDate, visitFee
     } = req.body;
     
     const targetTailor = await Tailor.findById(tailorId);
@@ -281,8 +281,8 @@ exports.createOrder = async (req, res) => {
       });
     }
 
-    let orderCompletionTime = (req.body.completionTime || "").trim();
-    let orderEstimatedDays = req.body.estimatedDays;
+    let orderCompletionTime = hasPremium ? (req.body.completionTime || "").trim() : "";
+    let orderEstimatedDays = hasPremium ? req.body.estimatedDays : null;
 
     if (hasPremium) {
       if (!orderCompletionTime) {
@@ -306,8 +306,8 @@ exports.createOrder = async (req, res) => {
       }
     }
 
-    let calculatedDeliveryDate = deliveryDate;
-    if (!calculatedDeliveryDate && orderCompletionTime) {
+    let calculatedDeliveryDate = hasPremium ? deliveryDate : null;
+    if (hasPremium && !calculatedDeliveryDate && orderCompletionTime) {
       const matchHours = orderCompletionTime.match(/(\d+)\s*(?:hour|hr)/i);
       const matchDays = orderCompletionTime.match(/(\d+)\s*(?:day)/i);
       if (matchHours) {
@@ -332,12 +332,13 @@ exports.createOrder = async (req, res) => {
       isHomeService,
       isPremiumService: hasPremium,
       homeServiceAddress,
+      homeServiceLocation,
       visitDate,
       visitFee,
       fittingDate,
-      deliveryDate: calculatedDeliveryDate,
-      estimatedDays: orderEstimatedDays || (hasPremium ? 1 : 3),
-      completionTime: orderCompletionTime,
+      deliveryDate: hasPremium ? calculatedDeliveryDate : null,
+      estimatedDays: hasPremium ? (orderEstimatedDays || 1) : null,
+      completionTime: hasPremium ? (orderCompletionTime || "12 Hours") : "",
       otp: "",
       isOtpVerified: false,
       status: "pending"
@@ -466,6 +467,8 @@ exports.cancelCustomerOrder = async (req, res) => {
     }
 
     order.status = "cancelled";
+    order.otp = "";
+    order.deliveryOtp = "";
     order.cancellationReason = cancellationReason || "Cancelled by customer";
     order.statusHistory.push({
       status: "cancelled",
@@ -517,11 +520,15 @@ exports.verifyOrderOtp = async (req, res) => {
     const tailor = await Tailor.findOne({ userId: req.user._id });
     if (!tailor) return res.status(403).json({ error: "Not a tailor" });
 
-    const { otp } = req.body;
+    const { otp, clothProofImageUrl } = req.body;
     if (!otp) return res.status(400).json({ error: "OTP is required" });
 
     const order = await TailorOrder.findOne({ _id: req.params.id, tailorId: tailor._id });
     if (!order) return res.status(404).json({ error: "Order not found" });
+
+    if (order.status === "cancelled" || order.status === "declined") {
+      return res.status(400).json({ error: "Cannot verify OTP. This order has been cancelled or declined." });
+    }
 
     // Check 4-hour expiration ONLY for Shop Service
     if (!order.isHomeService && order.otpExpiresAt && new Date() > new Date(order.otpExpiresAt)) {
@@ -537,10 +544,17 @@ exports.verifyOrderOtp = async (req, res) => {
     if (order.status === "pending") {
       order.status = "accepted";
     }
+
+    if (clothProofImageUrl) {
+      order.clothProofImageUrl = clothProofImageUrl;
+      order.clothProofUploadedAt = new Date();
+      order.clothProofUploadedBy = "tailor";
+    }
+
     order.statusHistory.push({
       status: order.status,
       changedAt: new Date(),
-      note: "OTP verified by Tailor Partner"
+      note: clothProofImageUrl ? "OTP verified & Cloth photo confirmed by Tailor Partner 📸" : "OTP verified by Tailor Partner"
     });
 
     await order.save();
@@ -548,19 +562,156 @@ exports.verifyOrderOtp = async (req, res) => {
     await Notification.create({
       userId: order.customerId,
       title: "Booking OTP Verified ✅",
-      body: `Your tailor booking order #${order._id.toString().slice(-6)} has been OTP verified by the tailor.`,
+      body: `Your tailor booking order #${order._id.toString().slice(-6)} has been OTP verified by the tailor.${order.clothProofImageUrl ? " Cloth handover photo recorded 📸" : ""}`,
       type: "general",
-      data: { orderId: order._id }
+      data: { orderId: order._id, clothProofImageUrl: order.clothProofImageUrl }
     }).catch(err => console.error("Notification create error:", err));
 
     const io = req.app.get("io");
     if (io) {
-      io.to(`user_${order.customerId.toString()}`).emit("bookingUpdated", { orderId: order._id, status: order.status, isOtpVerified: true });
+      io.to(`user_${order.customerId.toString()}`).emit("bookingUpdated", {
+        orderId: order._id,
+        status: order.status,
+        isOtpVerified: true,
+        clothProofImageUrl: order.clothProofImageUrl
+      });
     }
 
     res.json({ success: true, message: "OTP verified successfully!", order });
   } catch (error) {
     console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+exports.uploadClothProof = async (req, res) => {
+  try {
+    const { clothProofImageUrl } = req.body;
+    if (!clothProofImageUrl) {
+      return res.status(400).json({ error: "Cloth proof image URL is required" });
+    }
+
+    const order = await TailorOrder.findById(req.params.id);
+    if (!order) return res.status(404).json({ error: "Order not found" });
+
+    const customerIdStr = (order.customerId?._id || order.customerId || "").toString();
+    const userIdStr = (req.user?._id || req.user?.id || "").toString();
+    const isCustomer = customerIdStr === userIdStr;
+    let isTailor = false;
+    if (!isCustomer) {
+      const tailor = await Tailor.findOne({ userId: req.user._id });
+      if (tailor && order.tailorId && order.tailorId.toString() === tailor._id.toString()) {
+        isTailor = true;
+      }
+    }
+
+    if (!isCustomer && !isTailor) {
+      return res.status(403).json({ error: "Not authorized to update this order" });
+    }
+
+    order.clothProofImageUrl = clothProofImageUrl;
+    order.clothProofUploadedAt = new Date();
+    order.clothProofUploadedBy = isCustomer ? "customer" : "tailor";
+
+    order.statusHistory.push({
+      status: order.status,
+      changedAt: new Date(),
+      note: `Cloth handover photo uploaded by ${isCustomer ? "Customer" : "Tailor"} 📸`
+    });
+
+    await order.save();
+
+    if (isCustomer) {
+      const tailor = await Tailor.findById(order.tailorId);
+      if (tailor && tailor.userId) {
+        await Notification.create({
+          userId: tailor.userId,
+          title: "Cloth Handover Photo Uploaded 📸",
+          body: `Customer uploaded cloth photo for order #${order._id.toString().slice(-6)}.`,
+          type: "general",
+          data: { orderId: order._id, clothProofImageUrl }
+        }).catch(err => console.error("Notification create error:", err));
+
+        const io = req.app.get("io");
+        if (io) {
+          io.to(`user_${tailor.userId.toString()}`).emit("bookingUpdated", {
+            orderId: order._id,
+            clothProofImageUrl,
+            status: order.status
+          });
+        }
+      }
+    } else {
+      await Notification.create({
+        userId: order.customerId,
+        title: "Cloth Photo Confirmed 📸",
+        body: `Tailor partner attached cloth photo for order #${order._id.toString().slice(-6)}.`,
+        type: "general",
+        data: { orderId: order._id, clothProofImageUrl }
+      }).catch(err => console.error("Notification create error:", err));
+
+      const io = req.app.get("io");
+      if (io) {
+        io.to(`user_${order.customerId.toString()}`).emit("bookingUpdated", {
+          orderId: order._id,
+          clothProofImageUrl,
+          status: order.status
+        });
+      }
+    }
+
+    res.json({ success: true, message: "Cloth handover photo uploaded successfully!", order });
+  } catch (error) {
+    console.error("uploadClothProof error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+exports.uploadDeliveryProof = async (req, res) => {
+  try {
+    const { deliveryProofImageUrl } = req.body;
+    if (!deliveryProofImageUrl) {
+      return res.status(400).json({ error: "Delivery proof image URL is required" });
+    }
+
+    const tailor = await Tailor.findOne({ userId: req.user._id });
+    if (!tailor) return res.status(403).json({ error: "Not a tailor" });
+
+    const order = await TailorOrder.findOne({ _id: req.params.id, tailorId: tailor._id });
+    if (!order) return res.status(404).json({ error: "Order not found" });
+
+    order.deliveryProofImageUrl = deliveryProofImageUrl;
+    order.deliveryProofUploadedAt = new Date();
+    order.deliveryProofUploadedBy = "tailor";
+
+    order.statusHistory.push({
+      status: order.status,
+      changedAt: new Date(),
+      note: "Finished outfit delivery photo uploaded by Tailor 📦📸"
+    });
+
+    await order.save();
+
+    await Notification.create({
+      userId: order.customerId,
+      title: "Delivery Photo Uploaded 📦📸",
+      body: `Tailor partner uploaded delivery proof photo for order #${order._id.toString().slice(-6)}.`,
+      type: "general",
+      data: { orderId: order._id, deliveryProofImageUrl }
+    }).catch(err => console.error("Notification create error:", err));
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user_${order.customerId.toString()}`).emit("bookingUpdated", {
+        orderId: order._id,
+        deliveryProofImageUrl,
+        status: order.status
+      });
+    }
+
+    res.json({ success: true, message: "Delivery proof photo saved successfully!", order });
+  } catch (error) {
+    console.error("uploadDeliveryProof error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -572,6 +723,10 @@ exports.generateDeliveryOtp = async (req, res) => {
 
     const order = await TailorOrder.findOne({ _id: req.params.id, tailorId: tailor._id });
     if (!order) return res.status(404).json({ error: "Order not found" });
+
+    if (order.status === "cancelled" || order.status === "declined") {
+      return res.status(400).json({ error: "Cannot generate delivery OTP. This order has been cancelled or declined." });
+    }
 
     if (!order.isOtpVerified) {
       return res.status(400).json({ error: "Initial booking OTP must be verified before generating delivery OTP." });
@@ -632,11 +787,15 @@ exports.verifyDeliveryOtp = async (req, res) => {
     const tailor = await Tailor.findOne({ userId: req.user._id });
     if (!tailor) return res.status(403).json({ error: "Not a tailor" });
 
-    const { otp } = req.body;
+    const { otp, deliveryProofImageUrl } = req.body;
     if (!otp) return res.status(400).json({ error: "Delivery OTP is required" });
 
     const order = await TailorOrder.findOne({ _id: req.params.id, tailorId: tailor._id });
     if (!order) return res.status(404).json({ error: "Order not found" });
+
+    if (order.status === "cancelled" || order.status === "declined") {
+      return res.status(400).json({ error: "Cannot verify delivery OTP. This order has been cancelled or declined." });
+    }
 
     if (!order.deliveryOtp) {
       return res.status(400).json({ error: "Delivery OTP has not been generated yet. Tap Deliver Order first." });
@@ -649,10 +808,17 @@ exports.verifyDeliveryOtp = async (req, res) => {
     order.isDeliveryOtpVerified = true;
     order.deliveryOtpVerifiedAt = new Date();
     order.status = "completed";
+
+    if (deliveryProofImageUrl) {
+      order.deliveryProofImageUrl = deliveryProofImageUrl;
+      order.deliveryProofUploadedAt = new Date();
+      order.deliveryProofUploadedBy = "tailor";
+    }
+
     order.statusHistory.push({
       status: "completed",
       changedAt: new Date(),
-      note: "Delivery OTP verified & Order Completed ✅"
+      note: deliveryProofImageUrl ? "Delivery OTP verified & Delivery photo recorded by Tailor 📦📸" : "Delivery OTP verified & Order Completed ✅"
     });
 
     await order.save();
@@ -665,15 +831,24 @@ exports.verifyDeliveryOtp = async (req, res) => {
       title: notifTitle,
       body: notifBody,
       type: "general",
-      data: { orderId: order._id, tailorId: order.tailorId, requestRating: true }
+      data: { orderId: order._id, tailorId: order.tailorId, requestRating: true, deliveryProofImageUrl: order.deliveryProofImageUrl }
     }).catch(err => console.error("Notification create error:", err));
-
-
 
     const io = req.app.get("io");
     if (io) {
-      io.to(`user_${order.customerId.toString()}`).emit("bookingUpdated", { orderId: order._id, status: "completed", isDeliveryOtpVerified: true, requestRating: true });
-      io.to(`user_${order.customerId.toString()}`).emit("tailorOrderCompleted", { orderId: order._id, tailorId: order.tailorId, requestRating: true });
+      io.to(`user_${order.customerId.toString()}`).emit("bookingUpdated", {
+        orderId: order._id,
+        status: "completed",
+        isDeliveryOtpVerified: true,
+        deliveryProofImageUrl: order.deliveryProofImageUrl,
+        requestRating: true
+      });
+      io.to(`user_${order.customerId.toString()}`).emit("tailorOrderCompleted", {
+        orderId: order._id,
+        tailorId: order.tailorId,
+        requestRating: true,
+        deliveryProofImageUrl: order.deliveryProofImageUrl
+      });
     }
 
     res.json({ success: true, message: "Delivery OTP verified & Order Completed successfully! 🎉", order });
@@ -789,7 +964,13 @@ exports.updateOrderStatus = async (req, res) => {
 
     // Build update payload
     const updatePayload = {};
-    if (status) updatePayload.status = status;
+    if (status) {
+      updatePayload.status = status;
+      if (CANCELLATION_STATUSES.includes(status)) {
+        updatePayload.otp = "";
+        updatePayload.deliveryOtp = "";
+      }
+    }
     if (cancellationReason !== undefined) updatePayload.cancellationReason = cancellationReason;
     if (internalNotes !== undefined) updatePayload.internalNotes = internalNotes;
     const isPremOrder = Boolean(

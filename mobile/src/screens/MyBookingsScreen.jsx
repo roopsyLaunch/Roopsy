@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   Modal,
   Pressable,
   RefreshControl,
@@ -19,6 +20,9 @@ import { useFocusEffect } from "@react-navigation/native";
 import { api } from "../api/client";
 import { getSocket } from "../api/socket";
 import { useAuth } from "../context/AuthContext";
+import { openMapForNavigation } from "../services/locationService";
+import { pickOrCaptureImage } from "../services/imagePickerService";
+import { uploadImageAsync } from "../api/upload";
 
 function formatDateLabel(isoDate) {
   const d = new Date(isoDate);
@@ -63,7 +67,7 @@ const LiveCountdown = ({ targetDate }) => {
   );
 };
 
-export function MyBookingsScreen({ navigation }) {
+export function MyBookingsScreen({ navigation, route }) {
   const { user } = useAuth();
   const isPartner = user?.role === "barber" || user?.role === "tailor" || user?.role === "admin";
 
@@ -147,6 +151,51 @@ export function MyBookingsScreen({ navigation }) {
       Alert.alert("Submission Failed", err?.response?.data?.error || "Failed to submit tailor rating");
     } finally {
       setSubmittingTailorRating(false);
+    }
+  };
+
+  // Tailor Cloth Handover & Delivery Proof Photo States
+  const [uploadingClothOrderId, setUploadingClothOrderId] = useState(null);
+  const [previewImageModalVisible, setPreviewImageModalVisible] = useState(false);
+  const [previewImageUrl, setPreviewImageUrl] = useState("");
+  const [previewImageTitle, setPreviewImageTitle] = useState("");
+
+  const handleUploadClothProof = async (orderId) => {
+    try {
+      const imageUri = await pickOrCaptureImage({
+        title: "Cloth Handover Photo 📸",
+        message: "Click or select photo of the cloth handed over to the tailor (कपड़े की फोटो):"
+      });
+      if (!imageUri) return;
+
+      setUploadingClothOrderId(orderId);
+      const uploadedUrl = await uploadImageAsync(imageUri);
+      if (!uploadedUrl) {
+        Alert.alert("Upload Failed", "Could not upload image to server.");
+        return;
+      }
+
+      await api.patch(`/tailors/orders/${orderId}/cloth-proof`, {
+        clothProofImageUrl: uploadedUrl
+      });
+
+      // Update state locally
+      setItems((prevItems) =>
+        prevItems.map((item) =>
+          (item._id === orderId || item.id === orderId)
+            ? { ...item, clothProofImageUrl: uploadedUrl, clothProofUploadedAt: new Date(), clothProofUploadedBy: "customer" }
+            : item
+        )
+      );
+      await load();
+
+      Alert.alert("Photo Uploaded! 📸", "Cloth handover photo successfully saved and shared with tailor partner.");
+    } catch (err) {
+      console.error("Upload cloth proof error:", err);
+      const errMsg = err?.response?.data?.error || err?.friendlyMessage || err?.message || "Could not upload cloth handover photo.";
+      Alert.alert("Upload Error", errMsg);
+    } finally {
+      setUploadingClothOrderId(null);
     }
   };
 
@@ -311,6 +360,11 @@ export function MyBookingsScreen({ navigation }) {
       Alert.alert("Invalid Input", "Please enter a valid 4-digit OTP check-in code.");
       return;
     }
+    const targetBooking = items.find(i => (i.id || i._id) === activeBookingId);
+    if (targetBooking && (targetBooking.status === "cancelled" || targetBooking.status === "declined")) {
+      setOtpModalVisible(false);
+      return Alert.alert("Booking Cancelled", "This booking is cancelled. OTP verification cannot be performed.");
+    }
     setVerifying(true);
     try {
       await api.post("/bookings/verify-otp", { bookingId: activeBookingId, otp: otpInput });
@@ -357,6 +411,11 @@ export function MyBookingsScreen({ navigation }) {
     if (!completionOtpInput || completionOtpInput.trim().length !== 4) {
       Alert.alert("Invalid Input", "Please enter the 4-digit Completion OTP code.");
       return;
+    }
+    const targetBooking = items.find(i => (i.id || i._id) === activeCompletionBookingId);
+    if (targetBooking && (targetBooking.status === "cancelled" || targetBooking.status === "declined")) {
+      setCompletionOtpModalVisible(false);
+      return Alert.alert("Booking Cancelled", "This booking is cancelled. Completion OTP verification cannot be performed.");
     }
     setVerifyingCompletionOtp(true);
     try {
@@ -505,11 +564,13 @@ export function MyBookingsScreen({ navigation }) {
 
   const activeOtpBooking = React.useMemo(() => {
     return items.find(i => 
-      (i.isTailorOrder && (
-        (i.status === "accepted" && i.otp && !i.isOtpVerified) ||
-        (i.deliveryOtp && !i.isDeliveryOtpVerified)
-      )) ||
-      (!i.isTailorOrder && i.status === "confirmed" && i.verificationPin && !i.isOtpVerified)
+      !["cancelled", "declined", "rejected", "expired"].includes(i.status) && (
+        (i.isTailorOrder && (
+          (i.status === "accepted" && i.otp && !i.isOtpVerified) ||
+          (i.deliveryOtp && !i.isDeliveryOtpVerified)
+        )) ||
+        (!i.isTailorOrder && i.status === "confirmed" && i.verificationPin && !i.isOtpVerified)
+      )
     );
   }, [items]);
 
@@ -736,21 +797,30 @@ export function MyBookingsScreen({ navigation }) {
         )}
 
         {item.homeServiceAddress ? (
-          <View style={{ backgroundColor: "#f8fafc", padding: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: "#e2e8f0", flexDirection: "row", alignItems: "flex-start" }}>
+          <Pressable
+            onPress={() => openMapForNavigation(item.homeServiceAddress, item.homeServiceLocation, "Service Address")}
+            style={({ pressed }) => [
+              { backgroundColor: "#f8fafc", padding: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: "#e2e8f0", flexDirection: "row", alignItems: "flex-start" },
+              pressed && { opacity: 0.8 }
+            ]}
+          >
             <Ionicons name="location-sharp" size={14} color="#6d28d9" style={{ marginRight: 6, marginTop: 2 }} />
             <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 11, fontWeight: "700", color: "#64748b" }}>
-                {item.isHomeService ? "Service Address:" : "Booking Address:"}
-              </Text>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={{ fontSize: 11, fontWeight: "700", color: "#64748b" }}>
+                  {item.isHomeService ? "Service Address:" : "Booking Address:"}
+                </Text>
+                <Text style={{ fontSize: 10, fontWeight: "700", color: "#6d28d9" }}>View on Map 🗺️</Text>
+              </View>
               <Text style={{ fontSize: 12, color: "#1e293b", fontWeight: "500", marginTop: 2 }}>
                 {item.homeServiceAddress}
               </Text>
             </View>
-          </View>
+          </Pressable>
         ) : null}
 
         {/* OTP Verified / Service In Progress Banner for Barber Booking */}
-        {(item.status === "in-progress" || item.isOtpVerified) && (
+        {item.status !== "cancelled" && item.status !== "declined" && (item.status === "in-progress" || item.isOtpVerified) && (
           <View style={{ backgroundColor: "#ecfdf5", padding: 14, borderRadius: 14, marginBottom: 14, borderWidth: 1, borderColor: "#a7f3d0" }}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
               <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
@@ -775,7 +845,7 @@ export function MyBookingsScreen({ navigation }) {
         )}
 
         {/* Completion OTP Card for Customer (Service Complete Verification) */}
-        {item.completionPin && !item.isCompletionOtpVerified && (
+        {item.status !== "cancelled" && item.status !== "declined" && item.completionPin && !item.isCompletionOtpVerified && (
           <View style={{ backgroundColor: "#fdf4ff", padding: 16, borderRadius: 16, marginBottom: 14, borderWidth: 1.5, borderColor: "#d946ef", shadowColor: "#d946ef", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, shadowRadius: 6, elevation: 4 }}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
               <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
@@ -1113,7 +1183,17 @@ export function MyBookingsScreen({ navigation }) {
         )}
 
         {/* Tailor Verification OTP Box */}
-        {item.status === "pending" ? (
+        {["cancelled", "declined"].includes(item.status) ? (
+          <View style={{ backgroundColor: "#fee2e2", padding: 12, borderRadius: 12, marginBottom: 14, borderWidth: 1, borderColor: "#fca5a5", flexDirection: "row", alignItems: "center" }}>
+            <Ionicons name="close-circle" size={20} color="#dc2626" style={{ marginRight: 10 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontWeight: "800", color: "#991b1b" }}>Booking Cancelled ❌</Text>
+              <Text style={{ fontSize: 12, color: "#dc2626", marginTop: 2 }}>
+                This tailor booking has been cancelled. OTP verification is no longer active.
+              </Text>
+            </View>
+          </View>
+        ) : item.status === "pending" ? (
           <View style={{ backgroundColor: isTailorVip ? "#faf5ff" : "#fffbeb", padding: 12, borderRadius: 12, marginBottom: 14, borderWidth: 1, borderColor: isTailorVip ? "#e9d5ff" : "#fef08a", flexDirection: "row", alignItems: "center" }}>
             <Ionicons name={isTailorVip ? "flash" : "time"} size={20} color={isTailorVip ? "#9333ea" : "#d97706"} style={{ marginRight: 10 }} />
             <View style={{ flex: 1 }}>
@@ -1161,8 +1241,118 @@ export function MyBookingsScreen({ navigation }) {
           </View>
         )}
 
+        {/* Customer Cloth Handover Photo Section */}
+        {item.status !== "pending" && !["cancelled", "declined"].includes(item.status) && (
+          <View style={{
+            backgroundColor: item.clothProofImageUrl ? "#f5f3ff" : "#fdf4ff",
+            padding: 12,
+            borderRadius: 14,
+            marginBottom: 14,
+            borderWidth: 1,
+            borderColor: item.clothProofImageUrl ? "#ddd6fe" : "#f5d0fe"
+          }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: item.clothProofImageUrl ? 10 : 6 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                <Ionicons name={item.clothProofImageUrl ? "camera" : "camera-outline"} size={20} color={item.clothProofImageUrl ? "#7c3aed" : "#a21caf"} style={{ marginRight: 8 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12, fontWeight: "800", color: item.clothProofImageUrl ? "#6d28d9" : "#86198f" }}>
+                    {item.clothProofImageUrl ? "CLOTH HANDOVER PHOTO (कपड़े की फोटो) 📸" : "GIVE CLOTH PHOTO (कपड़ा देने की फोटो)"}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: item.clothProofImageUrl ? "#7c3aed" : "#a21caf" }}>
+                    {item.clothProofImageUrl ? "Recorded on booking" : "Click photo of cloth given to tailor"}
+                  </Text>
+                </View>
+              </View>
+              {item.clothProofImageUrl ? (
+                <View style={{ backgroundColor: "#ede9fe", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
+                  <Text style={{ fontSize: 10, fontWeight: "800", color: "#6d28d9" }}>Photo Uploaded ✅</Text>
+                </View>
+              ) : null}
+            </View>
+
+            {item.clothProofImageUrl ? (
+              <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4 }}>
+                <Pressable
+                  onPress={() => {
+                    setPreviewImageUrl(item.clothProofImageUrl);
+                    setPreviewImageTitle("Cloth Handover Photo (कपड़े की फोटो)");
+                    setPreviewImageModalVisible(true);
+                  }}
+                  style={{ width: 64, height: 64, borderRadius: 10, overflow: "hidden", borderWidth: 1.5, borderColor: "#c4b5fd", marginRight: 12, backgroundColor: "#000" }}
+                >
+                  <Image source={{ uri: item.clothProofImageUrl }} style={{ width: "100%", height: "100%", resizeMode: "cover" }} />
+                </Pressable>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12, color: "#4c1d95", fontWeight: "600" }}>
+                    Proof of cloth handed over to tailor partner
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                    <Pressable
+                      onPress={() => {
+                        setPreviewImageUrl(item.clothProofImageUrl);
+                        setPreviewImageTitle("Cloth Handover Photo (कपड़े की फोटो)");
+                        setPreviewImageModalVisible(true);
+                      }}
+                      style={{ backgroundColor: "#7c3aed", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6 }}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: "700", color: "#fff" }}>View Full Photo 🔍</Text>
+                    </Pressable>
+                    {!item.isOtpVerified && (
+                      <Pressable
+                        onPress={() => handleUploadClothProof(item._id)}
+                        disabled={uploadingClothOrderId === item._id}
+                        style={{ backgroundColor: "#f3e8ff", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: "#d8b4fe" }}
+                      >
+                        {uploadingClothOrderId === item._id ? (
+                          <ActivityIndicator size="small" color="#7c3aed" />
+                        ) : (
+                          <Text style={{ fontSize: 11, fontWeight: "700", color: "#7c3aed" }}>Retake 📷</Text>
+                        )}
+                      </Pressable>
+                    )}
+                  </View>
+                </View>
+              </View>
+            ) : (
+              <View style={{ marginTop: 4 }}>
+                <Text style={{ fontSize: 11, color: "#701a75", marginBottom: 8, lineHeight: 16 }}>
+                  Tailor ko kapada dete samay photo click karke upload karein taki proof safe rahe.
+                </Text>
+                <Pressable
+                  onPress={() => handleUploadClothProof(item._id)}
+                  disabled={uploadingClothOrderId === item._id}
+                  style={({ pressed }) => [
+                    {
+                      backgroundColor: "#9333ea",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      paddingVertical: 10,
+                      paddingHorizontal: 14,
+                      borderRadius: 10,
+                      gap: 8
+                    },
+                    pressed && { opacity: 0.85 }
+                  ]}
+                >
+                  {uploadingClothOrderId === item._id ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <>
+                      <Ionicons name="camera" size={17} color="#ffffff" />
+                      <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 12 }}>
+                        Click / Upload Cloth Photo (कपड़े की फोटो) 📸
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+              </View>
+            )}
+          </View>
+        )}
+
         {/* Delivery OTP Box for Customer */}
-        {item.isOtpVerified && item.deliveryOtp && (
+        {!["cancelled", "declined"].includes(item.status) && item.isOtpVerified && item.deliveryOtp && (
           <View style={{ backgroundColor: item.isDeliveryOtpVerified ? "#ecfdf5" : "#e0f2fe", padding: 14, borderRadius: 14, marginBottom: 14, borderWidth: 1, borderColor: item.isDeliveryOtpVerified ? "#a7f3d0" : "#bae6fd" }}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
               <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
@@ -1193,6 +1383,62 @@ export function MyBookingsScreen({ navigation }) {
           </View>
         )}
 
+        {/* Delivered Outfit Proof Photo from Tailor */}
+        {item.deliveryProofImageUrl ? (
+          <View style={{
+            backgroundColor: "#f0fdf4",
+            padding: 12,
+            borderRadius: 14,
+            marginBottom: 14,
+            borderWidth: 1,
+            borderColor: "#bbf7d0"
+          }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                <Ionicons name="shield-checkmark" size={20} color="#16a34a" style={{ marginRight: 8 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12, fontWeight: "800", color: "#15803d" }}>
+                    DELIVERED OUTFIT PROOF (डिलीवरी प्रमाण फोटो) 📦📸
+                  </Text>
+                  <Text style={{ fontSize: 11, color: "#16a34a" }}>
+                    Photo uploaded by tailor partner at delivery
+                  </Text>
+                </View>
+              </View>
+              <View style={{ backgroundColor: "#dcfce7", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
+                <Text style={{ fontSize: 10, fontWeight: "800", color: "#16a34a" }}>Delivered Proof ✅</Text>
+              </View>
+            </View>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Pressable
+                onPress={() => {
+                  setPreviewImageUrl(item.deliveryProofImageUrl);
+                  setPreviewImageTitle("Delivered Outfit Proof (डिलीवरी प्रमाण)");
+                  setPreviewImageModalVisible(true);
+                }}
+                style={{ width: 64, height: 64, borderRadius: 10, overflow: "hidden", borderWidth: 1.5, borderColor: "#86efac", marginRight: 12, backgroundColor: "#000" }}
+              >
+                <Image source={{ uri: item.deliveryProofImageUrl }} style={{ width: "100%", height: "100%", resizeMode: "cover" }} />
+              </Pressable>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, color: "#166534", fontWeight: "600" }}>
+                  Photo of finished outfit uploaded by tailor partner upon handover
+                </Text>
+                <Pressable
+                  onPress={() => {
+                    setPreviewImageUrl(item.deliveryProofImageUrl);
+                    setPreviewImageTitle("Delivered Outfit Proof (डिलीवरी प्रमाण)");
+                    setPreviewImageModalVisible(true);
+                  }}
+                  style={{ backgroundColor: "#16a34a", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, alignSelf: "flex-start", marginTop: 6 }}
+                >
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#fff" }}>View Full Photo 🔍</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
         <View style={styles.detailsGrid}>
           <View style={styles.detailBlock}>
             <Text style={styles.detailLabel}>Mode</Text>
@@ -1207,21 +1453,30 @@ export function MyBookingsScreen({ navigation }) {
         </View>
 
         {item.homeServiceAddress ? (
-          <View style={{ backgroundColor: "#f0fdfa", padding: 10, borderRadius: 10, marginBottom: 14, borderWidth: 1, borderColor: "#ccfbf1", flexDirection: "row", alignItems: "flex-start" }}>
+          <Pressable
+            onPress={() => openMapForNavigation(item.homeServiceAddress, item.homeServiceLocation, "Order Address")}
+            style={({ pressed }) => [
+              { backgroundColor: "#f0fdfa", padding: 10, borderRadius: 10, marginBottom: 14, borderWidth: 1, borderColor: "#ccfbf1", flexDirection: "row", alignItems: "flex-start" },
+              pressed && { opacity: 0.8 }
+            ]}
+          >
             <Ionicons name="location-sharp" size={15} color="#0d9488" style={{ marginRight: 6, marginTop: 2 }} />
             <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 11, fontWeight: "700", color: "#0f766e" }}>
-                {item.isHomeService ? "Doorstep Visit Address:" : "Delivery Address:"}
-              </Text>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={{ fontSize: 11, fontWeight: "700", color: "#0f766e" }}>
+                  {item.isHomeService ? "Doorstep Visit Address:" : "Delivery Address:"}
+                </Text>
+                <Text style={{ fontSize: 10, fontWeight: "700", color: "#0d9488" }}>View Map 🗺️</Text>
+              </View>
               <Text style={{ fontSize: 12, color: "#134e4a", fontWeight: "500", marginTop: 2 }}>
                 {item.homeServiceAddress}
               </Text>
             </View>
-          </View>
+          </Pressable>
         ) : null}
 
-        {/* Promised Delivery / Completion Date Banner */}
-        {item.deliveryDate ? (
+        {/* Promised Delivery / Completion Date Banner - ONLY show once tailor partner has confirmed & filled estimate */}
+        {item.status !== "pending" && item.deliveryDate ? (
           <View style={{ 
             backgroundColor: isTailorVip ? "#faf5ff" : "#f3e8ff", 
             padding: 14, 
@@ -1252,12 +1507,12 @@ export function MyBookingsScreen({ navigation }) {
               </View>
               <View style={{ backgroundColor: isTailorVip ? "#7e22ce" : "#6d28d9", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}>
                 <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 12 }}>
-                  {isTailorVip ? (vipCompletionTime || `${item.estimatedDays || 1}d`) : `${item.estimatedDays || 3}d`}
+                  {isTailorVip ? (vipCompletionTime || `${item.estimatedDays || 1}d`) : (item.estimatedDays ? `${item.estimatedDays}d` : "Confirmed")}
                 </Text>
               </View>
             </View>
           </View>
-        ) : (vipCompletionTime || item.estimatedDays) ? (
+        ) : (item.status !== "pending" && (item.completionTime || item.estimatedDays)) || (isTailorVip && vipCompletionTime) ? (
           <View style={{ backgroundColor: isTailorVip ? "#faf5ff" : "#f3e8ff", padding: 12, borderRadius: 12, marginBottom: 14, borderWidth: 1, borderColor: isTailorVip ? "#c084fc" : "#d8b4fe", flexDirection: "row", alignItems: "center" }}>
             <Ionicons name={isTailorVip ? "flash" : "time"} size={20} color={isTailorVip ? "#9333ea" : "#6d28d9"} style={{ marginRight: 10 }} />
             <View style={{ flex: 1 }}>
@@ -1267,7 +1522,7 @@ export function MyBookingsScreen({ navigation }) {
               <Text style={{ fontSize: 13, fontWeight: "900", color: "#4c1d95", marginTop: 2 }}>
                 {isTailorVip 
                   ? `Your order will be completed in ${vipCompletionTime || "12 Hours"}`
-                  : `Will complete in ${item.estimatedDays || 3} Days`}
+                  : `Will complete in ${item.completionTime || `${item.estimatedDays} Days`}`}
               </Text>
             </View>
             {isTailorVip && (
@@ -1447,42 +1702,81 @@ export function MyBookingsScreen({ navigation }) {
         ) : null}
 
         {item.isHomeService ? (
-          <View style={[styles.homeServiceBadge, { flexDirection: "column", alignItems: "flex-start", paddingVertical: 10, paddingHorizontal: 14, width: "100%" }]}>
+          <View style={[styles.homeServiceBadge, { flexDirection: "column", alignItems: "flex-start", paddingVertical: 12, paddingHorizontal: 14, width: "100%", borderRadius: 14, backgroundColor: "#fcfaff", borderWidth: 1.5, borderColor: "#ddd6fe" }]}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
               <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Ionicons name="home" size={14} color="#6d28d9" style={{ marginRight: 6 }} />
-                <Text style={styles.homeServiceBadgeText}>Home Service Request</Text>
+                <Ionicons name="home" size={16} color="#7c3aed" style={{ marginRight: 6 }} />
+                <Text style={[styles.homeServiceBadgeText, { color: "#6d28d9", fontWeight: "800", fontSize: 13 }]}>Home Service Booking</Text>
               </View>
               {item.customer?.phone && (
-                <Pressable style={{ flexDirection: 'row', alignItems: 'center' }} onPress={() => Linking.openURL(`tel:${item.customer.phone}`)}>
+                <Pressable
+                  style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: "#ede9fe", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20 }}
+                  onPress={() => Linking.openURL(`tel:${item.customer.phone}`)}
+                >
                   <Ionicons name="call" size={12} color="#6d28d9" style={{ marginRight: 4 }} />
-                  <Text style={{ fontSize: 12, color: "#6d28d9", textDecorationLine: 'underline', fontWeight: 'bold' }}>{item.customer.phone}</Text>
+                  <Text style={{ fontSize: 12, color: "#6d28d9", fontWeight: '700' }}>{item.customer.phone}</Text>
                 </Pressable>
               )}
             </View>
-            <Text style={{ fontSize: 13, color: "#4c1d95", fontWeight: "500", marginTop: 6 }}>
-              <Text style={{ fontWeight: "700" }}>Address:</Text> {item.homeServiceAddress || "Not provided"}
-            </Text>
-            {item.homeServiceLocation?.lat != null && item.homeServiceLocation?.lng != null && (
-              <Pressable
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: '#7c3aed',
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  borderRadius: 8,
+
+            {/* Clickable Customer Address Card with Map Direction Launcher */}
+            <Pressable
+              style={({ pressed }) => [
+                {
                   marginTop: 10,
-                  alignSelf: 'flex-start'
-                }}
-                onPress={() => {
-                  Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${item.homeServiceLocation.lat},${item.homeServiceLocation.lng}`);
-                }}
-              >
-                <Ionicons name="navigate" size={14} color="#ffffff" style={{ marginRight: 6 }} />
-                <Text style={{ fontSize: 12, color: '#ffffff', fontWeight: '800' }}>Navigate to Customer</Text>
-              </Pressable>
-            )}
+                  backgroundColor: "#ffffff",
+                  padding: 12,
+                  borderRadius: 12,
+                  borderWidth: 1.5,
+                  borderColor: item.status === "confirmed" ? "#8b5cf6" : "#c4b5fd",
+                  width: "100%",
+                  shadowColor: "#7c3aed",
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.08,
+                  shadowRadius: 5,
+                  elevation: 2,
+                },
+                pressed && { opacity: 0.88, transform: [{ scale: 0.99 }] }
+              ]}
+              onPress={() => {
+                const targetAddress = item.homeServiceAddress || (item.customer?.address?.line1 ? `${item.customer.address.line1}, ${item.customer.address.city || ""}` : "");
+                openMapForNavigation(targetAddress, item.homeServiceLocation, `${item.customer?.name || "Customer"}'s Home`);
+              }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                  <Ionicons name="location-sharp" size={16} color="#7c3aed" style={{ marginRight: 5 }} />
+                  <Text style={{ fontSize: 12, fontWeight: "800", color: "#6d28d9", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    Customer Address
+                  </Text>
+                </View>
+                <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#7c3aed", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+                  <Ionicons name="navigate" size={12} color="#ffffff" style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: "#ffffff" }}>Open Map</Text>
+                </View>
+              </View>
+
+              <Text style={{ fontSize: 13, color: "#1e1b4b", fontWeight: "600", lineHeight: 19 }}>
+                {item.homeServiceAddress || (item.customer?.address?.line1 ? `${item.customer.address.line1}, ${item.customer.address.city || ""}` : "Tap to open navigation coords")}
+              </Text>
+
+              {item.status === "confirmed" && (
+                <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#f5f3ff", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, marginTop: 8 }}>
+                  <Ionicons name="checkmark-circle" size={13} color="#7c3aed" style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 11, color: "#6d28d9", fontWeight: "700" }}>Confirmed - Tap address to navigate to customer</Text>
+                </View>
+              )}
+
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: "#f3e8ff" }}>
+                <Text style={{ fontSize: 11, color: "#7c3aed", fontWeight: "600" }}>
+                  📍 Tap to start Google Maps directions
+                </Text>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Text style={{ fontSize: 11, color: "#4c1d95", fontWeight: "800", marginRight: 3 }}>Navigate</Text>
+                  <Ionicons name="arrow-forward" size={12} color="#4c1d95" />
+                </View>
+              </View>
+            </Pressable>
           </View>
         ) : (
           <View style={{ width: "100%", marginTop: 4 }}>
@@ -1499,15 +1793,24 @@ export function MyBookingsScreen({ navigation }) {
               )}
             </View>
             {item.homeServiceAddress ? (
-              <View style={{ backgroundColor: "#f8fafc", padding: 10, borderRadius: 10, marginTop: 6, borderWidth: 1, borderColor: "#e2e8f0" }}>
-                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 2 }}>
-                  <Ionicons name="location-sharp" size={13} color="#0284c7" style={{ marginRight: 4 }} />
-                  <Text style={{ fontSize: 12, fontWeight: "700", color: "#0369a1" }}>Customer Address:</Text>
+              <Pressable
+                onPress={() => openMapForNavigation(item.homeServiceAddress, item.homeServiceLocation, `${item.customer?.name || "Customer"}'s Location`)}
+                style={({ pressed }) => [
+                  { backgroundColor: "#f8fafc", padding: 10, borderRadius: 10, marginTop: 6, borderWidth: 1, borderColor: "#e2e8f0" },
+                  pressed && { opacity: 0.8 }
+                ]}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <Ionicons name="location-sharp" size={13} color="#0284c7" style={{ marginRight: 4 }} />
+                    <Text style={{ fontSize: 12, fontWeight: "700", color: "#0369a1" }}>Customer Address:</Text>
+                  </View>
+                  <Text style={{ fontSize: 10, color: "#0284c7", fontWeight: "700" }}>Tap for Map 🗺️</Text>
                 </View>
                 <Text style={{ fontSize: 12, color: "#334155", fontWeight: "500" }}>
                   {item.homeServiceAddress}
                 </Text>
-              </View>
+              </Pressable>
             ) : null}
           </View>
         )}
@@ -1962,6 +2265,33 @@ export function MyBookingsScreen({ navigation }) {
               </Pressable>
             </View>
           </View>
+        </View>
+      </Modal>
+
+      {/* Full-Screen Photo Preview Modal */}
+      <Modal visible={previewImageModalVisible} transparent animationType="fade" onRequestClose={() => setPreviewImageModalVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "center", alignItems: "center", padding: 20 }}>
+          <View style={{ width: "100%", flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <Text style={{ color: "#ffffff", fontSize: 16, fontWeight: "800", flex: 1 }}>{previewImageTitle || "Photo Preview"}</Text>
+            <Pressable
+              onPress={() => setPreviewImageModalVisible(false)}
+              style={{ backgroundColor: "rgba(255,255,255,0.2)", width: 36, height: 36, borderRadius: 18, justifyContent: "center", alignItems: "center" }}
+            >
+              <Ionicons name="close" size={24} color="#ffffff" />
+            </Pressable>
+          </View>
+          {previewImageUrl ? (
+            <Image
+              source={{ uri: previewImageUrl }}
+              style={{ width: "100%", height: "75%", borderRadius: 16, resizeMode: "contain" }}
+            />
+          ) : null}
+          <Pressable
+            onPress={() => setPreviewImageModalVisible(false)}
+            style={{ marginTop: 20, backgroundColor: "#ffffff", paddingVertical: 10, paddingHorizontal: 24, borderRadius: 12 }}
+          >
+            <Text style={{ color: "#0f172a", fontWeight: "800", fontSize: 14 }}>Close Preview</Text>
+          </Pressable>
         </View>
       </Modal>
 

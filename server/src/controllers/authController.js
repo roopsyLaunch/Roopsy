@@ -341,36 +341,75 @@ async function patchMe(req, res) {
 
 async function toggleFavorite(req, res) {
   try {
-    const { barberId } = req.body;
+    const barberId = req.body.barberId || req.body.shopId;
+    if (!barberId) return res.status(400).json({ error: "Shop ID is required" });
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ error: "User not found" });
 
-    const index = user.favoriteShops.indexOf(barberId);
+    if (!user.favoriteShops) user.favoriteShops = [];
+    const idStr = barberId.toString();
+    const index = user.favoriteShops.findIndex(id => id && id.toString() === idStr);
     if (index > -1) {
       user.favoriteShops.splice(index, 1);
     } else {
       user.favoriteShops.push(barberId);
     }
     await user.save();
-    res.json({ favoriteShops: user.favoriteShops });
+    res.json({ favoriteShops: user.favoriteShops.map(id => id.toString()) });
   } catch (error) {
+    console.error("toggleFavorite error:", error);
     res.status(500).json({ error: "Server error" });
   }
 }
 
 async function getFavorites(req, res) {
   try {
-    const user = await User.findById(req.user._id).populate("favoriteShops");
+    const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ error: "User not found" });
 
-    // Format like publicBarberCard but avoid importing from barberController to prevent circular deps
-    const { publicBarberCard } = require("./barberController");
-    const barbers = user.favoriteShops.map(b => {
-      // Need to populate or calculate fields if necessary, but we can just use the public card
-      return publicBarberCard ? publicBarberCard(b) : b;
-    });
+    const rawFavs = (user.favoriteShops || []).map(id => (id ? id.toString() : null)).filter(Boolean);
+    if (rawFavs.length === 0) {
+      return res.json({ favorites: [] });
+    }
 
-    res.json({ favorites: barbers });
+    const { publicBarberCard } = require("./barberController");
+
+    const [barbers, tailors] = await Promise.all([
+      Barber.find({ _id: { $in: rawFavs } }).populate("userId", "name phone email"),
+      Tailor.find({ _id: { $in: rawFavs } }).populate("userId", "name phone email"),
+    ]);
+
+    const barberCards = barbers.map(b => (publicBarberCard ? publicBarberCard(b) : b));
+    const tailorCards = tailors.map(t => ({
+      id: t._id.toString(),
+      shopName: t.shopName || "Tailor Studio",
+      businessCategory: "tailor",
+      ownerName: t.ownerName,
+      mobileNumber: t.mobileNumber,
+      bio: t.bio,
+      avatarUrl: t.avatarUrl,
+      shopPosterUrl: t.shopPosterUrl || (t.gallery && t.gallery[0]) || "",
+      address: t.address,
+      location: t.location,
+      isShopOpen: t.isShopOpen !== false,
+      offersHomeService: !!t.offersHomeService,
+      user: t.userId ? { id: t.userId._id, name: t.userId.name, phone: t.userId.phone } : null,
+      averageRating: t.ratingCount ? (t.ratingSum / t.ratingCount).toFixed(1) : "5.0",
+    }));
+
+    const cardMap = new Map();
+    barberCards.forEach(c => cardMap.set((c.id || c._id).toString(), c));
+    tailorCards.forEach(c => cardMap.set((c.id || c._id).toString(), c));
+
+    // Maintain exact order from user's favorites array
+    const orderedList = [];
+    for (const favId of rawFavs) {
+      if (cardMap.has(favId)) {
+        orderedList.push(cardMap.get(favId));
+      }
+    }
+
+    res.json({ favorites: orderedList });
   } catch (error) {
     console.error("getFavorites err", error);
     res.status(500).json({ error: "Server error" });

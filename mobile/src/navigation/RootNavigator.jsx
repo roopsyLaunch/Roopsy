@@ -28,6 +28,8 @@ import { AdminAnalyticsScreen } from "../screens/admin/AdminAnalyticsScreen";
 import { PendingBarberScreen } from "../screens/PendingBarberScreen";
 import { RejectedBarberScreen } from "../screens/RejectedBarberScreen";
 import { getSocket } from "../api/socket";
+import * as Notifications from "expo-notifications";
+import { navigateByNotification } from "../services/notificationNavigation";
 // Barber Screens
 import { BarberListScreen } from "../screens/barber/BarberListScreen";
 
@@ -225,6 +227,8 @@ function HomeStackNavigator() {
       <HomeStack.Screen name="TailorOrder" component={TailorOrderScreen} options={{ headerShown: false }} />
       <HomeStack.Screen name="MeasurementList" component={MeasurementListScreen} options={{ title: "My Measurements", headerShown: true }} />
       <HomeStack.Screen name="MeasurementForm" component={MeasurementFormScreen} options={{ title: "Measurement", headerShown: true }} />
+      <HomeStack.Screen name="BarberDetail" component={BarberDetailScreen} options={{ headerShown: false }} />
+      <HomeStack.Screen name="Favorites" component={FavoritesScreen} options={{ headerShown: false }} />
       <HomeStack.Screen name="ComingSoon" component={ComingSoonScreen} options={{ headerShown: false }} />
       <HomeStack.Screen name="UserGuide" component={UserGuideScreen} options={{ headerShown: false }} />
     </HomeStack.Navigator>
@@ -243,6 +247,15 @@ function ProfileStackNavigator() {
       }}
     >
       <ProfileStack.Screen name="ProfileMain" component={ProfileScreen} options={{ headerShown: false }} />
+      <ProfileStack.Screen name="Favorites" component={FavoritesScreen} options={{ headerShown: false }} />
+      <ProfileStack.Screen name="BarberDetail" component={BarberDetailScreen} options={{ headerShown: false }} />
+      <ProfileStack.Screen name="BeautyParlorDetail" component={BeautyParlorDetailScreen} options={{ headerShown: false }} />
+      <ProfileStack.Screen name="TailorDetail" component={TailorDetailScreen} options={{ headerShown: false }} />
+      <ProfileStack.Screen name="TailorOrder" component={TailorOrderScreen} options={{ headerShown: false }} />
+      <ProfileStack.Screen name="TailorServiceMode" component={TailorServiceModeScreen} options={{ headerShown: false }} />
+      <ProfileStack.Screen name="TailorFabric" component={TailorFabricScreen} options={{ headerShown: false }} />
+      <ProfileStack.Screen name="TailorDesign" component={TailorDesignScreen} options={{ headerShown: false }} />
+      <ProfileStack.Screen name="TailorMeasurementSelect" component={TailorMeasurementSelectScreen} options={{ headerShown: false }} />
       <ProfileStack.Screen name="MeasurementList" component={MeasurementListScreen} options={{ title: "My Measurements", headerShown: true }} />
       <ProfileStack.Screen name="MeasurementForm" component={MeasurementFormScreen} options={{ title: "Measurement", headerShown: true }} />
       <ProfileStack.Screen name="UserGuide" component={UserGuideScreen} options={{ headerShown: false }} />
@@ -262,21 +275,81 @@ function MainTabs() {
   const isPartner = user?.role === "barber" || isTailorPartner || isAdmin;
 
   useEffect(() => {
+    // 1. Listen for background & foreground push notification clicks in Android/iOS tray
+    const responseListener = Notifications.addNotificationResponseReceivedListener((response) => {
+      try {
+        const content = response?.notification?.request?.content;
+        if (content) {
+          navigateByNotification(navigation, content, user);
+        }
+      } catch (err) {
+        console.log("[PushNotification] Error on notification click:", err);
+      }
+    });
+
+    // 2. Check if the app was launched by tapping a notification from completely killed state
+    Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (response) {
+        try {
+          const content = response?.notification?.request?.content;
+          if (content) {
+            navigateByNotification(navigation, content, user);
+          }
+        } catch (err) {
+          console.log("[PushNotification] Error on cold-start notification click:", err);
+        }
+      }
+    });
+
+    return () => {
+      responseListener.remove();
+    };
+  }, [user, navigation]);
+
+  useEffect(() => {
     if (!user) return;
     const socket = getSocket();
     if (socket) {
       const handleNewBooking = (data) => {
         if (isPartner) {
-          Alert.alert("New Booking", "You have received a new booking request.");
+          Alert.alert(
+            "New Booking Received! 💈",
+            data?.message || "A new customer booking request has arrived.",
+            [
+              { text: "Dismiss", style: "cancel" },
+              {
+                text: "View Bookings",
+                onPress: () => {
+                  navigateByNotification(navigation, { data: { ...data, type: data?.type || "new_booking" }, title: "New Booking", body: data?.message }, user);
+                },
+              },
+            ]
+          );
         }
       };
+
       const handleBookingUpdated = (data) => {
-        if (data.status === "cancelled" || data.status === "declined") {
-           Alert.alert("Booking Cancelled", "A booking was cancelled or declined.");
-        } else if (data.status === "confirmed") {
-           Alert.alert("Booking Confirmed", "Your booking has been confirmed.");
-        }
+        const isCancelled = data.status === "cancelled" || data.status === "declined";
+        const isConfirmed = data.status === "confirmed";
+        const title = isConfirmed ? "Booking Confirmed! ✅" : isCancelled ? "Booking Cancelled ⚠️" : "Booking Updated 📋";
+        const msg = data.message || (isConfirmed ? "Your booking has been confirmed by the shop." : isCancelled ? "A booking was cancelled." : "Your booking status has been updated.");
+
+        Alert.alert(
+          title,
+          msg,
+          [
+            { text: "Dismiss", style: "cancel" },
+            {
+              text: isPartner ? "View Bookings" : "View Appointment",
+              onPress: () => {
+                const detectedType = data?.type || (data?.orderId || user?.role === "tailor" ? "tailor_order_update" : "booking_update");
+                navigateByNotification(navigation, { data: { ...data, type: detectedType }, title, body: msg }, user);
+              },
+            },
+          ]
+        );
       };
+
       const handleTurnUpcoming = (data) => {
         Alert.alert(
           "Your Turn is in 10 Minutes! ⏰",
@@ -284,13 +357,26 @@ function MainTabs() {
           [
             { text: "Dismiss", style: "cancel" },
             {
-              text: "View Booking",
+              text: "View Queue & OTP",
               onPress: () => {
-                try {
-                  navigation.navigate("MyBookings");
-                } catch (e) {
-                  console.log("Navigation error:", e);
-                }
+                navigateByNotification(navigation, { data: { ...data, type: data?.type || "turn_upcoming" }, title: "Your Turn is in 10 Minutes! ⏰", body: data?.message }, user);
+              },
+            },
+          ]
+        );
+      };
+
+      const handleGeneralNotification = (notif) => {
+        if (!notif) return;
+        Alert.alert(
+          notif.title || "Notification 🔔",
+          notif.body || "",
+          [
+            { text: "Dismiss", style: "cancel" },
+            {
+              text: "Open",
+              onPress: () => {
+                navigateByNotification(navigation, notif, user);
               },
             },
           ]
@@ -300,11 +386,15 @@ function MainTabs() {
       socket.on("newBooking", handleNewBooking);
       socket.on("bookingUpdated", handleBookingUpdated);
       socket.on("turnUpcoming", handleTurnUpcoming);
+      socket.on("notification", handleGeneralNotification);
+      socket.on("notificationReceived", handleGeneralNotification);
 
       return () => {
         socket.off("newBooking", handleNewBooking);
         socket.off("bookingUpdated", handleBookingUpdated);
         socket.off("turnUpcoming", handleTurnUpcoming);
+        socket.off("notification", handleGeneralNotification);
+        socket.off("notificationReceived", handleGeneralNotification);
       };
     }
   }, [user, isPartner, navigation]);

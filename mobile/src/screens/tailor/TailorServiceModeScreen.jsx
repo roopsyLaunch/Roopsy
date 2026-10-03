@@ -16,6 +16,9 @@ export function TailorServiceModeScreen({ route, navigation }) {
   
   const defaultAddr = user?.address?.line1 ? `${user.address.line1}, ${user.address.city || ""}` : "";
   const [address, setAddress] = useState(defaultAddr);
+  const [homeLocation, setHomeLocation] = useState(
+    user?.address?.lat && user?.address?.lng ? { lat: user.address.lat, lng: user.address.lng } : null
+  );
   const [submitting, setSubmitting] = useState(false);
   const [fetchingGps, setFetchingGps] = useState(false);
 
@@ -44,6 +47,9 @@ export function TailorServiceModeScreen({ route, navigation }) {
     setFetchingGps(true);
     try {
       const loc = await getCurrentGPSLocation();
+      if (loc && loc.lat && loc.lng) {
+        setHomeLocation({ lat: loc.lat, lng: loc.lng });
+      }
       if (loc && loc.displayName) {
         setAddress(loc.displayName);
       } else {
@@ -103,7 +109,7 @@ export function TailorServiceModeScreen({ route, navigation }) {
     const premiumSvc = (services || []).find(s => s.serviceMode === "premium" || s.isPremium || (s.name && /premium|vip/i.test(s.name)));
     const hasPremiumService = Boolean(premiumSvc);
     const premiumCompTime = premiumSvc?.completionTime || (hasPremiumService ? "12 Hours" : "");
-    const premiumEstDays = hasPremiumService ? (premiumSvc?.estimatedDays || 1) : (services[0]?.estimatedDays || 3);
+    const premiumEstDays = hasPremiumService ? (premiumSvc?.estimatedDays || 1) : undefined;
 
     setSubmitting(true);
     try {
@@ -120,9 +126,10 @@ export function TailorServiceModeScreen({ route, navigation }) {
         totalAmount: grandTotal,
         isHomeService: serviceMode === "home",
         isPremiumService: hasPremiumService,
-        completionTime: premiumCompTime,
-        estimatedDays: premiumEstDays,
+        completionTime: hasPremiumService ? premiumCompTime : undefined,
+        estimatedDays: hasPremiumService ? premiumEstDays : undefined,
         homeServiceAddress: address.trim() || "",
+        homeServiceLocation: homeLocation || undefined,
         visitDate: null,
         visitFee: activeFee
       });

@@ -13,7 +13,7 @@ const { width } = Dimensions.get("window");
 
 export function ProfileScreen() {
   const navigation = useNavigation();
-  const { user, barber, tailor, logout, refreshMe } = useAuth();
+  const { user, barber, tailor, favorites, logout, refreshMe } = useAuth();
   const isBarber = user?.role === "barber" || user?.role === "admin";
   const isTailor = user?.role === "tailor";
   const isPartner = isBarber || isTailor;
@@ -201,7 +201,7 @@ export function ProfileScreen() {
 
   const OptionRow = ({ icon, label, value, color = "#64748b", isDanger = false, onPress }) => (
     <Pressable style={styles.optionRow} onPress={onPress}>
-      <View style={[styles.iconWrapper, { backgroundColor: isDanger ? "#fee2e2" : "#f1f5f9" }]}>
+      <View style={[styles.iconWrapper, { backgroundColor: isDanger ? "#fee2e2" : color === "#ef4444" ? "#fee2e2" : "#f1f5f9" }]}>
         <Ionicons name={icon} size={20} color={isDanger ? "#ef4444" : color} />
       </View>
       <View style={styles.optionContent}>
@@ -260,6 +260,25 @@ export function ProfileScreen() {
               {isPartner ? partnerTypeStr : "CUSTOMER"}
             </Text>
           </View>
+
+          {/* Quick Favourite Shops Shortcut */}
+          <Pressable 
+            style={styles.profileFavShortcut} 
+            onPress={() => navigation.navigate("Favorites")}
+          >
+            <View style={styles.profileFavLeft}>
+              <View style={styles.profileFavIconWrap}>
+                <Ionicons name="heart" size={18} color="#ef4444" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.profileFavTitle}>My Favourite Shops ❤️</Text>
+                <Text style={styles.profileFavSub}>
+                  {favorites && favorites.length > 0 ? `${favorites.length} saved • Tap for quick booking` : "Save shops for instant 1-click booking"}
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+          </Pressable>
         </View>
 
         {/* Shop Dashboard Section (Only for Partners) */}
@@ -318,6 +337,20 @@ export function ProfileScreen() {
             </View>
           </View>
         )}
+
+        {/* Saved & Favourites Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Saved & Favourites ❤️</Text>
+          <View style={styles.cardGroup}>
+            <OptionRow 
+              icon="heart" 
+              label="My Favourite Shops" 
+              value={favorites && favorites.length > 0 ? `${favorites.length} Saved Shop${favorites.length > 1 ? "s" : ""}` : "1-Click Direct Booking"} 
+              color="#ef4444" 
+              onPress={() => navigation.navigate("Favorites")} 
+            />
+          </View>
+        </View>
 
         {/* Account Settings */}
         <View style={styles.section}>
@@ -940,6 +973,49 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 1,
     marginLeft: 6,
+  },
+  profileFavShortcut: {
+    width: "100%",
+    backgroundColor: "#fff1f2",
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderWidth: 1,
+    borderColor: "#fecdd3",
+  },
+  profileFavLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    marginRight: 8,
+  },
+  profileFavIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#ffffff",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 10,
+    shadowColor: "#ef4444",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  profileFavTitle: {
+    fontSize: 13.5,
+    fontWeight: "800",
+    color: "#9f1239",
+  },
+  profileFavSub: {
+    fontSize: 11,
+    color: "#be123c",
+    marginTop: 2,
   },
   section: {
     marginTop: 24,

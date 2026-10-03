@@ -432,14 +432,14 @@ export function TailorDetailScreen({ route, navigation }) {
           </Pressable>
         </View>
 
-        {/* Follow Button */}
+        {/* Favourite Button */}
         <Pressable
           style={[styles.followBtn, isFollowing && styles.followingBtn]}
           onPress={() => toggleFavorite(tailorId)}
         >
-          <Ionicons name="heart" size={15} color={isFollowing ? "#ffffff" : "#0d9488"} style={{ marginRight: 5 }} />
+          <Ionicons name={isFollowing ? "heart" : "heart-outline"} size={16} color={isFollowing ? "#ffffff" : "#ef4444"} style={{ marginRight: 5 }} />
           <Text style={[styles.followBtnText, isFollowing && styles.followingBtnText]}>
-            {isFollowing ? "Following" : "Follow"}
+            {isFollowing ? "Favourited" : "Favourite"}
           </Text>
         </Pressable>
       </View>
@@ -982,21 +982,21 @@ const styles = StyleSheet.create({
   followBtn: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 14,
+    paddingHorizontal: 13,
     paddingVertical: 7,
     borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#0d9488",
-    backgroundColor: "#ffffff",
+    borderWidth: 1.5,
+    borderColor: "#ef4444",
+    backgroundColor: "#fff5f5",
   },
   followingBtn: {
-    backgroundColor: "#0d9488",
-    borderColor: "#0d9488",
+    backgroundColor: "#ef4444",
+    borderColor: "#ef4444",
   },
   followBtnText: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#0d9488",
+    color: "#ef4444",
   },
   followingBtnText: {
     color: "#ffffff",

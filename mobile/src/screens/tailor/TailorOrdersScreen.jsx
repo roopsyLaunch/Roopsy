@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import {
   View, Text, StyleSheet, FlatList, ActivityIndicator, Pressable,
-  RefreshControl, Alert, Modal, TextInput, ScrollView, Linking, Platform
+  RefreshControl, Alert, Modal, TextInput, ScrollView, Linking, Platform, Image
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -9,6 +9,9 @@ import { api } from "../../api/client";
 import { getSocket } from "../../api/socket";
 import { useAuth } from "../../context/AuthContext";
 import { useFocusEffect } from "@react-navigation/native";
+import { openMapForNavigation } from "../../services/locationService";
+import { pickOrCaptureImage } from "../../services/imagePickerService";
+import { uploadImageAsync } from "../../api/upload";
 
 const formatDateOnly = (d) => {
   if (!d) return "N/A";
@@ -234,18 +237,37 @@ export function TailorOrdersScreen({ navigation, route }) {
   };
 
   // ----------------- Shop Queue Handlers -----------------
+  const [deliveryProofUri, setDeliveryProofUri] = useState(null);
+  const [uploadingDeliveryProof, setUploadingDeliveryProof] = useState(false);
+
+  const handlePickDeliveryPhoto = async () => {
+    const uri = await pickOrCaptureImage({
+      title: "Finished Outfit Delivery Photo 📸",
+      message: "Click photo of the finished delivered outfit (डिलीवरी प्रमाण):"
+    });
+    if (uri) {
+      setDeliveryProofUri(uri);
+    }
+  };
+
   const handleOpenDeliveryOtpModal = (orderId) => {
     setDeliveryOrderId(orderId);
     setDeliveryOtpInput("");
+    setDeliveryProofUri(null);
     setDeliveryOtpModalVisible(true);
   };
 
   const handleGenerateDeliveryOtp = async (orderId) => {
+    const curOrder = orders.find(o => (o._id || o.id) === orderId);
+    if (curOrder && (curOrder.status === "cancelled" || curOrder.status === "declined")) {
+      return Alert.alert("Order Cancelled", "Cannot generate delivery OTP for a cancelled order.");
+    }
     setGeneratingDeliveryOtp(true);
     try {
       await api.post(`/tailors/orders/${orderId}/generate-delivery-otp`);
       setDeliveryOrderId(orderId);
       setDeliveryOtpInput("");
+      setDeliveryProofUri(null);
       setDeliveryOtpModalVisible(true);
       await loadOrders();
       Alert.alert("Delivery OTP Generated 📦", "Customer has received the 4-digit Delivery OTP. Please enter and verify it when delivering the outfit.");
@@ -261,11 +283,26 @@ export function TailorOrdersScreen({ navigation, route }) {
     if (!deliveryOtpInput || deliveryOtpInput.trim().length !== 4) {
       return Alert.alert("Required", "Please enter the 4-digit Delivery OTP code.");
     }
+    const curOrder = orders.find(o => (o._id || o.id) === deliveryOrderId);
+    if (curOrder && (curOrder.status === "cancelled" || curOrder.status === "declined")) {
+      setDeliveryOtpModalVisible(false);
+      return Alert.alert("Order Cancelled", "This order is cancelled. Delivery OTP verification is disabled.");
+    }
     setVerifyingDeliveryOtp(true);
     try {
-      const res = await api.post(`/tailors/orders/${deliveryOrderId}/verify-delivery-otp`, { otp: deliveryOtpInput });
+      let uploadedDeliveryUrl = "";
+      if (deliveryProofUri) {
+        setUploadingDeliveryProof(true);
+        uploadedDeliveryUrl = await uploadImageAsync(deliveryProofUri);
+      }
+
+      const res = await api.post(`/tailors/orders/${deliveryOrderId}/verify-delivery-otp`, {
+        otp: deliveryOtpInput,
+        deliveryProofImageUrl: uploadedDeliveryUrl || undefined
+      });
       setDeliveryOtpModalVisible(false);
       setDeliveryOtpInput("");
+      setDeliveryProofUri(null);
       setDeliveryOrderId(null);
       await loadOrders();
       Alert.alert("Order Completed! 🎉", res.data?.message || "Delivery OTP verified & order marked completed!");
@@ -274,6 +311,7 @@ export function TailorOrdersScreen({ navigation, route }) {
       Alert.alert("Verification Error", err?.response?.data?.error || "Invalid Delivery OTP code.");
     } finally {
       setVerifyingDeliveryOtp(false);
+      setUploadingDeliveryProof(false);
     }
   };
 
@@ -408,6 +446,11 @@ export function TailorOrdersScreen({ navigation, route }) {
   const handleVerifyOtp = async () => {
     if (!otpInput || otpInput.trim().length !== 4) {
       return Alert.alert("Required", "Please enter the 4-digit OTP code.");
+    }
+    const curOrder = orders.find(o => (o._id || o.id) === otpOrderId);
+    if (curOrder && (curOrder.status === "cancelled" || curOrder.status === "declined")) {
+      setOtpModalVisible(false);
+      return Alert.alert("Order Cancelled", "This order is cancelled. OTP verification is disabled.");
     }
     setVerifyingOtp(true);
     try {
@@ -603,6 +646,7 @@ export function TailorOrdersScreen({ navigation, route }) {
   });
 
   const activeOtpBooking = customerAppointments.find(item =>
+    !["cancelled", "declined", "rejected", "expired"].includes(item.status) &&
     (
       (item.status === "confirmed" || item.status === "accepted" || item.status === "ready") &&
       (item.otp || item.deliveryOtp || item.verificationPin) &&
@@ -619,10 +663,9 @@ export function TailorOrdersScreen({ navigation, route }) {
     );
     const expDate = item.deliveryDate ? new Date(item.deliveryDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : null;
 
-    const pSvc = (item.services || []).find(s => s.serviceMode === "premium" || s.isPremium || (s.name && /premium|vip/i.test(s.name)) || s.completionTime);
-    const displayTurnaround = item.completionTime 
-      || pSvc?.completionTime 
-      || (isPremium ? "12 Hours" : (item.estimatedDays ? `${item.estimatedDays} Days` : ""));
+    const displayTurnaround = isPremium 
+      ? (item.completionTime || pSvc?.completionTime || "12 Hours")
+      : (item.status !== "pending" && (item.completionTime || item.estimatedDays) ? (item.completionTime || `${item.estimatedDays} Days`) : "");
 
     return (
       <View style={[styles.card, isPremium && styles.cardVIP]}>
@@ -696,27 +739,63 @@ export function TailorOrdersScreen({ navigation, route }) {
           ) : null}
         </View>
 
+        {/* Photo Proof Indicators */}
+        {(item.clothProofImageUrl || item.deliveryProofImageUrl) && (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+            {item.clothProofImageUrl ? (
+              <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#f5f3ff", paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: "#ddd6fe", gap: 5 }}>
+                <Ionicons name="camera" size={13} color="#7c3aed" />
+                <Text style={{ fontSize: 11, fontWeight: "700", color: "#6d28d9" }}>Cloth Photo Attached 📸</Text>
+              </View>
+            ) : null}
+            {item.deliveryProofImageUrl ? (
+              <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#f0fdf4", paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: "#bbf7d0", gap: 5 }}>
+                <Ionicons name="shield-checkmark" size={13} color="#16a34a" />
+                <Text style={{ fontSize: 11, fontWeight: "700", color: "#15803d" }}>Delivery Photo Attached 📦</Text>
+              </View>
+            ) : null}
+          </View>
+        )}
+
         {/* Customer Address & Contact Info */}
         {item.homeServiceAddress ? (
-          <View style={{ backgroundColor: "#f0fdfa", padding: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: "#ccfbf1" }}>
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+          <Pressable
+            onPress={() => openMapForNavigation(item.homeServiceAddress, item.homeServiceLocation, `${item.customerId?.name || "Customer"}'s Location`)}
+            style={({ pressed }) => [
+              { backgroundColor: "#f0fdfa", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1.5, borderColor: "#99f6e4" },
+              pressed && { opacity: 0.85 }
+            ]}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
               <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Ionicons name="location-sharp" size={14} color="#0d9488" style={{ marginRight: 4 }} />
-                <Text style={{ fontSize: 12, fontWeight: "700", color: "#0f766e" }}>
+                <Ionicons name="location-sharp" size={15} color="#0d9488" style={{ marginRight: 4 }} />
+                <Text style={{ fontSize: 12, fontWeight: "800", color: "#0f766e" }}>
                   {isHome ? "Doorstep Visit Address:" : "Customer Address:"}
                 </Text>
               </View>
-              {item.customerId?.phone && (
-                <Pressable onPress={() => Linking.openURL(`tel:${item.customerId.phone}`)} style={{ flexDirection: "row", alignItems: "center" }}>
-                  <Ionicons name="call" size={12} color="#0d9488" style={{ marginRight: 4 }} />
-                  <Text style={{ fontSize: 12, color: "#0d9488", fontWeight: "700", textDecorationLine: "underline" }}>{item.customerId.phone}</Text>
-                </Pressable>
-              )}
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                {item.customerId?.phone && (
+                  <Pressable onPress={() => Linking.openURL(`tel:${item.customerId.phone}`)} style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#ccfbf1", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
+                    <Ionicons name="call" size={11} color="#0d9488" style={{ marginRight: 3 }} />
+                    <Text style={{ fontSize: 11, color: "#0f766e", fontWeight: "700" }}>{item.customerId.phone}</Text>
+                  </Pressable>
+                )}
+                <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#0d9488", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 }}>
+                  <Ionicons name="navigate" size={11} color="#ffffff" style={{ marginRight: 3 }} />
+                  <Text style={{ fontSize: 10, color: "#ffffff", fontWeight: "800" }}>Map</Text>
+                </View>
+              </View>
             </View>
-            <Text style={{ fontSize: 12, color: "#134e4a", fontWeight: "500" }}>
+            <Text style={{ fontSize: 12.5, color: "#134e4a", fontWeight: "600", lineHeight: 18 }}>
               {item.homeServiceAddress}
             </Text>
-          </View>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: "#ccfbf1" }}>
+              <Text style={{ fontSize: 11, color: "#0d9488", fontWeight: "600" }}>
+                📍 Tap address to start navigation
+              </Text>
+              <Ionicons name="arrow-forward" size={12} color="#0d9488" />
+            </View>
+          </Pressable>
         ) : item.customerId?.phone ? (
           <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10, backgroundColor: "#f8fafc", padding: 8, borderRadius: 8, borderWidth: 1, borderColor: "#e2e8f0" }}>
             <Ionicons name="call" size={13} color="#0d9488" style={{ marginRight: 6 }} />
@@ -730,7 +809,7 @@ export function TailorOrdersScreen({ navigation, route }) {
         ) : null}
 
         {/* Initial OTP Verification Badge */}
-        {item.status !== "pending" && (
+        {item.status !== "pending" && !["cancelled", "declined", "completed"].includes(item.status) && (
           <View style={{ backgroundColor: item.isOtpVerified ? "#ecfdf5" : "#fffbeb", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: item.isOtpVerified ? "#a7f3d0" : "#fef08a", flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
             <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 }}>
               <Ionicons name={item.isOtpVerified ? "checkmark-circle" : "shield-checkmark"} size={18} color={item.isOtpVerified ? "#059669" : "#d97706"} style={{ marginRight: 6 }} />
@@ -1069,7 +1148,7 @@ export function TailorOrdersScreen({ navigation, route }) {
         ) : null}
 
         {/* Customer OTP Card */}
-        {item.otp && (
+        {item.otp && !["cancelled", "declined"].includes(item.status) && (
           <View style={{ backgroundColor: item.isOtpVerified ? "#ecfdf5" : "#fef3c7", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: item.isOtpVerified ? "#a7f3d0" : "#fde68a", flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
             <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
               <Ionicons name={item.isOtpVerified ? "checkmark-circle" : "key"} size={22} color={item.isOtpVerified ? "#059669" : "#d97706"} style={{ marginRight: 8 }} />
@@ -1085,7 +1164,7 @@ export function TailorOrdersScreen({ navigation, route }) {
         )}
 
         {/* Delivery OTP Card */}
-        {item.deliveryOtp && (
+        {item.deliveryOtp && !["cancelled", "declined"].includes(item.status) && (
           <View style={{ backgroundColor: item.isDeliveryOtpVerified ? "#ecfdf5" : "#e0f2fe", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: item.isDeliveryOtpVerified ? "#a7f3d0" : "#bae6fd", flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
             <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
               <Ionicons name={item.isDeliveryOtpVerified ? "checkmark-done-circle" : "cube"} size={22} color={item.isDeliveryOtpVerified ? "#059669" : "#0284c7"} style={{ marginRight: 8 }} />
@@ -1445,9 +1524,42 @@ export function TailorOrdersScreen({ navigation, route }) {
               </Pressable>
             </View>
 
-            <Text style={{ fontSize: 14, color: "#475569", marginBottom: 16 }}>
+            <Text style={{ fontSize: 14, color: "#475569", marginBottom: 12 }}>
               Ask customer for the 4-digit Delivery OTP to confirm receipt & complete order:
             </Text>
+
+            {/* Delivery Photo Capture */}
+            <View style={{ marginBottom: 16 }}>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: "#0369a1", marginBottom: 6 }}>
+                📸 Finished Outfit Delivery Photo (कपड़ा डिलीवरी फोटो):
+              </Text>
+              {deliveryProofUri ? (
+                <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#e0f2fe", padding: 10, borderRadius: 10, borderWidth: 1, borderColor: "#bae6fd" }}>
+                  <Image source={{ uri: deliveryProofUri }} style={{ width: 48, height: 48, borderRadius: 8, marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 12, fontWeight: "700", color: "#0369a1" }}>Delivery Photo Attached ✅</Text>
+                    <View style={{ flexDirection: "row", gap: 10, marginTop: 4 }}>
+                      <Pressable onPress={handlePickDeliveryPhoto}>
+                        <Text style={{ fontSize: 11, fontWeight: "700", color: "#0284c7" }}>Change 📷</Text>
+                      </Pressable>
+                      <Pressable onPress={() => setDeliveryProofUri(null)}>
+                        <Text style={{ fontSize: 11, fontWeight: "700", color: "#dc2626" }}>Remove</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <Pressable
+                  onPress={handlePickDeliveryPhoto}
+                  style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "#f0f9ff", paddingVertical: 10, borderRadius: 10, borderWidth: 1.5, borderColor: "#bae6fd", borderStyle: "dashed" }}
+                >
+                  <Ionicons name="camera" size={18} color="#0284c7" style={{ marginRight: 6 }} />
+                  <Text style={{ fontSize: 12, fontWeight: "800", color: "#0284c7" }}>
+                    Click / Upload Delivery Photo (कपड़ा डिलीवरी फोटो) 📸
+                  </Text>
+                </Pressable>
+              )}
+            </View>
 
             <TextInput
               style={{ backgroundColor: "#f8fafc", borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, fontSize: 24, fontWeight: "900", color: "#0284c7", letterSpacing: 8, textAlign: "center", borderWidth: 1, borderColor: "#bae6fd", marginBottom: 20 }}
@@ -1457,15 +1569,15 @@ export function TailorOrdersScreen({ navigation, route }) {
               maxLength={4}
               value={deliveryOtpInput}
               onChangeText={setDeliveryOtpInput}
-              editable={!verifyingDeliveryOtp}
+              editable={!verifyingDeliveryOtp && !uploadingDeliveryProof}
             />
 
             <View style={styles.modalActions}>
-              <Pressable style={styles.cancelBtn} onPress={() => setDeliveryOtpModalVisible(false)} disabled={verifyingDeliveryOtp}>
+              <Pressable style={styles.cancelBtn} onPress={() => setDeliveryOtpModalVisible(false)} disabled={verifyingDeliveryOtp || uploadingDeliveryProof}>
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </Pressable>
-              <Pressable style={[styles.confirmBtn, { backgroundColor: "#0284c7" }]} onPress={handleVerifyDeliveryOtp} disabled={verifyingDeliveryOtp}>
-                {verifyingDeliveryOtp ? <ActivityIndicator color="#fff" /> : <Text style={styles.confirmBtnText}>Verify & Complete ✅</Text>}
+              <Pressable style={[styles.confirmBtn, { backgroundColor: "#0284c7" }]} onPress={handleVerifyDeliveryOtp} disabled={verifyingDeliveryOtp || uploadingDeliveryProof}>
+                {verifyingDeliveryOtp || uploadingDeliveryProof ? <ActivityIndicator color="#fff" /> : <Text style={styles.confirmBtnText}>Verify & Complete ✅</Text>}
               </Pressable>
             </View>
           </View>

@@ -249,6 +249,15 @@ async function create(req, res) {
     }
   }
 
+  let finalHomeAddress = homeServiceAddress || "";
+  let finalHomeLocation = homeServiceLocation || undefined;
+  if (isHomeService && !finalHomeAddress && req.user?.address?.line1) {
+    finalHomeAddress = `${req.user.address.line1}, ${req.user.address.city || ""}`.trim();
+    if (!finalHomeLocation && req.user.address.lat && req.user.address.lng) {
+      finalHomeLocation = { lat: req.user.address.lat, lng: req.user.address.lng };
+    }
+  }
+
   const booking = await Booking.create({
     customerId: req.user._id,
     barberId: barber._id,
@@ -263,8 +272,8 @@ async function create(req, res) {
     verificationPin: "", // Generated upon confirmation by barber partner
     otpExpiresAt: null,
     isHomeService: isHomeService || false,
-    homeServiceAddress: homeServiceAddress || "",
-    homeServiceLocation: homeServiceLocation || undefined,
+    homeServiceAddress: finalHomeAddress,
+    homeServiceLocation: finalHomeLocation,
     selectedVariants: selectedVariants || {},
     queuePosition,
     staffId: staffId || null,
@@ -351,7 +360,10 @@ function formatBooking(b) {
     id: b._id, customerId: b.customerId, barberId: b.barberId, serviceIds: services.map(x => x.id), services,
     startTime: b.startTime, arrivalTime: arrivalTime, endTime: b.endTime, expectedDuration: b.expectedDuration, status: b.status, notes: b.notes,
     createdAt: b.createdAt, seatIndex: b.seatIndex, seatLabel: b.seatLabel, verificationPin: b.verificationPin,
-    isHomeService: b.isHomeService, homeServiceAddress: b.homeServiceAddress, homeServiceLocation: b.homeServiceLocation, selectedVariants: b.selectedVariants,
+    isHomeService: b.isHomeService,
+    homeServiceAddress: b.homeServiceAddress || (b.customerId?.address?.line1 ? `${b.customerId.address.line1}, ${b.customerId.address.city || ""}`.trim() : ""),
+    homeServiceLocation: b.homeServiceLocation || (b.customerId?.address?.lat && b.customerId?.address?.lng ? { lat: b.customerId.address.lat, lng: b.customerId.address.lng } : undefined),
+    selectedVariants: b.selectedVariants,
     isWalkIn: b.isWalkIn, guestName: b.guestName, guestPhone: b.guestPhone,
     queuePosition: b.queuePosition, arrivedAt: b.arrivedAt, startedAt: b.startedAt, completedAt: b.completedAt, delayMinutes: b.delayMinutes,
     staffId: b.staffId, paymentStatus: b.paymentStatus, customerETA: b.customerETA, barberETA: b.barberETA, barberArrivalTime: b.barberArrivalTime,
@@ -401,10 +413,17 @@ async function listMine(req, res) {
 async function listForBarber(req, res) {
   const barber = await Barber.findOne({ userId: req.user._id });
   if (!barber) return res.json({ bookings: [] });
-  const bookings = await Booking.find({ barberId: barber._id }).populate("serviceIds").populate("customerId", "name email phone avatarUrl").sort({ createdAt: -1 });
+  const bookings = await Booking.find({ barberId: barber._id }).populate("serviceIds").populate("customerId", "name email phone avatarUrl address").sort({ createdAt: -1 });
   const out = bookings.map(b => ({
     ...formatBooking(b),
-    customer: b.customerId ? { id: b.customerId._id, name: b.customerId.name, email: b.customerId.email, phone: b.customerId.phone, avatarUrl: b.customerId.avatarUrl } : null,
+    customer: b.customerId ? { 
+      id: b.customerId._id, 
+      name: b.customerId.name, 
+      email: b.customerId.email, 
+      phone: b.customerId.phone, 
+      avatarUrl: b.customerId.avatarUrl,
+      address: b.customerId.address
+    } : null,
   }));
   res.json({ bookings: out });
 }
@@ -472,6 +491,10 @@ async function patch(req, res) {
 
     if (["completed", "cancelled", "no-show"].includes(booking.status) && ["in-progress", "arrived", "confirmed", "pending"].includes(oldStatus)) {
       booking.queuePosition = 0; // Remove from queue
+      if (booking.status === "cancelled") {
+        booking.verificationPin = "";
+        booking.completionPin = "";
+      }
       if (barber && booking.seatIndex !== null && booking.seatIndex !== undefined) {
         const seat = barber.seats.find(s => s.index === booking.seatIndex);
         if (seat && !seat.isAvailable) {
@@ -847,6 +870,11 @@ async function verifyOtp(req, res) {
   const { bookingId, otp } = parsed.data;
   const booking = await Booking.findById(bookingId);
   if (!booking) return res.status(404).json({ error: "Booking not found" });
+
+  if (booking.status === "cancelled") {
+    return res.status(400).json({ error: "Cannot verify OTP. This booking has been cancelled." });
+  }
+
   const barber = await Barber.findOne({ userId: req.user._id });
   if (!barber || booking.barberId.toString() !== barber._id.toString()) return res.status(403).json({ error: "Forbidden" });
 
@@ -920,6 +948,10 @@ async function generateCompletionOtp(req, res) {
   const booking = await Booking.findById(bookingId).populate("serviceIds");
   if (!booking) return res.status(404).json({ error: "Booking not found" });
 
+  if (booking.status === "cancelled") {
+    return res.status(400).json({ error: "Cannot generate completion OTP. This booking has been cancelled." });
+  }
+
   const barber = await Barber.findOne({ userId: req.user._id });
   if (!barber || booking.barberId.toString() !== barber._id.toString()) {
     if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
@@ -988,6 +1020,10 @@ async function verifyCompletionOtp(req, res) {
 
   const booking = await Booking.findById(bookingId).populate("serviceIds");
   if (!booking) return res.status(404).json({ error: "Booking not found" });
+
+  if (booking.status === "cancelled") {
+    return res.status(400).json({ error: "Cannot verify completion OTP. This booking has been cancelled." });
+  }
 
   const barber = await Barber.findOne({ userId: req.user._id });
   if (!barber || booking.barberId.toString() !== barber._id.toString()) {
@@ -1224,6 +1260,8 @@ async function cancel(req, res) {
 
   booking.status = "cancelled";
   booking.queuePosition = 0;
+  booking.verificationPin = "";
+  booking.completionPin = "";
   if(parsed.data && parsed.data.reason) {
       booking.cancellationReason = parsed.data.reason;
   }

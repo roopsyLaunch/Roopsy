@@ -45,24 +45,34 @@ const tailorOrderSchema = new mongoose.Schema(
     isHomeService: { type: Boolean, default: false },
     isPremiumService: { type: Boolean, default: false },
     homeServiceAddress: { type: String, default: "" },
+    homeServiceLocation: {
+      lat: { type: Number },
+      lng: { type: Number },
+    },
     visitDate: { type: Date, required: false },
     visitFee: { type: Number, default: 0 },
     
-    // OTP Verification
+    // OTP Verification (Cloth Handover)
     otp: { type: String, default: "" },
     otpExpiresAt: { type: Date },
     isOtpVerified: { type: Boolean, default: false },
     otpVerifiedAt: { type: Date },
+    clothProofImageUrl: { type: String, default: "" },
+    clothProofUploadedAt: { type: Date },
+    clothProofUploadedBy: { type: String, default: "" },
     
-    // Final Delivery OTP Verification
+    // Final Delivery OTP Verification (Finished Order Delivery)
     deliveryOtp: { type: String, default: "" },
     isDeliveryOtpVerified: { type: Boolean, default: false },
     deliveryOtpVerifiedAt: { type: Date },
+    deliveryProofImageUrl: { type: String, default: "" },
+    deliveryProofUploadedAt: { type: Date },
+    deliveryProofUploadedBy: { type: String, default: "" },
     
     // Order lifecycle dates
     fittingDate: { type: Date, required: false },
     deliveryDate: { type: Date, required: false },
-    estimatedDays: { type: Number, default: 3 },
+    estimatedDays: { type: Number, default: null },
     completionTime: { type: String, default: "" },
     
     // ERP Phase 1: Full production pipeline
