@@ -945,7 +945,12 @@ export function BarberDetailScreen({ route, navigation }) {
               const badgeColor = idx === 0 ? "#4f46e5" : idx === 1 ? "#7c3aed" : "#0284c7";
 
               return (
-                <View key={service.id} style={styles.serviceItemCard}>
+                <Pressable
+                  key={service.id}
+                  style={[styles.serviceItemCard, isSelected && styles.serviceItemCardSelected]}
+                  onPress={() => toggleService(service)}
+                  activeOpacity={0.9}
+                >
                   {/* Service Image with Badges */}
                   <View style={styles.serviceImageContainer}>
                     {(() => {
@@ -970,12 +975,12 @@ export function BarberDetailScreen({ route, navigation }) {
 
                     {/* Top Right Heart Favorite */}
                     <Pressable
-                      style={styles.cardHeartBtn}
+                      style={[styles.cardHeartBtn, isSelected && styles.cardHeartBtnSelected]}
                       onPress={() => toggleService(service)}
                     >
                       <Ionicons
-                        name={isSelected ? "heart" : "heart-outline"}
-                        size={18}
+                        name={isSelected ? "checkmark-circle" : "checkmark-circle-outline"}
+                        size={22}
                         color={isSelected ? "#4f46e5" : "#ffffff"}
                       />
                     </Pressable>
@@ -1032,13 +1037,13 @@ export function BarberDetailScreen({ route, navigation }) {
 
                       <Pressable
                         style={[styles.bookNowBtn, isSelected && styles.bookNowBtnSelected]}
-                        onPress={() => handleBookIntent(service)}
+                        onPress={() => toggleService(service)}
                       >
-                        <Text style={styles.bookNowBtnText}>{isSelected ? "Selected ✓" : "Book Now"}</Text>
+                        <Text style={styles.bookNowBtnText}>{isSelected ? "Selected ✓" : "Select"}</Text>
                       </Pressable>
                     </View>
                   </View>
-                </View>
+                </Pressable>
               );
             })}
           </ScrollView>
@@ -1793,6 +1798,15 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
+  serviceItemCardSelected: {
+    borderColor: "#4f46e5",
+    borderWidth: 2,
+    backgroundColor: "#f5f3ff",
+    shadowColor: "#4f46e5",
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    elevation: 5,
+  },
   serviceImageContainer: {
     height: 140,
     width: "100%",
@@ -1840,6 +1854,9 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.35)",
     alignItems: "center",
     justifyContent: "center",
+  },
+  cardHeartBtnSelected: {
+    backgroundColor: "#ffffff",
   },
   serviceBody: {
     padding: 12,

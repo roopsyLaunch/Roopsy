@@ -665,7 +665,16 @@ export function TailorDetailScreen({ route, navigation }) {
               const badgeColor = isVIP ? "#7c3aed" : idx === 0 ? "#0d9488" : idx === 1 ? "#0284c7" : "#059669";
 
               return (
-                <View key={svcId} style={[styles.serviceItemCard, isVIP && styles.serviceItemCardVIP]}>
+                <Pressable
+                  key={svcId}
+                  style={[
+                    styles.serviceItemCard,
+                    isVIP && styles.serviceItemCardVIP,
+                    isSelected && (isVIP ? styles.serviceItemCardVIPSelected : styles.serviceItemCardSelected),
+                  ]}
+                  onPress={() => toggleService(service)}
+                  activeOpacity={0.9}
+                >
                   {/* VIP Top Highlight Ribbon */}
                   {isVIP && (
                     <View style={styles.vipTopRibbon}>
@@ -780,7 +789,7 @@ export function TailorDetailScreen({ route, navigation }) {
                       </Pressable>
                     </View>
                   </View>
-                </View>
+                </Pressable>
               );
             })}
           </ScrollView>
@@ -1237,6 +1246,24 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 6,
     elevation: 3,
+  },
+  serviceItemCardSelected: {
+    borderColor: "#0d9488",
+    borderWidth: 2,
+    backgroundColor: "#f0fdfa",
+    shadowColor: "#0d9488",
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  serviceItemCardVIPSelected: {
+    borderColor: "#7c3aed",
+    borderWidth: 2.5,
+    backgroundColor: "#faf5ff",
+    shadowColor: "#7c3aed",
+    shadowOpacity: 0.28,
+    shadowRadius: 10,
+    elevation: 7,
   },
   serviceImageContainer: {
     height: 140,
