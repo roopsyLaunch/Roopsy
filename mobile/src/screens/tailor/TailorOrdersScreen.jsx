@@ -863,23 +863,16 @@ export function TailorOrdersScreen({ navigation, route }) {
 
         {/* Initial OTP Verification Badge */}
         {item.status !== "pending" && !["cancelled", "declined", "completed"].includes(item.status) && (
-          <View style={{ backgroundColor: item.isOtpVerified ? "#ecfdf5" : "#fffbeb", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: item.isOtpVerified ? "#a7f3d0" : "#fef08a", flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-            <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 }}>
-              <Ionicons name={item.isOtpVerified ? "checkmark-circle" : "shield-checkmark"} size={18} color={item.isOtpVerified ? "#059669" : "#d97706"} style={{ marginRight: 6 }} />
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 13, fontWeight: "700", color: item.isOtpVerified ? "#047857" : "#b45309" }}>
-                  {item.isOtpVerified ? "Initial Booking OTP Verified ✅" : "🔒 Start OTP Verification Required"}
-                </Text>
-                {!item.isOtpVerified && (
-                  <Text style={{ fontSize: 11, color: "#d97706", marginTop: 2 }}>
-                    Verify initial OTP from customer to start production
-                  </Text>
-                )}
-              </View>
+          <View style={{ backgroundColor: item.isOtpVerified ? "#ecfdf5" : "#fffbeb", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, marginBottom: 8, borderWidth: 1, borderColor: item.isOtpVerified ? "#a7f3d0" : "#fef08a", flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+            <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8, gap: 5 }}>
+              <Ionicons name={item.isOtpVerified ? "checkmark-circle" : "shield-checkmark"} size={15} color={item.isOtpVerified ? "#059669" : "#d97706"} />
+              <Text style={{ fontSize: 11.5, fontWeight: "700", color: item.isOtpVerified ? "#047857" : "#b45309" }}>
+                {item.isOtpVerified ? "Initial Booking OTP Verified ✅" : "🔒 Customer OTP Required to Start"}
+              </Text>
             </View>
             {!item.isOtpVerified && (
-              <Pressable style={{ backgroundColor: "#d97706", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }} onPress={() => handleOpenOtpModal(item._id)}>
-                <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 12 }}>Verify OTP</Text>
+              <Pressable style={{ backgroundColor: "#d97706", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 }} onPress={() => handleOpenOtpModal(item._id)}>
+                <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 11 }}>Verify OTP</Text>
               </Pressable>
             )}
           </View>
@@ -887,27 +880,24 @@ export function TailorOrdersScreen({ navigation, route }) {
 
         {/* Delivery OTP Card for Ready / Active Orders */}
         {item.isOtpVerified && item.status !== "completed" && item.status !== "cancelled" && item.status !== "declined" && (
-          <View style={{ backgroundColor: item.isDeliveryOtpVerified ? "#ecfdf5" : item.deliveryOtp ? "#e0f2fe" : "#f0fdf4", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: item.isDeliveryOtpVerified ? "#a7f3d0" : item.deliveryOtp ? "#bae6fd" : "#bbf7d0" }}>
+          <View style={{ backgroundColor: item.isDeliveryOtpVerified ? "#ecfdf5" : item.deliveryOtp ? "#e0f2fe" : "#f0fdf4", paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8, marginBottom: 8, borderWidth: 1, borderColor: item.isDeliveryOtpVerified ? "#a7f3d0" : item.deliveryOtp ? "#bae6fd" : "#bbf7d0" }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 }}>
-                <Ionicons name={item.isDeliveryOtpVerified ? "checkmark-done-circle" : "cube"} size={20} color={item.isDeliveryOtpVerified ? "#059669" : item.deliveryOtp ? "#0284c7" : "#16a34a"} style={{ marginRight: 8 }} />
+              <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8, gap: 5 }}>
+                <Ionicons name={item.isDeliveryOtpVerified ? "checkmark-done-circle" : "cube"} size={16} color={item.isDeliveryOtpVerified ? "#059669" : item.deliveryOtp ? "#0284c7" : "#16a34a"} />
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 13, fontWeight: "800", color: item.isDeliveryOtpVerified ? "#047857" : item.deliveryOtp ? "#0369a1" : "#15803d" }}>
-                    {item.isDeliveryOtpVerified ? "Delivery OTP Verified ✅" : item.deliveryOtp ? "Delivery OTP Sent to Customer 📦" : "Ready for Delivery"}
-                  </Text>
-                  <Text style={{ fontSize: 11, color: item.deliveryOtp ? "#0284c7" : "#166534", marginTop: 2 }}>
-                    {item.isDeliveryOtpVerified ? "Order completed successfully" : item.deliveryOtp ? "Enter customer Delivery OTP to finish delivery" : "Tap Deliver Order to send Delivery OTP to customer"}
+                  <Text style={{ fontSize: 11.5, fontWeight: "800", color: item.isDeliveryOtpVerified ? "#047857" : item.deliveryOtp ? "#0369a1" : "#15803d" }}>
+                    {item.isDeliveryOtpVerified ? "Delivery OTP Verified ✅" : item.deliveryOtp ? "Delivery OTP Sent 📦" : "Ready for Delivery"}
                   </Text>
                 </View>
               </View>
               {!item.isDeliveryOtpVerified && (
                 <Pressable
-                  style={{ backgroundColor: item.deliveryOtp ? "#0284c7" : "#16a34a", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
+                  style={{ backgroundColor: item.deliveryOtp ? "#0284c7" : "#16a34a", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6 }}
                   onPress={() => item.deliveryOtp ? handleOpenDeliveryOtpModal(item._id) : handleGenerateDeliveryOtp(item._id)}
                   disabled={generatingDeliveryOtp}
                 >
                   {generatingDeliveryOtp ? <ActivityIndicator color="#fff" size="small" /> : (
-                    <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 12 }}>
+                    <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 11 }}>
                       {item.deliveryOtp ? "Verify Delivery OTP" : "Deliver Order 📦"}
                     </Text>
                   )}
@@ -917,35 +907,32 @@ export function TailorOrdersScreen({ navigation, route }) {
 
             {/* Delivery Photo Proof action row */}
             {!item.isDeliveryOtpVerified && (
-              <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: item.deliveryOtp ? "#bae6fd" : "#bbf7d0" }}>
+              <View style={{ marginTop: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: item.deliveryOtp ? "#bae6fd" : "#bbf7d0" }}>
                 {item.deliveryProofImageUrl ? (
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                     <Pressable
                       onPress={() => openImagePreview(item.deliveryProofImageUrl, "Delivered Outfit Proof (डिलीवरी प्रमाण फोटो) 📦📸")}
                       style={{ flexDirection: "row", alignItems: "center", flex: 1 }}
                     >
-                      <Image source={{ uri: item.deliveryProofImageUrl }} style={{ width: 36, height: 36, borderRadius: 6, marginRight: 8, borderWidth: 1.5, borderColor: "#86efac" }} />
-                      <View>
-                        <Text style={{ fontSize: 11, fontWeight: "800", color: "#15803d" }}>Delivery Photo Saved ✅</Text>
-                        <Text style={{ fontSize: 9.5, color: "#16a34a", fontWeight: "600" }}>Tap to view full photo 🔍</Text>
-                      </View>
+                      <Image source={{ uri: item.deliveryProofImageUrl }} style={{ width: 28, height: 28, borderRadius: 5, marginRight: 6, borderWidth: 1, borderColor: "#86efac" }} />
+                      <Text style={{ fontSize: 10.5, fontWeight: "800", color: "#15803d" }}>Delivery Photo Attached ✅</Text>
                     </Pressable>
                     <Pressable
                       onPress={() => handleCaptureDeliveryProofForOrder(item._id)}
                       disabled={uploadingDeliveryProof}
-                      style={{ backgroundColor: "#dcfce7", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}
+                      style={{ backgroundColor: "#dcfce7", paddingHorizontal: 7, paddingVertical: 3, borderRadius: 5 }}
                     >
-                      <Text style={{ fontSize: 10, fontWeight: "700", color: "#15803d" }}>Change 📷</Text>
+                      <Text style={{ fontSize: 9.5, fontWeight: "700", color: "#15803d" }}>Change 📷</Text>
                     </Pressable>
                   </View>
                 ) : (
                   <Pressable
                     onPress={() => handleCaptureDeliveryProofForOrder(item._id)}
                     disabled={uploadingDeliveryProof}
-                    style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "#ffffff", paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: item.deliveryOtp ? "#bae6fd" : "#bbf7d0" }}
+                    style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "#ffffff", paddingVertical: 5, paddingHorizontal: 8, borderRadius: 6, borderWidth: 1, borderColor: item.deliveryOtp ? "#bae6fd" : "#bbf7d0", gap: 5 }}
                   >
-                    <Ionicons name="camera" size={14} color="#0284c7" style={{ marginRight: 6 }} />
-                    <Text style={{ fontSize: 11, fontWeight: "700", color: "#0284c7" }}>
+                    <Ionicons name="camera" size={13} color="#0284c7" />
+                    <Text style={{ fontSize: 10.5, fontWeight: "700", color: "#0284c7" }}>
                       Upload Delivery Photo (कपड़ा डिलीवरी फोटो) 📸
                     </Text>
                   </Pressable>
@@ -1210,176 +1197,239 @@ export function TailorOrdersScreen({ navigation, route }) {
       (item.services || []).some(s => s.serviceMode === "premium" || (s.name && /premium|vip/i.test(s.name)))
     );
 
+    const tailorPhone = item.tailorId?.mobileNumber || item.tailorId?.phone || item.tailorId?.userId?.phone || item.tailorPhone || "";
+    const vipCompletionTime = (
+      item.completionTime ||
+      (item.services || []).find(s => s.serviceMode === "premium" || (s.name && /premium|vip/i.test(s.name)))?.completionTime ||
+      (isTailorVip ? "12 Hours" : "")
+    ).trim();
+
     return (
-      <View style={[styles.customerCard, isTailorVip && { borderColor: "#c084fc", borderWidth: 1.5, backgroundColor: "#fffdfa" }]}>
-        <View style={styles.cardHeader}>
-          <View style={styles.cardHeaderLeft}>
-            <View style={[styles.avatarCircle, { backgroundColor: "#f3e8ff", borderColor: "#d8b4fe" }]}>
-              <Text style={[styles.avatarText, { color: "#6d28d9" }]}>✂️</Text>
+      <View style={[styles.customerCard, isTailorVip && { borderColor: "#c084fc", borderWidth: 1.5, backgroundColor: "#fffdfa" }, { padding: 12, marginBottom: 12 }]}>
+        {/* VIP Micro Ribbon */}
+        {isTailorVip && (
+          <View style={{ backgroundColor: "#7e22ce", flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginBottom: 8 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+              <Ionicons name="sparkles" size={12} color="#fbbf24" />
+              <Text style={{ color: "#ffffff", fontWeight: "900", fontSize: 10.5, letterSpacing: 0.5 }}>
+                👑 PREMIUM VIP BOOKING
+              </Text>
             </View>
-            <View style={styles.cardHeaderInfo}>
+            <View style={{ backgroundColor: "#facc15", paddingHorizontal: 5, paddingVertical: 1, borderRadius: 3 }}>
+              <Text style={{ color: "#581c87", fontWeight: "900", fontSize: 9.5 }}>
+                {vipCompletionTime || "EXPRESS"}
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* Compact Card Header */}
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 }}>
+            <View style={[styles.avatarCircle, { width: 34, height: 34, borderRadius: 17, backgroundColor: "#f3e8ff", borderColor: "#d8b4fe", marginRight: 8 }]}>
+              <Text style={{ fontSize: 16 }}>✂️</Text>
+            </View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.shopName} numberOfLines={1}>{shopName}</Text>
               <Text style={styles.bookingIdText}>ORDER: #{item._id.slice(-6).toUpperCase()}</Text>
             </View>
           </View>
-          <View style={[styles.badge, { backgroundColor: statusStyle.bg }]}>
-            <Ionicons name={statusStyle.icon} size={12} color={statusStyle.text} style={{ marginRight: 4 }} />
-            <Text style={[styles.badgeText, { color: statusStyle.text }]}>{(item.status || "pending").toUpperCase()}</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            {Boolean(tailorPhone) && !["pending", "cancelled", "declined"].includes(item.status) && (
+              <Pressable
+                onPress={() => Linking.openURL(`tel:${tailorPhone}`)}
+                style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#7c3aed", paddingHorizontal: 9, paddingVertical: 4, borderRadius: 14, gap: 4 }}
+              >
+                <Ionicons name="call" size={11} color="#ffffff" />
+                <Text style={{ fontSize: 11, fontWeight: "700", color: "#ffffff" }}>Call</Text>
+              </Pressable>
+            )}
+            <View style={[styles.badge, { backgroundColor: statusStyle.bg, paddingHorizontal: 7, paddingVertical: 3 }]}>
+              <Ionicons name={statusStyle.icon} size={11} color={statusStyle.text} style={{ marginRight: 3 }} />
+              <Text style={[styles.badgeText, { color: statusStyle.text, fontSize: 10, fontWeight: "800" }]}>{(item.status || "pending").toUpperCase()}</Text>
+            </View>
           </View>
         </View>
 
-        <View style={styles.cardDivider} />
-
-        {/* Delivery / Completion Date Banner */}
-        {item.deliveryDate ? (
-          <View style={{ backgroundColor: "#f3e8ff", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: "#d8b4fe" }}>
-            <Text style={{ fontSize: 11, fontWeight: "800", color: "#6d28d9", textTransform: "uppercase" }}>Est. Completion</Text>
-            <Text style={{ fontSize: 14, fontWeight: "900", color: "#4c1d95", marginTop: 2 }}>
-              Your order will be completed by {new Date(item.deliveryDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+        {/* Compact OTP Strip */}
+        {["cancelled", "declined"].includes(item.status) ? (
+          <View style={{ backgroundColor: "#fee2e2", paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderColor: "#fca5a5" }}>
+            <Ionicons name="close-circle" size={13} color="#dc2626" />
+            <Text style={{ fontSize: 11, fontWeight: "700", color: "#991b1b" }}>Booking Cancelled ❌ • OTP inactive</Text>
+          </View>
+        ) : item.status === "pending" ? (
+          <View style={{ backgroundColor: isTailorVip ? "#faf5ff" : "#fffbeb", paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderColor: isTailorVip ? "#e9d5ff" : "#fef08a" }}>
+            <Ionicons name={isTailorVip ? "flash" : "time"} size={13} color={isTailorVip ? "#9333ea" : "#d97706"} />
+            <Text style={{ fontSize: 11, fontWeight: "700", color: isTailorVip ? "#7e22ce" : "#b45309", flex: 1 }}>
+              {isTailorVip ? "👑 VIP Order — Direct confirmation soon" : "⏳ Pending tailor confirmation • OTP will generate once accepted"}
             </Text>
           </View>
-        ) : null}
-
-        {/* Customer OTP Card */}
-        {item.otp && !["cancelled", "declined"].includes(item.status) && (
-          <View style={{ backgroundColor: item.isOtpVerified ? "#ecfdf5" : "#fef3c7", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: item.isOtpVerified ? "#a7f3d0" : "#fde68a", flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-              <Ionicons name={item.isOtpVerified ? "checkmark-circle" : "key"} size={22} color={item.isOtpVerified ? "#059669" : "#d97706"} style={{ marginRight: 8 }} />
-              <View>
-                <Text style={{ fontSize: 10, fontWeight: "800", color: item.isOtpVerified ? "#065f46" : "#b45309" }}>{item.isOtpVerified ? "IDENTITY VERIFIED ✅" : "SHARE WITH TAILOR ✂️"}</Text>
-                <Text style={{ fontSize: 20, fontWeight: "900", color: item.isOtpVerified ? "#047857" : "#b45309", letterSpacing: 3, marginTop: 1 }}>{item.otp}</Text>
-              </View>
-            </View>
-            <View style={{ backgroundColor: item.isOtpVerified ? "#d1fae5" : "#fef08a", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
-              <Text style={{ fontSize: 10, fontWeight: "800", color: item.isOtpVerified ? "#047857" : "#92400e" }}>{item.isOtpVerified ? "Verified" : "Show Tailor"}</Text>
-            </View>
-          </View>
-        )}
-
-        {/* Delivery OTP Card */}
-        {item.deliveryOtp && !["cancelled", "declined"].includes(item.status) && (
-          <View style={{ backgroundColor: item.isDeliveryOtpVerified ? "#ecfdf5" : "#e0f2fe", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: item.isDeliveryOtpVerified ? "#a7f3d0" : "#bae6fd", flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-              <Ionicons name={item.isDeliveryOtpVerified ? "checkmark-done-circle" : "cube"} size={22} color={item.isDeliveryOtpVerified ? "#059669" : "#0284c7"} style={{ marginRight: 8 }} />
-              <View>
-                <Text style={{ fontSize: 10, fontWeight: "800", color: item.isDeliveryOtpVerified ? "#065f46" : "#0369a1" }}>{item.isDeliveryOtpVerified ? "ORDER DELIVERED ✅" : "DELIVERY OTP 📦"}</Text>
-                <Text style={{ fontSize: 20, fontWeight: "900", color: item.isDeliveryOtpVerified ? "#047857" : "#0369a1", letterSpacing: 3, marginTop: 1 }}>{item.deliveryOtp}</Text>
-              </View>
-            </View>
-            <View style={{ backgroundColor: item.isDeliveryOtpVerified ? "#d1fae5" : "#e0f2fe", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
-              <Text style={{ fontSize: 10, fontWeight: "800", color: item.isDeliveryOtpVerified ? "#047857" : "#0369a1" }}>{item.isDeliveryOtpVerified ? "Delivered" : "Show Tailor"}</Text>
-            </View>
-          </View>
-        )}
-
-        {/* Customer Cloth Handover Photo Card */}
-        {item.clothProofImageUrl ? (
-          <View style={{
-            backgroundColor: "#faf5ff",
-            padding: 12,
-            borderRadius: 12,
-            marginBottom: 12,
-            borderWidth: 1,
-            borderColor: "#e9d5ff"
-          }}>
-            <Pressable
-              onPress={() => openImagePreview(item.clothProofImageUrl, "Cloth Handover Photo (कपड़े की फोटो) 📸")}
-              style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-                <Ionicons name="camera" size={16} color="#7c3aed" style={{ marginRight: 6 }} />
-                <Text style={{ fontSize: 11, fontWeight: "800", color: "#6d28d9" }}>
-                  CLOTH HANDOVER PHOTO (कपड़े की फोटो) 📸
+        ) : (
+          <View style={{ flexDirection: "row", gap: 6, marginBottom: 8 }}>
+            {/* Booking OTP Chip */}
+            <View style={{
+              flex: 1,
+              backgroundColor: item.isOtpVerified ? "#ecfdf5" : "#fef3c7",
+              borderWidth: 1,
+              borderColor: item.isOtpVerified ? "#a7f3d0" : "#fde68a",
+              borderRadius: 8,
+              paddingHorizontal: 8,
+              paddingVertical: 5,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between"
+            }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                <Ionicons name={item.isOtpVerified ? "checkmark-circle" : "key"} size={14} color={item.isOtpVerified ? "#059669" : "#d97706"} />
+                <Text style={{ fontSize: 10, fontWeight: "700", color: item.isOtpVerified ? "#065f46" : "#92400e" }}>
+                  {item.isOtpVerified ? "VERIFIED:" : "OTP:"}
+                </Text>
+                <Text style={{ fontSize: 14, fontWeight: "900", color: item.isOtpVerified ? "#047857" : "#b45309", letterSpacing: 1.5 }}>
+                  {item.otp || "----"}
                 </Text>
               </View>
-              <View style={{ backgroundColor: "#ede9fe", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                <Text style={{ fontSize: 9, fontWeight: "800", color: "#6d28d9" }}>Attached ✅</Text>
+              <View style={{ backgroundColor: item.isOtpVerified ? "#d1fae5" : "#fef08a", paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4 }}>
+                <Text style={{ fontSize: 9, fontWeight: "800", color: item.isOtpVerified ? "#047857" : "#92400e" }}>
+                  {item.isOtpVerified ? "Verified ✅" : "Show Tailor"}
+                </Text>
               </View>
-            </Pressable>
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
+            </View>
+
+            {/* Delivery OTP Chip */}
+            {item.isOtpVerified && item.deliveryOtp ? (
+              <View style={{
+                flex: 1,
+                backgroundColor: item.isDeliveryOtpVerified ? "#ecfdf5" : "#e0f2fe",
+                borderWidth: 1,
+                borderColor: item.isDeliveryOtpVerified ? "#a7f3d0" : "#bae6fd",
+                borderRadius: 8,
+                paddingHorizontal: 8,
+                paddingVertical: 5,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between"
+              }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <Ionicons name={item.isDeliveryOtpVerified ? "checkmark-done-circle" : "cube"} size={14} color={item.isDeliveryOtpVerified ? "#059669" : "#0284c7"} />
+                  <Text style={{ fontSize: 10, fontWeight: "700", color: item.isDeliveryOtpVerified ? "#065f46" : "#0369a1" }}>
+                    DELIVERY:
+                  </Text>
+                  <Text style={{ fontSize: 14, fontWeight: "900", color: item.isDeliveryOtpVerified ? "#047857" : "#0369a1", letterSpacing: 1.5 }}>
+                    {item.deliveryOtp}
+                  </Text>
+                </View>
+                <View style={{ backgroundColor: item.isDeliveryOtpVerified ? "#d1fae5" : "#e0f2fe", paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4 }}>
+                  <Text style={{ fontSize: 9, fontWeight: "800", color: item.isDeliveryOtpVerified ? "#047857" : "#0369a1" }}>
+                    {item.isDeliveryOtpVerified ? "Delivered ✅" : "Show Tailor"}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+          </View>
+        )}
+
+        {/* Compact Photo Proofs Row */}
+        {(item.clothProofImageUrl || item.deliveryProofImageUrl) && (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+            {item.clothProofImageUrl ? (
               <Pressable
                 onPress={() => openImagePreview(item.clothProofImageUrl, "Cloth Handover Photo (कपड़े की फोटो) 📸")}
-                style={{ width: 52, height: 52, borderRadius: 8, overflow: "hidden", borderWidth: 1.5, borderColor: "#c4b5fd", marginRight: 10, backgroundColor: "#000" }}
+                style={({ pressed }) => [
+                  {
+                    flexDirection: "row",
+                    alignItems: "center",
+                    backgroundColor: "#f5f3ff",
+                    borderWidth: 1,
+                    borderColor: "#ddd6fe",
+                    paddingHorizontal: 8,
+                    paddingVertical: 4,
+                    borderRadius: 8,
+                    gap: 6,
+                  },
+                  pressed && { opacity: 0.8 }
+                ]}
               >
-                <Image source={{ uri: item.clothProofImageUrl }} style={{ width: "100%", height: "100%", resizeMode: "cover" }} />
+                <Image source={{ uri: item.clothProofImageUrl }} style={{ width: 28, height: 28, borderRadius: 5, backgroundColor: "#000" }} />
+                <View>
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: "#6d28d9" }}>Cloth Photo 🔍</Text>
+                  <Text style={{ fontSize: 9, color: "#8b5cf6" }}>Tap to view full</Text>
+                </View>
               </Pressable>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 11, color: "#581c87", fontWeight: "600" }}>
-                  Photo of cloth handed over for tailoring.
-                </Text>
-                <Pressable
-                  onPress={() => openImagePreview(item.clothProofImageUrl, "Cloth Handover Photo (कपड़े की फोटो) 📸")}
-                  style={{ backgroundColor: "#7c3aed", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, alignSelf: "flex-start", marginTop: 4 }}
-                >
-                  <Text style={{ fontSize: 10, fontWeight: "700", color: "#fff" }}>View Full Photo 🔍</Text>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        ) : null}
+            ) : null}
 
-        {/* Delivered Outfit Proof Photo */}
-        {item.deliveryProofImageUrl ? (
-          <View style={{
-            backgroundColor: "#f0fdf4",
-            padding: 12,
-            borderRadius: 12,
-            marginBottom: 12,
-            borderWidth: 1,
-            borderColor: "#bbf7d0"
-          }}>
-            <Pressable
-              onPress={() => openImagePreview(item.deliveryProofImageUrl, "Delivered Outfit Proof (डिलीवरी प्रमाण फोटो) 📦📸")}
-              style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-                <Ionicons name="shield-checkmark" size={16} color="#16a34a" style={{ marginRight: 6 }} />
-                <Text style={{ fontSize: 11, fontWeight: "800", color: "#15803d" }}>
-                  DELIVERED OUTFIT PROOF (डिलीवरी प्रमाण फोटो) 📦📸
-                </Text>
-              </View>
-              <View style={{ backgroundColor: "#dcfce7", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                <Text style={{ fontSize: 9, fontWeight: "800", color: "#16a34a" }}>Delivered Proof ✅</Text>
-              </View>
-            </Pressable>
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
+            {item.deliveryProofImageUrl ? (
               <Pressable
                 onPress={() => openImagePreview(item.deliveryProofImageUrl, "Delivered Outfit Proof (डिलीवरी प्रमाण फोटो) 📦📸")}
-                style={{ width: 52, height: 52, borderRadius: 8, overflow: "hidden", borderWidth: 1.5, borderColor: "#86efac", marginRight: 10, backgroundColor: "#000" }}
+                style={({ pressed }) => [
+                  {
+                    flexDirection: "row",
+                    alignItems: "center",
+                    backgroundColor: "#f0fdf4",
+                    borderWidth: 1,
+                    borderColor: "#bbf7d0",
+                    paddingHorizontal: 8,
+                    paddingVertical: 4,
+                    borderRadius: 8,
+                    gap: 6,
+                  },
+                  pressed && { opacity: 0.8 }
+                ]}
               >
-                <Image source={{ uri: item.deliveryProofImageUrl }} style={{ width: "100%", height: "100%", resizeMode: "cover" }} />
+                <Image source={{ uri: item.deliveryProofImageUrl }} style={{ width: 28, height: 28, borderRadius: 5, backgroundColor: "#000" }} />
+                <View>
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: "#15803d" }}>Delivery Photo 🔍</Text>
+                  <Text style={{ fontSize: 9, color: "#16a34a" }}>Tap to view full</Text>
+                </View>
               </Pressable>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 11, color: "#166534", fontWeight: "600" }}>
-                  Photo of finished outfit uploaded by tailor partner upon delivery.
-                </Text>
-                <Pressable
-                  onPress={() => openImagePreview(item.deliveryProofImageUrl, "Delivered Outfit Proof (डिलीवरी प्रमाण फोटो) 📦📸")}
-                  style={{ backgroundColor: "#16a34a", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, alignSelf: "flex-start", marginTop: 4 }}
-                >
-                  <Text style={{ fontSize: 10, fontWeight: "700", color: "#fff" }}>View Full Photo 🔍</Text>
-                </Pressable>
-              </View>
-            </View>
+            ) : null}
           </View>
-        ) : null}
+        )}
 
-        <View style={styles.servicesBox}>
-          {(item.services || []).map((s, i) => (
-            <Text key={i} style={styles.serviceText}>• {s.name} (₹{s.price || 0})</Text>
-          ))}
-          <Text style={{ fontSize: 14, fontWeight: "800", color: "#0f172a", marginTop: 6 }}>Total: ₹{item.totalAmount}</Text>
+        {/* Compact Mode & Turnaround Strip */}
+        <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 8 }}>
+          <View style={{ backgroundColor: item.isPremiumService ? "#f3e8ff" : item.isHomeService ? "#ede9fe" : "#e0f2fe", paddingHorizontal: 7, paddingVertical: 2.5, borderRadius: 5 }}>
+            <Text style={{ fontSize: 10, fontWeight: "700", color: item.isPremiumService ? "#7c3aed" : item.isHomeService ? "#6d28d9" : "#0369a1" }}>
+              {item.isPremiumService ? "👑 VIP Express" : item.isHomeService ? "🏡 Home Visit" : "🏪 Shop Visit"}
+            </Text>
+          </View>
+
+          {(item.deliveryDate || item.completionTime || item.estimatedDays) ? (
+            <View style={{ backgroundColor: "#f3e8ff", paddingHorizontal: 7, paddingVertical: 2.5, borderRadius: 5, flexDirection: "row", alignItems: "center", gap: 3 }}>
+              <Ionicons name="time-outline" size={11} color="#6d28d9" />
+              <Text style={{ fontSize: 10, fontWeight: "700", color: "#6d28d9" }}>
+                {item.deliveryDate
+                  ? `Est: ${new Date(item.deliveryDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`
+                  : `Est: ${vipCompletionTime || item.completionTime || `${item.estimatedDays}d`}`}
+              </Text>
+            </View>
+          ) : null}
+
+          <Text style={{ fontSize: 10, color: "#64748b", marginLeft: "auto" }}>
+            {new Date(item.createdAt).toLocaleDateString()}
+          </Text>
+        </View>
+
+        {/* Compact Services & Price Summary */}
+        <View style={{ backgroundColor: "#f8fafc", padding: 8, borderRadius: 8, marginBottom: 8, borderWidth: 1, borderColor: "#f1f5f9" }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+            <Text style={{ fontSize: 11, color: "#475569", flex: 1, marginRight: 8 }} numberOfLines={1}>
+              ✂️ {(item.services || []).map(s => `${s.name}${s.quantity > 1 ? ` x${s.quantity}` : ""}`).join(", ")}
+            </Text>
+            <Text style={{ fontSize: 14, fontWeight: "900", color: "#6d28d9" }}>
+              ₹{item.totalAmount}
+            </Text>
+          </View>
         </View>
 
         {item.status === "pending" && (
-          <Pressable style={styles.cancelBookingBtn} onPress={() => cancelCustomerTailorOrder(item._id)}>
-            <Text style={styles.cancelBookingBtnText}>Cancel Order</Text>
+          <Pressable style={[styles.cancelBookingBtn, { paddingVertical: 6, borderRadius: 8 }]} onPress={() => cancelCustomerTailorOrder(item._id)}>
+            <Text style={[styles.cancelBookingBtnText, { fontSize: 11 }]}>Cancel Order</Text>
           </Pressable>
         )}
 
         {item.status === "completed" && (
           <Pressable
-            style={[styles.cancelBookingBtn, { backgroundColor: "#fef08a" }]}
+            style={[styles.cancelBookingBtn, { backgroundColor: "#fef08a", paddingVertical: 6, borderRadius: 8, marginTop: 2 }]}
             onPress={() => {
               setTailorRatingOrder(item);
               setTailorRating(5);
@@ -1387,7 +1437,7 @@ export function TailorOrdersScreen({ navigation, route }) {
               setTailorRatingModalVisible(true);
             }}
           >
-            <Text style={[styles.cancelBookingBtnText, { color: "#854d0e" }]}>⭐️ Rate Tailor Service</Text>
+            <Text style={[styles.cancelBookingBtnText, { color: "#854d0e", fontSize: 11 }]}>⭐️ Rate Tailor Service</Text>
           </Pressable>
         )}
       </View>
