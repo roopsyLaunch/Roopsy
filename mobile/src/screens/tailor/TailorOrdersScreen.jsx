@@ -835,43 +835,67 @@ export function TailorOrdersScreen({ navigation, route }) {
 
         {/* Customer Address & Contact Info */}
         {item.homeServiceAddress ? (
-          <Pressable
-            onPress={() => openMapForNavigation(item.homeServiceAddress, item.homeServiceLocation, `${item.customerId?.name || "Customer"}'s Location`)}
-            style={({ pressed }) => [
-              { backgroundColor: "#f0fdfa", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1.5, borderColor: "#99f6e4" },
-              pressed && { opacity: 0.85 }
-            ]}
-          >
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Ionicons name="location-sharp" size={15} color="#0d9488" style={{ marginRight: 4 }} />
-                <Text style={{ fontSize: 12, fontWeight: "800", color: "#0f766e" }}>
-                  {isHome ? "Doorstep Visit Address:" : "Customer Address:"}
-                </Text>
-              </View>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                {item.customerId?.phone && (
-                  <Pressable onPress={() => Linking.openURL(`tel:${item.customerId.phone}`)} style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#ccfbf1", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
-                    <Ionicons name="call" size={11} color="#0d9488" style={{ marginRight: 3 }} />
-                    <Text style={{ fontSize: 11, color: "#0f766e", fontWeight: "700" }}>{item.customerId.phone}</Text>
-                  </Pressable>
-                )}
-                <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#0d9488", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 }}>
-                  <Ionicons name="navigate" size={11} color="#ffffff" style={{ marginRight: 3 }} />
-                  <Text style={{ fontSize: 10, color: "#ffffff", fontWeight: "800" }}>Map</Text>
+          isHome && item.status !== "completed" ? (
+            <Pressable
+              onPress={() => openMapForNavigation(item.homeServiceAddress, item.homeServiceLocation, `${item.customerId?.name || "Customer"}'s Location`)}
+              style={({ pressed }) => [
+                { backgroundColor: "#f0fdfa", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1.5, borderColor: "#99f6e4" },
+                pressed && { opacity: 0.85 }
+              ]}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Ionicons name="location-sharp" size={15} color="#0d9488" style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 12, fontWeight: "800", color: "#0f766e" }}>
+                    Doorstep Visit Address:
+                  </Text>
+                </View>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  {item.customerId?.phone && (
+                    <Pressable onPress={() => Linking.openURL(`tel:${item.customerId.phone}`)} style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#ccfbf1", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
+                      <Ionicons name="call" size={11} color="#0d9488" style={{ marginRight: 3 }} />
+                      <Text style={{ fontSize: 11, color: "#0f766e", fontWeight: "700" }}>{item.customerId.phone}</Text>
+                    </Pressable>
+                  )}
+                  <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#0d9488", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 }}>
+                    <Ionicons name="navigate" size={11} color="#ffffff" style={{ marginRight: 3 }} />
+                    <Text style={{ fontSize: 10, color: "#ffffff", fontWeight: "800" }}>Map</Text>
+                  </View>
                 </View>
               </View>
-            </View>
-            <Text style={{ fontSize: 12.5, color: "#134e4a", fontWeight: "600", lineHeight: 18 }}>
-              {item.homeServiceAddress}
-            </Text>
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: "#ccfbf1" }}>
-              <Text style={{ fontSize: 11, color: "#0d9488", fontWeight: "600" }}>
-                📍 Tap address to start navigation
+              <Text style={{ fontSize: 12.5, color: "#134e4a", fontWeight: "600", lineHeight: 18 }}>
+                {item.homeServiceAddress}
               </Text>
-              <Ionicons name="arrow-forward" size={12} color="#0d9488" />
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: "#ccfbf1" }}>
+                <Text style={{ fontSize: 11, color: "#0d9488", fontWeight: "600" }}>
+                  📍 Tap address to start navigation
+                </Text>
+                <Ionicons name="arrow-forward" size={12} color="#0d9488" />
+              </View>
+            </Pressable>
+          ) : (
+            <View
+              style={{ backgroundColor: "#f8fafc", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: "#e2e8f0" }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Ionicons name="location-sharp" size={15} color="#64748b" style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 12, fontWeight: "800", color: "#475569" }}>
+                    {isHome ? "Doorstep Visit Address:" : "Customer Address:"}
+                  </Text>
+                </View>
+                {item.customerId?.phone && (
+                  <Pressable onPress={() => Linking.openURL(`tel:${item.customerId.phone}`)} style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#e2e8f0", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
+                    <Ionicons name="call" size={11} color="#475569" style={{ marginRight: 3 }} />
+                    <Text style={{ fontSize: 11, color: "#475569", fontWeight: "700" }}>{item.customerId.phone}</Text>
+                  </Pressable>
+                )}
+              </View>
+              <Text style={{ fontSize: 12.5, color: "#334155", fontWeight: "500", lineHeight: 18 }}>
+                {item.homeServiceAddress}
+              </Text>
             </View>
-          </Pressable>
+          )
         ) : item.customerId?.phone ? (
           <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10, backgroundColor: "#f8fafc", padding: 8, borderRadius: 8, borderWidth: 1, borderColor: "#e2e8f0" }}>
             <Ionicons name="call" size={13} color="#0d9488" style={{ marginRight: 6 }} />

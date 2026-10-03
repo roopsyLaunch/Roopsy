@@ -797,26 +797,42 @@ export function MyBookingsScreen({ navigation, route }) {
         )}
 
         {item.homeServiceAddress ? (
-          <Pressable
-            onPress={() => openMapForNavigation(item.homeServiceAddress, item.homeServiceLocation, "Service Address")}
-            style={({ pressed }) => [
-              { backgroundColor: "#f8fafc", padding: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: "#e2e8f0", flexDirection: "row", alignItems: "flex-start" },
-              pressed && { opacity: 0.8 }
-            ]}
-          >
-            <Ionicons name="location-sharp" size={14} color="#6d28d9" style={{ marginRight: 6, marginTop: 2 }} />
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+          item.isHomeService && item.status !== "completed" ? (
+            <Pressable
+              onPress={() => openMapForNavigation(item.homeServiceAddress, item.homeServiceLocation, "Service Address")}
+              style={({ pressed }) => [
+                { backgroundColor: "#f8fafc", padding: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: "#e2e8f0", flexDirection: "row", alignItems: "flex-start" },
+                pressed && { opacity: 0.8 }
+              ]}
+            >
+              <Ionicons name="location-sharp" size={14} color="#6d28d9" style={{ marginRight: 6, marginTop: 2 }} />
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#64748b" }}>
+                    Service Address:
+                  </Text>
+                  <Text style={{ fontSize: 10, fontWeight: "700", color: "#6d28d9" }}>View on Map 🗺️</Text>
+                </View>
+                <Text style={{ fontSize: 12, color: "#1e293b", fontWeight: "500", marginTop: 2 }}>
+                  {item.homeServiceAddress}
+                </Text>
+              </View>
+            </Pressable>
+          ) : (
+            <View
+              style={{ backgroundColor: "#f8fafc", padding: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: "#e2e8f0", flexDirection: "row", alignItems: "flex-start" }}
+            >
+              <Ionicons name="location-sharp" size={14} color="#64748b" style={{ marginRight: 6, marginTop: 2 }} />
+              <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 11, fontWeight: "700", color: "#64748b" }}>
                   {item.isHomeService ? "Service Address:" : "Booking Address:"}
                 </Text>
-                <Text style={{ fontSize: 10, fontWeight: "700", color: "#6d28d9" }}>View on Map 🗺️</Text>
+                <Text style={{ fontSize: 12, color: "#1e293b", fontWeight: "500", marginTop: 2 }}>
+                  {item.homeServiceAddress}
+                </Text>
               </View>
-              <Text style={{ fontSize: 12, color: "#1e293b", fontWeight: "500", marginTop: 2 }}>
-                {item.homeServiceAddress}
-              </Text>
             </View>
-          </Pressable>
+          )
         ) : null}
 
         {/* OTP Verified / Service In Progress Banner for Barber Booking */}
@@ -1195,7 +1211,7 @@ export function MyBookingsScreen({ navigation, route }) {
             ) : null}
           </View>
 
-          {item.homeServiceAddress && (
+          {item.homeServiceAddress && item.isHomeService && item.status !== "completed" && (
             <Pressable
               onPress={() => openMapForNavigation(item.homeServiceAddress, item.homeServiceLocation, "Order Address")}
               style={{ flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "#f0fdfa", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: "#ccfbf1" }}
@@ -1257,7 +1273,7 @@ export function MyBookingsScreen({ navigation, route }) {
                       </Pressable>
                     )}
                   </Pressable>
-                ) : (
+                ) : item.status !== "completed" ? (
                   <Pressable
                     onPress={() => handleUploadClothProof(item._id)}
                     disabled={uploadingClothOrderId === item._id}
@@ -1278,7 +1294,7 @@ export function MyBookingsScreen({ navigation, route }) {
                       {uploadingClothOrderId === item._id ? "Uploading..." : "+ Add Cloth Photo 📸"}
                     </Text>
                   </Pressable>
-                )}
+                ) : null}
 
                 {item.deliveryProofImageUrl ? (
                   <Pressable
@@ -1310,7 +1326,7 @@ export function MyBookingsScreen({ navigation, route }) {
                   </Pressable>
                 ) : null}
               </View>
-            ) : !item.isOtpVerified ? (
+            ) : (!item.isOtpVerified && item.status !== "completed") ? (
               <Pressable
                 onPress={() => handleUploadClothProof(item._id)}
                 disabled={uploadingClothOrderId === item._id}
@@ -1584,64 +1600,88 @@ export function MyBookingsScreen({ navigation, route }) {
               )}
             </View>
 
-            {/* Clickable Customer Address Card with Map Direction Launcher */}
-            <Pressable
-              style={({ pressed }) => [
-                {
+            {/* Customer Address Card */}
+            {item.status !== "completed" ? (
+              <Pressable
+                style={({ pressed }) => [
+                  {
+                    marginTop: 10,
+                    backgroundColor: "#ffffff",
+                    padding: 12,
+                    borderRadius: 12,
+                    borderWidth: 1.5,
+                    borderColor: item.status === "confirmed" ? "#8b5cf6" : "#c4b5fd",
+                    width: "100%",
+                    shadowColor: "#7c3aed",
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.08,
+                    shadowRadius: 5,
+                    elevation: 2,
+                  },
+                  pressed && { opacity: 0.88, transform: [{ scale: 0.99 }] }
+                ]}
+                onPress={() => {
+                  const targetAddress = item.homeServiceAddress || (item.customer?.address?.line1 ? `${item.customer.address.line1}, ${item.customer.address.city || ""}` : "");
+                  openMapForNavigation(targetAddress, item.homeServiceLocation, `${item.customer?.name || "Customer"}'s Home`);
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                    <Ionicons name="location-sharp" size={16} color="#7c3aed" style={{ marginRight: 5 }} />
+                    <Text style={{ fontSize: 12, fontWeight: "800", color: "#6d28d9", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      Customer Address
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#7c3aed", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+                    <Ionicons name="navigate" size={12} color="#ffffff" style={{ marginRight: 4 }} />
+                    <Text style={{ fontSize: 11, fontWeight: "800", color: "#ffffff" }}>Open Map</Text>
+                  </View>
+                </View>
+
+                <Text style={{ fontSize: 13, color: "#1e1b4b", fontWeight: "600", lineHeight: 19 }}>
+                  {item.homeServiceAddress || (item.customer?.address?.line1 ? `${item.customer.address.line1}, ${item.customer.address.city || ""}` : "Tap to open navigation coords")}
+                </Text>
+
+                {item.status === "confirmed" && (
+                  <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#f5f3ff", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, marginTop: 8 }}>
+                    <Ionicons name="checkmark-circle" size={13} color="#7c3aed" style={{ marginRight: 4 }} />
+                    <Text style={{ fontSize: 11, color: "#6d28d9", fontWeight: "700" }}>Confirmed - Tap address to navigate to customer</Text>
+                  </View>
+                )}
+
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: "#f3e8ff" }}>
+                  <Text style={{ fontSize: 11, color: "#7c3aed", fontWeight: "600" }}>
+                    📍 Tap to start Google Maps directions
+                  </Text>
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <Text style={{ fontSize: 11, color: "#4c1d95", fontWeight: "800", marginRight: 3 }}>Navigate</Text>
+                    <Ionicons name="arrow-forward" size={12} color="#4c1d95" />
+                  </View>
+                </View>
+              </Pressable>
+            ) : (
+              <View
+                style={{
                   marginTop: 10,
-                  backgroundColor: "#ffffff",
+                  backgroundColor: "#f8fafc",
                   padding: 12,
                   borderRadius: 12,
-                  borderWidth: 1.5,
-                  borderColor: item.status === "confirmed" ? "#8b5cf6" : "#c4b5fd",
+                  borderWidth: 1,
+                  borderColor: "#e2e8f0",
                   width: "100%",
-                  shadowColor: "#7c3aed",
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.08,
-                  shadowRadius: 5,
-                  elevation: 2,
-                },
-                pressed && { opacity: 0.88, transform: [{ scale: 0.99 }] }
-              ]}
-              onPress={() => {
-                const targetAddress = item.homeServiceAddress || (item.customer?.address?.line1 ? `${item.customer.address.line1}, ${item.customer.address.city || ""}` : "");
-                openMapForNavigation(targetAddress, item.homeServiceLocation, `${item.customer?.name || "Customer"}'s Home`);
-              }}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-                  <Ionicons name="location-sharp" size={16} color="#7c3aed" style={{ marginRight: 5 }} />
-                  <Text style={{ fontSize: 12, fontWeight: "800", color: "#6d28d9", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+                  <Ionicons name="location-sharp" size={15} color="#64748b" style={{ marginRight: 5 }} />
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: "#64748b", textTransform: "uppercase" }}>
                     Customer Address
                   </Text>
                 </View>
-                <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#7c3aed", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
-                  <Ionicons name="navigate" size={12} color="#ffffff" style={{ marginRight: 4 }} />
-                  <Text style={{ fontSize: 11, fontWeight: "800", color: "#ffffff" }}>Open Map</Text>
-                </View>
-              </View>
-
-              <Text style={{ fontSize: 13, color: "#1e1b4b", fontWeight: "600", lineHeight: 19 }}>
-                {item.homeServiceAddress || (item.customer?.address?.line1 ? `${item.customer.address.line1}, ${item.customer.address.city || ""}` : "Tap to open navigation coords")}
-              </Text>
-
-              {item.status === "confirmed" && (
-                <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#f5f3ff", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, marginTop: 8 }}>
-                  <Ionicons name="checkmark-circle" size={13} color="#7c3aed" style={{ marginRight: 4 }} />
-                  <Text style={{ fontSize: 11, color: "#6d28d9", fontWeight: "700" }}>Confirmed - Tap address to navigate to customer</Text>
-                </View>
-              )}
-
-              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: "#f3e8ff" }}>
-                <Text style={{ fontSize: 11, color: "#7c3aed", fontWeight: "600" }}>
-                  📍 Tap to start Google Maps directions
+                <Text style={{ fontSize: 12.5, color: "#334155", fontWeight: "500", lineHeight: 18 }}>
+                  {item.homeServiceAddress || (item.customer?.address?.line1 ? `${item.customer.address.line1}, ${item.customer.address.city || ""}` : "No address provided")}
                 </Text>
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <Text style={{ fontSize: 11, color: "#4c1d95", fontWeight: "800", marginRight: 3 }}>Navigate</Text>
-                  <Ionicons name="arrow-forward" size={12} color="#4c1d95" />
-                </View>
               </View>
-            </Pressable>
+            )}
           </View>
         ) : (
           <View style={{ width: "100%", marginTop: 4 }}>
@@ -1658,24 +1698,17 @@ export function MyBookingsScreen({ navigation, route }) {
               )}
             </View>
             {item.homeServiceAddress ? (
-              <Pressable
-                onPress={() => openMapForNavigation(item.homeServiceAddress, item.homeServiceLocation, `${item.customer?.name || "Customer"}'s Location`)}
-                style={({ pressed }) => [
-                  { backgroundColor: "#f8fafc", padding: 10, borderRadius: 10, marginTop: 6, borderWidth: 1, borderColor: "#e2e8f0" },
-                  pressed && { opacity: 0.8 }
-                ]}
+              <View
+                style={{ backgroundColor: "#f8fafc", padding: 10, borderRadius: 10, marginTop: 6, borderWidth: 1, borderColor: "#e2e8f0" }}
               >
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center" }}>
-                    <Ionicons name="location-sharp" size={13} color="#0284c7" style={{ marginRight: 4 }} />
-                    <Text style={{ fontSize: 12, fontWeight: "700", color: "#0369a1" }}>Customer Address:</Text>
-                  </View>
-                  <Text style={{ fontSize: 10, color: "#0284c7", fontWeight: "700" }}>Tap for Map 🗺️</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 2 }}>
+                  <Ionicons name="location-sharp" size={13} color="#64748b" style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: "#64748b" }}>Customer Address:</Text>
                 </View>
                 <Text style={{ fontSize: 12, color: "#334155", fontWeight: "500" }}>
                   {item.homeServiceAddress}
                 </Text>
-              </Pressable>
+              </View>
             ) : null}
           </View>
         )}

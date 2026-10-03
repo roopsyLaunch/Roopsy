@@ -321,28 +321,32 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
             <Text style={[styles.stageText, { color: stageColor }]}>{stageLabel}</Text>
           </View>
         </View>
-        <Pressable style={styles.noteBtn} onPress={() => setNoteModal(true)}>
-          <Ionicons name="create-outline" size={22} color="#6d28d9" />
-        </Pressable>
+        {order.status !== "completed" && (
+          <Pressable style={styles.noteBtn} onPress={() => setNoteModal(true)}>
+            <Ionicons name="create-outline" size={22} color="#6d28d9" />
+          </Pressable>
+        )}
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
 
         {/* Priority Selector */}
-        <View style={styles.priorityRow}>
-          <Text style={styles.priorityLabel}>Priority:</Text>
-          {["normal", "urgent", "rush"].map(p => (
-            <Pressable
-              key={p}
-              style={[styles.priorityPill, order.priority === p && styles.priorityPillActive]}
-              onPress={() => setPriority(p)}
-            >
-              <Text style={[styles.priorityText, order.priority === p && styles.priorityTextActive]}>
-                {p.charAt(0).toUpperCase() + p.slice(1)}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        {order.status !== "completed" && (
+          <View style={styles.priorityRow}>
+            <Text style={styles.priorityLabel}>Priority:</Text>
+            {["normal", "urgent", "rush"].map(p => (
+              <Pressable
+                key={p}
+                style={[styles.priorityPill, order.priority === p && styles.priorityPillActive]}
+                onPress={() => setPriority(p)}
+              >
+                <Text style={[styles.priorityText, order.priority === p && styles.priorityTextActive]}>
+                  {p.charAt(0).toUpperCase() + p.slice(1)}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
 
         {/* Cancellation Action / Lock Banner for Tailor Partner */}
         {!order.isOtpVerified && !["cancelled", "completed", "declined"].includes(order.status) ? (
@@ -464,18 +468,20 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
                         >
                           <Text style={{ fontSize: 10, fontWeight: "700", color: "#fff" }}>View Full Photo 🔍</Text>
                         </Pressable>
-                        <Pressable
-                          onPress={handleCaptureClothProof}
-                          disabled={uploadingClothProof}
-                          style={{ backgroundColor: "#f3e8ff", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: "#d8b4fe" }}
-                        >
-                          {uploadingClothProof ? <ActivityIndicator size="small" color="#7c3aed" /> : <Text style={{ fontSize: 10, fontWeight: "700", color: "#7c3aed" }}>Retake 📷</Text>}
-                        </Pressable>
+                        {order.status !== "completed" && (
+                          <Pressable
+                            onPress={handleCaptureClothProof}
+                            disabled={uploadingClothProof}
+                            style={{ backgroundColor: "#f3e8ff", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: "#d8b4fe" }}
+                          >
+                            {uploadingClothProof ? <ActivityIndicator size="small" color="#7c3aed" /> : <Text style={{ fontSize: 10, fontWeight: "700", color: "#7c3aed" }}>Retake 📷</Text>}
+                          </Pressable>
+                        )}
                       </View>
                     </View>
                   </View>
                 </View>
-              ) : (
+              ) : order.status !== "completed" ? (
                 <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: order.isOtpVerified ? "#a7f3d0" : "#fef08a" }}>
                   <Pressable
                     onPress={handleCaptureClothProof}
@@ -494,7 +500,7 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
                     )}
                   </Pressable>
                 </View>
-              )}
+              ) : null}
 
               {!order.isOtpVerified && (
                 <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
@@ -647,7 +653,7 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
                           >
                             <Text style={{ fontSize: 10, fontWeight: "700", color: "#fff" }}>View Full Photo 🔍</Text>
                           </Pressable>
-                          {!order.isDeliveryOtpVerified && (
+                          {!order.isDeliveryOtpVerified && order.status !== "completed" && (
                             <Pressable
                               onPress={handleCaptureDeliveryProof}
                               disabled={uploadingDeliveryProof}
@@ -682,7 +688,7 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
                       </View>
                     </View>
                   </View>
-                ) : (
+                ) : order.status !== "completed" ? (
                   <Pressable
                     onPress={handleCaptureDeliveryProof}
                     disabled={uploadingDeliveryProof}
@@ -699,7 +705,7 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
                       </>
                     )}
                   </Pressable>
-                )}
+                ) : null}
               </View>
 
               {/* Delivery OTP Input & Verification */}
@@ -753,12 +759,12 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
             value={order.isHomeService ? "🏡 Home Service (Doorstep Visit)" : "🏪 Shop Service (Customer Visit)"}
             valueColor={order.isHomeService ? "#7c3aed" : "#0369a1"}
           />
-          {order.isHomeService && (
+          {order.isHomeService ? (
             <>
               <View style={{ marginBottom: 12 }}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                   <Text style={{ fontSize: 13, color: "#64748b", fontWeight: "600" }}>Visit Address</Text>
-                  {order.homeServiceAddress ? (
+                  {order.homeServiceAddress && order.status !== "completed" ? (
                     <Pressable
                       onPress={() => openMapForNavigation(order.homeServiceAddress, order.homeServiceLocation, `${order.customerId?.name || "Customer"}'s Home`)}
                       style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#0d9488", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}
@@ -768,31 +774,50 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
                     </Pressable>
                   ) : null}
                 </View>
-                <Pressable
-                  onPress={() => {
-                    if (order.homeServiceAddress) {
-                      openMapForNavigation(order.homeServiceAddress, order.homeServiceLocation, `${order.customerId?.name || "Customer"}'s Home`);
-                    }
-                  }}
-                  style={({ pressed }) => [
-                    { backgroundColor: "#f0fdfa", padding: 10, borderRadius: 8, borderWidth: 1, borderColor: "#ccfbf1", marginTop: 2 },
-                    pressed && { opacity: 0.8 }
-                  ]}
-                >
-                  <Text style={{ fontSize: 13, color: "#134e4a", fontWeight: "600", lineHeight: 18 }}>
-                    {order.homeServiceAddress || "—"}
-                  </Text>
-                  {order.homeServiceAddress && (
-                    <Text style={{ fontSize: 11, color: "#0d9488", fontWeight: "700", marginTop: 4 }}>
-                      📍 Tap to navigate with Google Maps
+                {order.status !== "completed" ? (
+                  <Pressable
+                    onPress={() => {
+                      if (order.homeServiceAddress) {
+                        openMapForNavigation(order.homeServiceAddress, order.homeServiceLocation, `${order.customerId?.name || "Customer"}'s Home`);
+                      }
+                    }}
+                    style={({ pressed }) => [
+                      { backgroundColor: "#f0fdfa", padding: 10, borderRadius: 8, borderWidth: 1, borderColor: "#ccfbf1", marginTop: 2 },
+                      pressed && { opacity: 0.8 }
+                    ]}
+                  >
+                    <Text style={{ fontSize: 13, color: "#134e4a", fontWeight: "600", lineHeight: 18 }}>
+                      {order.homeServiceAddress || "—"}
                     </Text>
-                  )}
-                </Pressable>
+                    {order.homeServiceAddress && (
+                      <Text style={{ fontSize: 11, color: "#0d9488", fontWeight: "700", marginTop: 4 }}>
+                        📍 Tap to navigate with Google Maps
+                      </Text>
+                    )}
+                  </Pressable>
+                ) : (
+                  <View style={{ backgroundColor: "#f8fafc", padding: 10, borderRadius: 8, borderWidth: 1, borderColor: "#e2e8f0", marginTop: 2 }}>
+                    <Text style={{ fontSize: 13, color: "#334155", fontWeight: "500", lineHeight: 18 }}>
+                      {order.homeServiceAddress || "—"}
+                    </Text>
+                  </View>
+                )}
               </View>
               {order.visitDate && (
                 <InfoRow label="Visit Date" value={new Date(order.visitDate).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })} />
               )}
             </>
+          ) : (
+            order.homeServiceAddress ? (
+              <View style={{ marginBottom: 12 }}>
+                <Text style={{ fontSize: 13, color: "#64748b", fontWeight: "600", marginBottom: 4 }}>Customer Address</Text>
+                <View style={{ backgroundColor: "#f8fafc", padding: 10, borderRadius: 8, borderWidth: 1, borderColor: "#e2e8f0", marginTop: 2 }}>
+                  <Text style={{ fontSize: 13, color: "#334155", fontWeight: "500", lineHeight: 18 }}>
+                    {order.homeServiceAddress}
+                  </Text>
+                </View>
+              </View>
+            ) : null
           )}
           {order.status !== "pending" && (order.completionTime || order.estimatedDays) ? (
             <InfoRow

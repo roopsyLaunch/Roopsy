@@ -262,24 +262,33 @@ export function BarberQueueScreen() {
                      <Ionicons name="home" size={12} color="#6d28d9" style={{ marginRight: 4 }} />
                      <Text style={{ fontSize: 12, fontWeight: "700", color: "#6d28d9" }}>Home Service Request</Text>
                    </View>
-                   <Pressable
-                     onPress={() => openMapForNavigation(item.homeServiceAddress, item.homeServiceLocation, `${name}'s Home`)}
-                     style={({ pressed }) => [
-                       { backgroundColor: "#ffffff", padding: 8, borderRadius: 8, borderWidth: 1, borderColor: "#d8b4fe", marginTop: 4 },
-                       pressed && { opacity: 0.8 }
-                     ]}
-                   >
-                     <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
-                       <Text style={{ fontSize: 10, color: "#7c3aed", fontWeight: "800", textTransform: "uppercase" }}>Address (Tap for Map)</Text>
-                       <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#7c3aed", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
-                         <Ionicons name="navigate" size={10} color="#ffffff" style={{ marginRight: 3 }} />
-                         <Text style={{ fontSize: 10, color: "#ffffff", fontWeight: "700" }}>Navigate</Text>
+                   {item.status !== "completed" ? (
+                     <Pressable
+                       onPress={() => openMapForNavigation(item.homeServiceAddress, item.homeServiceLocation, `${name}'s Home`)}
+                       style={({ pressed }) => [
+                         { backgroundColor: "#ffffff", padding: 8, borderRadius: 8, borderWidth: 1, borderColor: "#d8b4fe", marginTop: 4 },
+                         pressed && { opacity: 0.8 }
+                       ]}
+                     >
+                       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
+                         <Text style={{ fontSize: 10, color: "#7c3aed", fontWeight: "800", textTransform: "uppercase" }}>Address (Tap for Map)</Text>
+                         <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#7c3aed", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                           <Ionicons name="navigate" size={10} color="#ffffff" style={{ marginRight: 3 }} />
+                           <Text style={{ fontSize: 10, color: "#ffffff", fontWeight: "700" }}>Navigate</Text>
+                         </View>
                        </View>
+                       <Text style={{ fontSize: 11, color: "#3b0764", fontWeight: "600" }}>
+                         {item.homeServiceAddress || "Tap to view location"}
+                       </Text>
+                     </Pressable>
+                   ) : (
+                     <View style={{ backgroundColor: "#ffffff", padding: 8, borderRadius: 8, borderWidth: 1, borderColor: "#e2e8f0", marginTop: 4 }}>
+                       <Text style={{ fontSize: 10, color: "#64748b", fontWeight: "800", textTransform: "uppercase", marginBottom: 2 }}>Service Address</Text>
+                       <Text style={{ fontSize: 11, color: "#334155", fontWeight: "500" }}>
+                         {item.homeServiceAddress || "—"}
+                       </Text>
                      </View>
-                     <Text style={{ fontSize: 11, color: "#3b0764", fontWeight: "600" }}>
-                       {item.homeServiceAddress || "Tap to view location"}
-                     </Text>
-                   </Pressable>
+                   )}
                    {item.customer?.phone && (
                      <Pressable style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }} onPress={() => Linking.openURL(`tel:${item.customer.phone}`)}>
                        <Ionicons name="call" size={12} color="#6d28d9" style={{ marginRight: 4 }} />
@@ -294,18 +303,12 @@ export function BarberQueueScreen() {
                       <Text style={{ fontSize: 12, fontWeight: "700", color: "#16a34a" }}>Shop Service</Text>
                     </View>
                     {item.homeServiceAddress ? (
-                      <Pressable
-                        onPress={() => openMapForNavigation(item.homeServiceAddress, item.homeServiceLocation, `${name}'s Location`)}
-                        style={({ pressed }) => [
-                          { marginTop: 4, backgroundColor: "#f8fafc", padding: 6, borderRadius: 6, borderWidth: 1, borderColor: "#e2e8f0" },
-                          pressed && { opacity: 0.8 }
-                        ]}
-                      >
+                      <View style={{ marginTop: 4, backgroundColor: "#f8fafc", padding: 6, borderRadius: 6, borderWidth: 1, borderColor: "#e2e8f0" }}>
                         <Text style={{ fontSize: 11, color: "#334155", fontWeight: "500" }}>
-                          <Text style={{ fontWeight: "700", color: "#0369a1" }}>📍 Address (Tap for Map): </Text>
+                          <Text style={{ fontWeight: "700", color: "#64748b" }}>📍 Customer Address: </Text>
                           {item.homeServiceAddress}
                         </Text>
-                      </Pressable>
+                      </View>
                     ) : null}
                   </View>
                 )}
