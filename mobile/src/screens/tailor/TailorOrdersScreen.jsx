@@ -153,6 +153,17 @@ export function TailorOrdersScreen({ navigation, route }) {
   const [tailorComment, setTailorComment] = useState("");
   const [submittingTailorRating, setSubmittingTailorRating] = useState(false);
 
+  // Full-screen image preview state
+  const [previewImageModalVisible, setPreviewImageModalVisible] = useState(false);
+  const [previewImageUrl, setPreviewImageUrl] = useState("");
+  const [previewImageTitle, setPreviewImageTitle] = useState("");
+  const openImagePreview = (url, title) => {
+    if (!url) return;
+    setPreviewImageUrl(url);
+    setPreviewImageTitle(title || "Photo Preview");
+    setPreviewImageModalVisible(true);
+  };
+
   // ----------------- Data Loaders -----------------
   const loadOrders = useCallback(async () => {
     try {
@@ -771,16 +782,30 @@ export function TailorOrdersScreen({ navigation, route }) {
         {(item.clothProofImageUrl || item.deliveryProofImageUrl) && (
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
             {item.clothProofImageUrl ? (
-              <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#f5f3ff", paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: "#ddd6fe", gap: 5 }}>
+              <Pressable
+                onPress={() => openImagePreview(item.clothProofImageUrl, "Cloth Handover Photo (कपड़े की फोटो) 📸")}
+                style={({ pressed }) => [
+                  { flexDirection: "row", alignItems: "center", backgroundColor: "#f5f3ff", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: "#c4b5fd", gap: 6 },
+                  pressed && { opacity: 0.75 }
+                ]}
+              >
+                <Image source={{ uri: item.clothProofImageUrl }} style={{ width: 22, height: 22, borderRadius: 4 }} />
                 <Ionicons name="camera" size={13} color="#7c3aed" />
-                <Text style={{ fontSize: 11, fontWeight: "700", color: "#6d28d9" }}>Cloth Photo Attached 📸</Text>
-              </View>
+                <Text style={{ fontSize: 11, fontWeight: "800", color: "#6d28d9" }}>Cloth Photo 🔍</Text>
+              </Pressable>
             ) : null}
             {item.deliveryProofImageUrl ? (
-              <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#f0fdf4", paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: "#bbf7d0", gap: 5 }}>
+              <Pressable
+                onPress={() => openImagePreview(item.deliveryProofImageUrl, "Delivered Outfit Proof (डिलीवरी प्रमाण फोटो) 📦📸")}
+                style={({ pressed }) => [
+                  { flexDirection: "row", alignItems: "center", backgroundColor: "#f0fdf4", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: "#86efac", gap: 6 },
+                  pressed && { opacity: 0.75 }
+                ]}
+              >
+                <Image source={{ uri: item.deliveryProofImageUrl }} style={{ width: 22, height: 22, borderRadius: 4 }} />
                 <Ionicons name="shield-checkmark" size={13} color="#16a34a" />
-                <Text style={{ fontSize: 11, fontWeight: "700", color: "#15803d" }}>Delivery Photo Attached 📦</Text>
-              </View>
+                <Text style={{ fontSize: 11, fontWeight: "800", color: "#15803d" }}>Delivery Photo 🔍</Text>
+              </Pressable>
             ) : null}
           </View>
         )}
@@ -895,10 +920,16 @@ export function TailorOrdersScreen({ navigation, route }) {
               <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: item.deliveryOtp ? "#bae6fd" : "#bbf7d0" }}>
                 {item.deliveryProofImageUrl ? (
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-                      <Image source={{ uri: item.deliveryProofImageUrl }} style={{ width: 34, height: 34, borderRadius: 6, marginRight: 8, borderWidth: 1, borderColor: "#86efac" }} />
-                      <Text style={{ fontSize: 11, fontWeight: "700", color: "#15803d" }}>Delivery Photo Saved ✅</Text>
-                    </View>
+                    <Pressable
+                      onPress={() => openImagePreview(item.deliveryProofImageUrl, "Delivered Outfit Proof (डिलीवरी प्रमाण फोटो) 📦📸")}
+                      style={{ flexDirection: "row", alignItems: "center", flex: 1 }}
+                    >
+                      <Image source={{ uri: item.deliveryProofImageUrl }} style={{ width: 36, height: 36, borderRadius: 6, marginRight: 8, borderWidth: 1.5, borderColor: "#86efac" }} />
+                      <View>
+                        <Text style={{ fontSize: 11, fontWeight: "800", color: "#15803d" }}>Delivery Photo Saved ✅</Text>
+                        <Text style={{ fontSize: 9.5, color: "#16a34a", fontWeight: "600" }}>Tap to view full photo 🔍</Text>
+                      </View>
+                    </Pressable>
                     <Pressable
                       onPress={() => handleCaptureDeliveryProofForOrder(item._id)}
                       disabled={uploadingDeliveryProof}
@@ -1241,6 +1272,52 @@ export function TailorOrdersScreen({ navigation, route }) {
           </View>
         )}
 
+        {/* Customer Cloth Handover Photo Card */}
+        {item.clothProofImageUrl ? (
+          <View style={{
+            backgroundColor: "#faf5ff",
+            padding: 12,
+            borderRadius: 12,
+            marginBottom: 12,
+            borderWidth: 1,
+            borderColor: "#e9d5ff"
+          }}>
+            <Pressable
+              onPress={() => openImagePreview(item.clothProofImageUrl, "Cloth Handover Photo (कपड़े की फोटो) 📸")}
+              style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                <Ionicons name="camera" size={16} color="#7c3aed" style={{ marginRight: 6 }} />
+                <Text style={{ fontSize: 11, fontWeight: "800", color: "#6d28d9" }}>
+                  CLOTH HANDOVER PHOTO (कपड़े की फोटो) 📸
+                </Text>
+              </View>
+              <View style={{ backgroundColor: "#ede9fe", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                <Text style={{ fontSize: 9, fontWeight: "800", color: "#6d28d9" }}>Attached ✅</Text>
+              </View>
+            </Pressable>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Pressable
+                onPress={() => openImagePreview(item.clothProofImageUrl, "Cloth Handover Photo (कपड़े की फोटो) 📸")}
+                style={{ width: 52, height: 52, borderRadius: 8, overflow: "hidden", borderWidth: 1.5, borderColor: "#c4b5fd", marginRight: 10, backgroundColor: "#000" }}
+              >
+                <Image source={{ uri: item.clothProofImageUrl }} style={{ width: "100%", height: "100%", resizeMode: "cover" }} />
+              </Pressable>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, color: "#581c87", fontWeight: "600" }}>
+                  Photo of cloth handed over for tailoring.
+                </Text>
+                <Pressable
+                  onPress={() => openImagePreview(item.clothProofImageUrl, "Cloth Handover Photo (कपड़े की फोटो) 📸")}
+                  style={{ backgroundColor: "#7c3aed", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, alignSelf: "flex-start", marginTop: 4 }}
+                >
+                  <Text style={{ fontSize: 10, fontWeight: "700", color: "#fff" }}>View Full Photo 🔍</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
         {/* Delivered Outfit Proof Photo */}
         {item.deliveryProofImageUrl ? (
           <View style={{
@@ -1251,7 +1328,10 @@ export function TailorOrdersScreen({ navigation, route }) {
             borderWidth: 1,
             borderColor: "#bbf7d0"
           }}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <Pressable
+              onPress={() => openImagePreview(item.deliveryProofImageUrl, "Delivered Outfit Proof (डिलीवरी प्रमाण फोटो) 📦📸")}
+              style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}
+            >
               <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
                 <Ionicons name="shield-checkmark" size={16} color="#16a34a" style={{ marginRight: 6 }} />
                 <Text style={{ fontSize: 11, fontWeight: "800", color: "#15803d" }}>
@@ -1261,13 +1341,24 @@ export function TailorOrdersScreen({ navigation, route }) {
               <View style={{ backgroundColor: "#dcfce7", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
                 <Text style={{ fontSize: 9, fontWeight: "800", color: "#16a34a" }}>Delivered Proof ✅</Text>
               </View>
-            </View>
+            </Pressable>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Image source={{ uri: item.deliveryProofImageUrl }} style={{ width: 50, height: 50, borderRadius: 8, marginRight: 10 }} />
+              <Pressable
+                onPress={() => openImagePreview(item.deliveryProofImageUrl, "Delivered Outfit Proof (डिलीवरी प्रमाण फोटो) 📦📸")}
+                style={{ width: 52, height: 52, borderRadius: 8, overflow: "hidden", borderWidth: 1.5, borderColor: "#86efac", marginRight: 10, backgroundColor: "#000" }}
+              >
+                <Image source={{ uri: item.deliveryProofImageUrl }} style={{ width: "100%", height: "100%", resizeMode: "cover" }} />
+              </Pressable>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 11, color: "#166534", fontWeight: "600" }}>
                   Photo of finished outfit uploaded by tailor partner upon delivery.
                 </Text>
+                <Pressable
+                  onPress={() => openImagePreview(item.deliveryProofImageUrl, "Delivered Outfit Proof (डिलीवरी प्रमाण फोटो) 📦📸")}
+                  style={{ backgroundColor: "#16a34a", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, alignSelf: "flex-start", marginTop: 4 }}
+                >
+                  <Text style={{ fontSize: 10, fontWeight: "700", color: "#fff" }}>View Full Photo 🔍</Text>
+                </Pressable>
               </View>
             </View>
           </View>
@@ -1629,10 +1720,18 @@ export function TailorOrdersScreen({ navigation, route }) {
               </Text>
               {deliveryProofUri ? (
                 <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#e0f2fe", padding: 10, borderRadius: 10, borderWidth: 1, borderColor: "#bae6fd" }}>
-                  <Image source={{ uri: deliveryProofUri }} style={{ width: 48, height: 48, borderRadius: 8, marginRight: 10 }} />
+                  <Pressable
+                    onPress={() => openImagePreview(deliveryProofUri, "Finished Outfit Delivery Photo 📸")}
+                    style={{ width: 48, height: 48, borderRadius: 8, overflow: "hidden", borderWidth: 1.5, borderColor: "#0284c7", marginRight: 10, backgroundColor: "#000" }}
+                  >
+                    <Image source={{ uri: deliveryProofUri }} style={{ width: "100%", height: "100%", resizeMode: "cover" }} />
+                  </Pressable>
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 12, fontWeight: "700", color: "#0369a1" }}>Delivery Photo Attached ✅</Text>
                     <View style={{ flexDirection: "row", gap: 10, marginTop: 4 }}>
+                      <Pressable onPress={() => openImagePreview(deliveryProofUri, "Finished Outfit Delivery Photo 📸")}>
+                        <Text style={{ fontSize: 11, fontWeight: "700", color: "#0369a1" }}>View Full 🔍</Text>
+                      </Pressable>
                       <Pressable onPress={handlePickDeliveryPhoto}>
                         <Text style={{ fontSize: 11, fontWeight: "700", color: "#0284c7" }}>Change 📷</Text>
                       </Pressable>
@@ -1752,6 +1851,33 @@ export function TailorOrdersScreen({ navigation, route }) {
               </Pressable>
             </View>
           </View>
+        </View>
+      </Modal>
+
+      {/* Full-Screen Photo Preview Modal */}
+      <Modal visible={previewImageModalVisible} transparent animationType="fade" onRequestClose={() => setPreviewImageModalVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "center", alignItems: "center", padding: 20 }}>
+          <View style={{ width: "100%", flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <Text style={{ color: "#ffffff", fontSize: 16, fontWeight: "800", flex: 1 }}>{previewImageTitle || "Photo Preview"}</Text>
+            <Pressable
+              onPress={() => setPreviewImageModalVisible(false)}
+              style={{ backgroundColor: "rgba(255,255,255,0.2)", width: 36, height: 36, borderRadius: 18, justifyContent: "center", alignItems: "center" }}
+            >
+              <Ionicons name="close" size={24} color="#ffffff" />
+            </Pressable>
+          </View>
+          {previewImageUrl ? (
+            <Image
+              source={{ uri: previewImageUrl }}
+              style={{ width: "100%", height: "75%", borderRadius: 16, resizeMode: "contain" }}
+            />
+          ) : null}
+          <Pressable
+            onPress={() => setPreviewImageModalVisible(false)}
+            style={{ marginTop: 20, backgroundColor: "#ffffff", paddingVertical: 10, paddingHorizontal: 24, borderRadius: 12 }}
+          >
+            <Text style={{ color: "#0f172a", fontWeight: "800", fontSize: 14 }}>Close Preview</Text>
+          </Pressable>
         </View>
       </Modal>
     </SafeAreaView>

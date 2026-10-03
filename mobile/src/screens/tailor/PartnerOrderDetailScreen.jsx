@@ -338,6 +338,44 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
           </View>
         ) : null}
 
+        {/* Quick Photo Proof Bar for Tailor */}
+        {(order.clothProofImageUrl || order.deliveryProofImageUrl) && (
+          <View style={{ flexDirection: "row", gap: 10, marginBottom: 14 }}>
+            {order.clothProofImageUrl ? (
+              <Pressable
+                onPress={() => {
+                  setPreviewImageUrl(order.clothProofImageUrl);
+                  setPreviewImageTitle("Cloth Handover Photo (कपड़े की फोटो) 📸");
+                  setPreviewImageModalVisible(true);
+                }}
+                style={{ flex: 1, flexDirection: "row", alignItems: "center", backgroundColor: "#f5f3ff", padding: 10, borderRadius: 12, borderWidth: 1, borderColor: "#ddd6fe", gap: 8 }}
+              >
+                <Image source={{ uri: order.clothProofImageUrl }} style={{ width: 36, height: 36, borderRadius: 6 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: "#6d28d9" }}>Cloth Photo 📸</Text>
+                  <Text style={{ fontSize: 9.5, color: "#7c3aed", fontWeight: "600" }}>Tap to view full 🔍</Text>
+                </View>
+              </Pressable>
+            ) : null}
+            {order.deliveryProofImageUrl ? (
+              <Pressable
+                onPress={() => {
+                  setPreviewImageUrl(order.deliveryProofImageUrl);
+                  setPreviewImageTitle("Delivered Outfit Proof (डिलीवरी प्रमाण फोटो) 📦📸");
+                  setPreviewImageModalVisible(true);
+                }}
+                style={{ flex: 1, flexDirection: "row", alignItems: "center", backgroundColor: "#f0fdf4", padding: 10, borderRadius: 12, borderWidth: 1, borderColor: "#bbf7d0", gap: 8 }}
+              >
+                <Image source={{ uri: order.deliveryProofImageUrl }} style={{ width: 36, height: 36, borderRadius: 6 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: "#15803d" }}>Delivery Photo 📦</Text>
+                  <Text style={{ fontSize: 9.5, color: "#16a34a", fontWeight: "600" }}>Tap to view full 🔍</Text>
+                </View>
+              </Pressable>
+            ) : null}
+          </View>
+        )}
+
         {/* Initial OTP Verification Box - ONLY show if not cancelled/declined */}
         {!["cancelled", "declined"].includes(order.status) ? (
           <Section title="Initial Booking OTP Verification" icon="shield-checkmark">
@@ -365,14 +403,21 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
               {/* Cloth Handover Photo Section */}
               {order.clothProofImageUrl ? (
                 <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: order.isOtpVerified ? "#a7f3d0" : "#fef08a" }}>
-                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <Pressable
+                    onPress={() => {
+                      setPreviewImageUrl(order.clothProofImageUrl);
+                      setPreviewImageTitle("Cloth Handover Photo (कपड़े की फोटो) 📸");
+                      setPreviewImageModalVisible(true);
+                    }}
+                    style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}
+                  >
                     <Text style={{ fontSize: 11, fontWeight: "800", color: "#6d28d9" }}>
-                      CLOTH HANDOVER PHOTO (कपड़े की फोटो) 📸
+                      CLOTH HANDOVER PHOTO (कपड़े की फोटो) 📸 🔍
                     </Text>
                     <View style={{ backgroundColor: "#ede9fe", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
                       <Text style={{ fontSize: 9, fontWeight: "800", color: "#6d28d9" }}>Uploaded by {order.clothProofUploadedBy || "Customer"}</Text>
                     </View>
-                  </View>
+                  </Pressable>
                   <View style={{ flexDirection: "row", alignItems: "center" }}>
                     <Pressable
                       onPress={() => {
@@ -488,16 +533,24 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
 
               {/* Delivery Proof Photo Capture for Tailor */}
               <View style={{ marginTop: 4, paddingTop: 10, borderTopWidth: 1, borderTopColor: order.isDeliveryOtpVerified ? "#a7f3d0" : "#bae6fd" }}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <Pressable
+                  disabled={!order.deliveryProofImageUrl}
+                  onPress={() => {
+                    setPreviewImageUrl(order.deliveryProofImageUrl);
+                    setPreviewImageTitle("Cloth Delivery Proof Photo 📦📸");
+                    setPreviewImageModalVisible(true);
+                  }}
+                  style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}
+                >
                   <Text style={{ fontSize: 11, fontWeight: "800", color: order.deliveryProofImageUrl ? "#047857" : "#0369a1" }}>
-                    📸 CLOTH DELIVERY PHOTO (कपड़ा डिलीवरी फोटो प्रमाण)
+                    📸 CLOTH DELIVERY PHOTO (कपड़ा डिलीवरी फोटो प्रमाण) {order.deliveryProofImageUrl ? "🔍" : ""}
                   </Text>
                   {order.deliveryProofImageUrl ? (
                     <View style={{ backgroundColor: "#d1fae5", paddingHorizontal: 7, paddingVertical: 2, borderRadius: 4 }}>
                       <Text style={{ fontSize: 9, fontWeight: "800", color: "#047857" }}>Proof Saved ✅</Text>
                     </View>
                   ) : null}
-                </View>
+                </Pressable>
 
                 {order.deliveryProofImageUrl ? (
                   <View style={{ backgroundColor: "#f0fdf4", padding: 10, borderRadius: 10, borderWidth: 1, borderColor: "#bbf7d0", marginBottom: 8 }}>

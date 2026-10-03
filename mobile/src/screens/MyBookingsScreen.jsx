@@ -1251,15 +1251,23 @@ export function MyBookingsScreen({ navigation, route }) {
             borderWidth: 1,
             borderColor: item.clothProofImageUrl ? "#ddd6fe" : "#f5d0fe"
           }}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: item.clothProofImageUrl ? 10 : 6 }}>
+            <Pressable
+              disabled={!item.clothProofImageUrl}
+              onPress={() => {
+                setPreviewImageUrl(item.clothProofImageUrl);
+                setPreviewImageTitle("Cloth Handover Photo (कपड़े की फोटो) 📸");
+                setPreviewImageModalVisible(true);
+              }}
+              style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: item.clothProofImageUrl ? 10 : 6 }}
+            >
               <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
                 <Ionicons name={item.clothProofImageUrl ? "camera" : "camera-outline"} size={20} color={item.clothProofImageUrl ? "#7c3aed" : "#a21caf"} style={{ marginRight: 8 }} />
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 12, fontWeight: "800", color: item.clothProofImageUrl ? "#6d28d9" : "#86198f" }}>
-                    {item.clothProofImageUrl ? "CLOTH HANDOVER PHOTO (कपड़े की फोटो) 📸" : "GIVE CLOTH PHOTO (कपड़ा देने की फोटो)"}
+                    {item.clothProofImageUrl ? "CLOTH HANDOVER PHOTO (कपड़े की फोटो) 📸 🔍" : "GIVE CLOTH PHOTO (कपड़ा देने की फोटो)"}
                   </Text>
                   <Text style={{ fontSize: 11, color: item.clothProofImageUrl ? "#7c3aed" : "#a21caf" }}>
-                    {item.clothProofImageUrl ? "Recorded on booking" : "Click photo of cloth given to tailor"}
+                    {item.clothProofImageUrl ? "Recorded on booking • Tap to view full 🔍" : "Click photo of cloth given to tailor"}
                   </Text>
                 </View>
               </View>
@@ -1268,7 +1276,7 @@ export function MyBookingsScreen({ navigation, route }) {
                   <Text style={{ fontSize: 10, fontWeight: "800", color: "#6d28d9" }}>Photo Uploaded ✅</Text>
                 </View>
               ) : null}
-            </View>
+            </Pressable>
 
             {item.clothProofImageUrl ? (
               <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4 }}>
@@ -1393,22 +1401,29 @@ export function MyBookingsScreen({ navigation, route }) {
             borderWidth: 1,
             borderColor: "#bbf7d0"
           }}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <Pressable
+              onPress={() => {
+                setPreviewImageUrl(item.deliveryProofImageUrl);
+                setPreviewImageTitle("Delivered Outfit Proof (डिलीवरी प्रमाण) 📦📸");
+                setPreviewImageModalVisible(true);
+              }}
+              style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}
+            >
               <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
                 <Ionicons name="shield-checkmark" size={20} color="#16a34a" style={{ marginRight: 8 }} />
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 12, fontWeight: "800", color: "#15803d" }}>
-                    DELIVERED OUTFIT PROOF (डिलीवरी प्रमाण फोटो) 📦📸
+                    DELIVERED OUTFIT PROOF (डिलीवरी प्रमाण फोटो) 📦📸 🔍
                   </Text>
                   <Text style={{ fontSize: 11, color: "#16a34a" }}>
-                    Photo uploaded by tailor partner at delivery
+                    Photo uploaded by tailor partner at delivery • Tap to view full 🔍
                   </Text>
                 </View>
               </View>
               <View style={{ backgroundColor: "#dcfce7", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
                 <Text style={{ fontSize: 10, fontWeight: "800", color: "#16a34a" }}>Delivered Proof ✅</Text>
               </View>
-            </View>
+            </Pressable>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
               <Pressable
                 onPress={() => {
