@@ -77,6 +77,7 @@ export function TailorDetailScreen({ route, navigation }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedServices, setSelectedServices] = useState([]);
+  const [activeServiceType, setActiveServiceType] = useState("regular"); // "regular" | "vip"
 
   const [zoomModalVisible, setZoomModalVisible] = useState(false);
   const [zoomImagesList, setZoomImagesList] = useState([]);
@@ -286,27 +287,38 @@ export function TailorDetailScreen({ route, navigation }) {
     return "https://images.unsplash.com/photo-1598522325754-046dd13ac1c0?w=400&q=80";
   }, [tailor?.shopPosterUrl, tailor?.gallery]);
 
+  const regularServices = useMemo(() => {
+    return services.filter((s) => !isVipService(s));
+  }, [services]);
+
+  const vipServices = useMemo(() => {
+    return services.filter((s) => isVipService(s));
+  }, [services]);
+
+  const hasVipServices = vipServices.length > 0;
+  const hasRegularServices = regularServices.length > 0;
+
+  const currentTypeServices = useMemo(() => {
+    return activeServiceType === "vip" ? vipServices : regularServices;
+  }, [activeServiceType, vipServices, regularServices]);
+
   const dynamicCategories = useMemo(() => {
     const seen = new Set();
     const cats = [];
-    services.forEach((s) => {
-      let label = isVipService(s) ? "Premium VIP" : (s.category && s.category.trim()) || "General";
+    currentTypeServices.forEach((s) => {
+      let label = (s.category && s.category.trim()) || "General";
       if (!seen.has(label)) {
         seen.add(label);
         cats.push(label);
       }
     });
-    // Put "Premium VIP" category right after "All" if shop offers VIP services
-    if (seen.has("Premium VIP")) {
-      return ["Premium VIP", ...cats.filter((c) => c !== "Premium VIP")];
-    }
     return cats;
-  }, [services]);
+  }, [currentTypeServices]);
 
   const currentDisplayServices = useMemo(() => {
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
-      return services.filter(
+      return currentTypeServices.filter(
         (s) =>
           (s.name && s.name.toLowerCase().includes(q)) ||
           (s.category && s.category.toLowerCase().includes(q)) ||
@@ -314,28 +326,20 @@ export function TailorDetailScreen({ route, navigation }) {
       );
     }
     if (selectedCategory === "all" || dynamicCategories.length === 0) {
-      // Sort VIP services first so customers see them prominently at the top of All Tailoring Services
-      return [...services].sort((a, b) => {
-        const aVIP = isVipService(a);
-        const bVIP = isVipService(b);
-        if (aVIP && !bVIP) return -1;
-        if (!aVIP && bVIP) return 1;
-        return 0;
-      });
+      return currentTypeServices;
     }
-    if (selectedCategory === "Premium VIP") {
-      return services.filter((s) => isVipService(s));
-    }
-    return services.filter(
+    return currentTypeServices.filter(
       (s) => (s.category && s.category.trim()) === selectedCategory
     );
-  }, [services, selectedCategory, dynamicCategories, searchQuery]);
+  }, [currentTypeServices, selectedCategory, dynamicCategories, searchQuery]);
 
   const currentSectionTitle = useMemo(() => {
     if (searchQuery.trim()) return "Search Results";
-    if (selectedCategory === "all") return "All Tailoring Services";
+    if (selectedCategory === "all") {
+      return activeServiceType === "vip" ? "Premium VIP Services 👑" : "Regular Tailoring Services 🧵";
+    }
     return selectedCategory;
-  }, [selectedCategory, searchQuery]);
+  }, [activeServiceType, selectedCategory, searchQuery]);
 
   const addr = tailor?.address || {};
   const addressDisplay = [addr.line1, addr.city, addr.pincode].filter(Boolean).join(", ") || "Main Market, Jamunaha";
@@ -463,13 +467,104 @@ export function TailorDetailScreen({ route, navigation }) {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#0d9488" />}
       >
+        {/* ================= SERVICE TYPE TOGGLE (REGULAR SERVICE VS PREMIUM VIP SERVICE) ================= */}
+        <View style={styles.serviceModeToggleCard}>
+          <View style={styles.serviceModeHeaderRow}>
+            <View style={styles.serviceModeTitleRow}>
+              <Ionicons
+                name={activeServiceType === "vip" ? "ribbon" : "cut"}
+                size={16}
+                color={activeServiceType === "vip" ? "#7c3aed" : "#0d9488"}
+                style={{ marginRight: 6 }}
+              />
+              <Text style={styles.serviceModeTitle}>Service Type / सिलाई प्रकार</Text>
+            </View>
+            <View style={[styles.serviceModeStatusBadge, activeServiceType === "vip" ? styles.vipStatusBadge : null]}>
+              <Text style={[styles.serviceModeStatusText, activeServiceType === "vip" ? styles.vipStatusText : null]}>
+                {activeServiceType === "vip" ? "👑 VIP Priority Mode" : "🧵 Standard Stitching"}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.serviceModePillRow}>
+            {/* Regular Service Pill */}
+            <Pressable
+              style={[
+                styles.serviceModePill,
+                activeServiceType === "regular" && styles.serviceModePillActiveRegular,
+              ]}
+              onPress={() => {
+                setActiveServiceType("regular");
+                setSelectedCategory("all");
+                setSearchQuery("");
+              }}
+            >
+              <View style={[styles.pillIconBox, activeServiceType === "regular" && styles.pillIconBoxActiveRegular]}>
+                <Ionicons
+                  name={activeServiceType === "regular" ? "cut" : "cut-outline"}
+                  size={18}
+                  color={activeServiceType === "regular" ? "#ffffff" : "#0d9488"}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.serviceModePillText, activeServiceType === "regular" && styles.serviceModePillTextActive]}>
+                  Regular Service
+                </Text>
+                <Text style={[styles.serviceModePillSub, activeServiceType === "regular" && styles.serviceModePillSubActive]}>
+                  रेगुलर सिलाई ({regularServices.length})
+                </Text>
+              </View>
+            </Pressable>
+
+            {/* Premium VIP Service Pill */}
+            <Pressable
+              style={[
+                styles.serviceModePill,
+                activeServiceType === "vip" && styles.serviceModePillActiveVIP,
+                !hasVipServices && styles.serviceModePillDisabled,
+              ]}
+              onPress={() => {
+                if (!hasVipServices) {
+                  return Alert.alert(
+                    "VIP Service Not Offered",
+                    "This tailor studio does not currently offer Premium VIP express services. You can select from regular tailoring services."
+                  );
+                }
+                setActiveServiceType("vip");
+                setSelectedCategory("all");
+                setSearchQuery("");
+              }}
+            >
+              <View style={[styles.pillIconBox, activeServiceType === "vip" && styles.pillIconBoxActiveVIP, !hasVipServices && styles.pillIconBoxDisabled]}>
+                <Ionicons
+                  name={activeServiceType === "vip" ? "ribbon" : "ribbon-outline"}
+                  size={18}
+                  color={activeServiceType === "vip" ? "#ffffff" : hasVipServices ? "#7c3aed" : "#94a3b8"}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.serviceModePillText, activeServiceType === "vip" && styles.serviceModePillTextActive, !hasVipServices && styles.serviceModePillTextDisabled]}>
+                  Premium VIP
+                </Text>
+                <Text style={[styles.serviceModePillSub, activeServiceType === "vip" && styles.serviceModePillSubActive, !hasVipServices && styles.serviceModePillTextDisabled]}>
+                  {hasVipServices ? `प्रीमियम VIP (${vipServices.length})` : "Not Available"}
+                </Text>
+              </View>
+            </Pressable>
+          </View>
+        </View>
+
         {/* ================= SEARCH & FILTER BAR ================= */}
         <View style={styles.searchBarWrapper}>
           <View style={styles.searchInputCard}>
             <Ionicons name="search-outline" size={18} color="#94a3b8" style={{ marginRight: 8 }} />
             <TextInput
               style={styles.searchInput}
-              placeholder="Search shirts, trousers, suits, kurta..."
+              placeholder={
+                activeServiceType === "vip"
+                  ? "Search VIP express services..."
+                  : "Search shirts, trousers, suits, kurta..."
+              }
               placeholderTextColor="#94a3b8"
               value={searchQuery}
               onChangeText={setSearchQuery}
@@ -485,11 +580,27 @@ export function TailorDetailScreen({ route, navigation }) {
             style={styles.filterBtn}
             onPress={() => {
               Alert.alert(
-                "Filter Services",
-                "Select a category filter",
+                "Filter Service Type",
+                "Choose tailoring type",
                 [
-                  { text: "All Services", onPress: () => setSelectedCategory("all") },
-                  { text: "Premium VIP", onPress: () => setSelectedCategory("Premium VIP") },
+                  {
+                    text: `🧵 Regular Services (${regularServices.length})`,
+                    onPress: () => {
+                      setActiveServiceType("regular");
+                      setSelectedCategory("all");
+                    },
+                  },
+                  {
+                    text: hasVipServices ? `👑 Premium VIP (${vipServices.length})` : "👑 Premium VIP (Not Available)",
+                    onPress: () => {
+                      if (!hasVipServices) {
+                        Alert.alert("VIP Service Not Offered", "This tailor studio does not currently offer Premium VIP services.");
+                        return;
+                      }
+                      setActiveServiceType("vip");
+                      setSelectedCategory("all");
+                    },
+                  },
                   { text: "Cancel", style: "cancel" },
                 ]
               );
@@ -500,7 +611,7 @@ export function TailorDetailScreen({ route, navigation }) {
         </View>
 
         {/* ================= DYNAMIC CATEGORY TABS ================= */}
-        {(dynamicCategories.length > 1 || (dynamicCategories.length === 1 && services.length > 0)) && (
+        {(dynamicCategories.length > 1 || (dynamicCategories.length === 1 && currentTypeServices.length > 0)) && (
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -509,7 +620,11 @@ export function TailorDetailScreen({ route, navigation }) {
             {/* "All" tab always first */}
             <Pressable
               key="all"
-              style={[styles.categoryCard, selectedCategory === "all" && styles.categoryCardSelected]}
+              style={[
+                styles.categoryCard,
+                activeServiceType === "vip" && styles.vipCategoryCard,
+                selectedCategory === "all" && (activeServiceType === "vip" ? styles.vipCategoryCardSelected : styles.categoryCardSelected)
+              ]}
               onPress={() => {
                 setSelectedCategory("all");
                 setSearchQuery("");
@@ -518,19 +633,23 @@ export function TailorDetailScreen({ route, navigation }) {
               <View style={styles.categoryIconWrap}>
                 <Ionicons
                   name="grid-outline"
-                  size={22}
-                  color={selectedCategory === "all" ? "#0d9488" : "#0f172a"}
+                  size={20}
+                  color={selectedCategory === "all" ? (activeServiceType === "vip" ? "#ffffff" : "#0d9488") : (activeServiceType === "vip" ? "#7c3aed" : "#0f172a")}
                 />
               </View>
-              <Text style={[styles.categoryLabel, selectedCategory === "all" && styles.categoryLabelSelected]}>
-                All
+              <Text style={[
+                styles.categoryLabel,
+                activeServiceType === "vip" && styles.vipCategoryLabel,
+                selectedCategory === "all" && (activeServiceType === "vip" ? styles.vipCategoryLabelSelected : styles.categoryLabelSelected)
+              ]}>
+                All {activeServiceType === "vip" ? "VIP" : "Regular"}
               </Text>
             </Pressable>
 
             {/* Dynamic tabs from categories */}
             {dynamicCategories.map((catLabel) => {
               const isSelected = selectedCategory === catLabel;
-              const isVIPTab = catLabel === "Premium VIP";
+              const isVIPTab = activeServiceType === "vip";
               return (
                 <Pressable
                   key={catLabel}
@@ -547,8 +666,8 @@ export function TailorDetailScreen({ route, navigation }) {
                   <View style={styles.categoryIconWrap}>
                     <Ionicons
                       name={isVIPTab ? "ribbon" : getTailorCategoryIcon(catLabel)}
-                      size={22}
-                      color={isSelected ? (isVIPTab ? "#ffffff" : "#0d9488") : (isVIPTab ? "#7c3aed" : "#0f172a")}
+                      size={20}
+                      color={isSelected ? "#ffffff" : (isVIPTab ? "#7c3aed" : "#0f172a")}
                     />
                   </View>
                   <Text style={[
@@ -556,7 +675,7 @@ export function TailorDetailScreen({ route, navigation }) {
                     isVIPTab && styles.vipCategoryLabel,
                     isSelected && (isVIPTab ? styles.vipCategoryLabelSelected : styles.categoryLabelSelected)
                   ]}>
-                    {isVIPTab ? "👑 VIP" : catLabel}
+                    {catLabel}
                   </Text>
                 </Pressable>
               );
@@ -565,23 +684,33 @@ export function TailorDetailScreen({ route, navigation }) {
         )}
 
         {/* ================= HERO SPECIAL OFFER BANNER ================= */}
-        <View style={styles.bannerContainer}>
+        <View style={[styles.bannerContainer, activeServiceType === "vip" && styles.vipBannerContainer]}>
           <View style={styles.bannerContentLeft}>
-            <View style={styles.specialOfferBadge}>
-              <Text style={styles.specialOfferText}>✂️ Bespoke Tailoring</Text>
+            <View style={[styles.specialOfferBadge, activeServiceType === "vip" && styles.vipSpecialOfferBadge]}>
+              <Text style={[styles.specialOfferText, activeServiceType === "vip" && styles.vipSpecialOfferText]}>
+                {activeServiceType === "vip" ? "👑 Premium VIP Express" : "✂️ Bespoke Tailoring"}
+              </Text>
             </View>
-            <Text style={styles.bannerHeading}>Perfect Fit, Crafted for You</Text>
-            <Text style={styles.bannerSubheading}>Custom Tailoring & Express VIP Stitching</Text>
+            <Text style={styles.bannerHeading}>
+              {activeServiceType === "vip" ? "Dedicated VIP Turnaround" : "Perfect Fit, Crafted for You"}
+            </Text>
+            <Text style={styles.bannerSubheading}>
+              {activeServiceType === "vip"
+                ? "Priority express stitching with dedicated delivery timeline"
+                : "Custom tailoring & alterations by master craftsmen"}
+            </Text>
 
             <Pressable
-              style={styles.bannerActionBtn}
+              style={[styles.bannerActionBtn, activeServiceType === "vip" && styles.vipBannerActionBtn]}
               onPress={() => {
                 if (currentDisplayServices.length > 0) {
                   toggleService(currentDisplayServices[0]);
                 }
               }}
             >
-              <Text style={styles.bannerActionBtnText}>Select Services →</Text>
+              <Text style={[styles.bannerActionBtnText, activeServiceType === "vip" && styles.vipBannerActionBtnText]}>
+                {activeServiceType === "vip" ? "Select VIP Service →" : "Select Services →"}
+              </Text>
             </Pressable>
           </View>
 
@@ -595,7 +724,7 @@ export function TailorDetailScreen({ route, navigation }) {
 
           {/* Dots Indicator */}
           <View style={styles.bannerDotsRow}>
-            <View style={[styles.bannerDot, styles.bannerDotActive]} />
+            <View style={[styles.bannerDot, styles.bannerDotActive, activeServiceType === "vip" && { backgroundColor: "#7c3aed" }]} />
             <View style={styles.bannerDot} />
             <View style={styles.bannerDot} />
           </View>
@@ -604,43 +733,60 @@ export function TailorDetailScreen({ route, navigation }) {
         {/* ================= SECTION HEADER ================= */}
         <View style={styles.sectionHeaderRow}>
           <View style={styles.sectionHeaderLeft}>
-            <View style={[styles.sectionIconWrap, selectedCategory === "Premium VIP" && { backgroundColor: "#ede9fe" }]}>
+            <View style={[styles.sectionIconWrap, activeServiceType === "vip" && { backgroundColor: "#ede9fe" }]}>
               <Ionicons
-                name={selectedCategory === "Premium VIP" ? "ribbon" : "cut-outline"}
+                name={activeServiceType === "vip" ? "ribbon" : "cut-outline"}
                 size={20}
-                color={selectedCategory === "Premium VIP" ? "#7c3aed" : "#0d9488"}
+                color={activeServiceType === "vip" ? "#7c3aed" : "#0d9488"}
               />
             </View>
             <Text style={styles.sectionMainTitle}>{currentSectionTitle}</Text>
-            {selectedCategory === "all" && services.some(isVipService) && (
-              <View style={styles.vipHeaderNoticeBadge}>
-                <Text style={styles.vipHeaderNoticeBadgeText}>👑 VIP Services Available</Text>
-              </View>
-            )}
           </View>
 
-          {selectedCategory !== "all" && services.length > currentDisplayServices.length && (
+          {selectedCategory !== "all" && currentTypeServices.length > currentDisplayServices.length && (
             <Pressable onPress={() => { setSelectedCategory("all"); setSearchQuery(""); }}>
-              <Text style={styles.viewAllBtnText}>View All &gt;</Text>
+              <Text style={[styles.viewAllBtnText, activeServiceType === "vip" && { color: "#7c3aed" }]}>View All &gt;</Text>
             </Pressable>
           )}
         </View>
         <Text style={styles.sectionSubTitleText}>
-          {currentDisplayServices.length} service{currentDisplayServices.length !== 1 ? "s" : ""} available
+          {currentDisplayServices.length} {activeServiceType === "vip" ? "VIP express" : "standard"} service{currentDisplayServices.length !== 1 ? "s" : ""} available
         </Text>
 
         {/* ================= HORIZONTAL SERVICES CARDS ================= */}
         {currentDisplayServices.length === 0 ? (
-          <View style={styles.noServicesBox}>
-            <Ionicons name="cut-outline" size={36} color="#99f6e4" />
-            <Text style={styles.noServicesTitle}>
-              {searchQuery.trim() ? "No services found" : "No tailoring services added yet"}
+          <View style={[styles.noServicesBox, activeServiceType === "vip" && { borderColor: "#ddd6fe", backgroundColor: "#faf5ff" }]}>
+            <Ionicons
+              name={activeServiceType === "vip" ? "ribbon-outline" : "cut-outline"}
+              size={36}
+              color={activeServiceType === "vip" ? "#a855f7" : "#99f6e4"}
+            />
+            <Text style={[styles.noServicesTitle, activeServiceType === "vip" && { color: "#581c87" }]}>
+              {searchQuery.trim()
+                ? "No matching services found"
+                : activeServiceType === "vip"
+                ? "No Premium VIP services added"
+                : "No tailoring services added yet"}
             </Text>
             <Text style={styles.noServicesSub}>
               {searchQuery.trim()
                 ? "Try searching with a different keyword"
+                : activeServiceType === "vip"
+                ? "This tailor currently offers regular tailoring services. Switch to Regular Service to view all standard options."
                 : "This tailor hasn't added services in this category yet"}
             </Text>
+            {activeServiceType === "vip" && !searchQuery.trim() && (
+              <Pressable
+                style={styles.switchRegularBtn}
+                onPress={() => {
+                  setActiveServiceType("regular");
+                  setSelectedCategory("all");
+                }}
+              >
+                <Ionicons name="cut" size={14} color="#ffffff" style={{ marginRight: 6 }} />
+                <Text style={styles.switchRegularBtnText}>Switch to Regular Services 🧵</Text>
+              </Pressable>
+            )}
           </View>
         ) : (
           <ScrollView
@@ -1710,4 +1856,162 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#6b21a8",
   },
+  /* ================= SERVICE TYPE TOGGLE (REGULAR VS VIP) ================= */
+  serviceModeToggleCard: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 12,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: "#ffffff",
+    borderWidth: 1.5,
+    borderColor: "#e2e8f0",
+    shadowColor: "#0f172a",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  serviceModeHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  serviceModeTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  serviceModeTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  serviceModeStatusBadge: {
+    backgroundColor: "#f0fdfa",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#ccfbf1",
+  },
+  vipStatusBadge: {
+    backgroundColor: "#ede9fe",
+    borderColor: "#ddd6fe",
+  },
+  serviceModeStatusText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#0d9488",
+  },
+  vipStatusText: {
+    color: "#7c3aed",
+  },
+  serviceModePillRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  serviceModePill: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1.5,
+    borderColor: "#e2e8f0",
+  },
+  serviceModePillActiveRegular: {
+    backgroundColor: "#0d9488",
+    borderColor: "#0d9488",
+    shadowColor: "#0d9488",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  serviceModePillActiveVIP: {
+    backgroundColor: "#7c3aed",
+    borderColor: "#7c3aed",
+    shadowColor: "#7c3aed",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  serviceModePillDisabled: {
+    opacity: 0.6,
+    backgroundColor: "#f1f5f9",
+    borderColor: "#e2e8f0",
+  },
+  pillIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: "#ccfbf1",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 8,
+  },
+  pillIconBoxActiveRegular: {
+    backgroundColor: "rgba(255, 255, 255, 0.22)",
+  },
+  pillIconBoxActiveVIP: {
+    backgroundColor: "rgba(255, 255, 255, 0.22)",
+  },
+  pillIconBoxDisabled: {
+    backgroundColor: "#e2e8f0",
+  },
+  serviceModePillText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#1e293b",
+  },
+  serviceModePillTextActive: {
+    color: "#ffffff",
+  },
+  serviceModePillTextDisabled: {
+    color: "#94a3b8",
+  },
+  serviceModePillSub: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#64748b",
+    marginTop: 1,
+  },
+  serviceModePillSubActive: {
+    color: "rgba(255, 255, 255, 0.9)",
+  },
+  vipBannerContainer: {
+    borderColor: "#ddd6fe",
+  },
+  vipSpecialOfferBadge: {
+    backgroundColor: "#ede9fe",
+    borderColor: "#c084fc",
+  },
+  vipSpecialOfferText: {
+    color: "#7c3aed",
+  },
+  vipBannerActionBtn: {
+    backgroundColor: "#7c3aed",
+  },
+  vipBannerActionBtnText: {
+    color: "#ffffff",
+  },
+  switchRegularBtn: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#0d9488",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  switchRegularBtnText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "700",
+  },
 });
+
