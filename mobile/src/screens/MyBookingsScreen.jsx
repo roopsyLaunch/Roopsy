@@ -1975,47 +1975,17 @@ export function MyBookingsScreen({ navigation, route }) {
         </View>
       )}
 
-      {/* Quick Active OTP Alert Banner for Customer */}
-      {viewMode === "My Appointments" && activeOtpBooking && (
-        <View style={{ marginHorizontal: 16, marginTop: 10, backgroundColor: "#fef3c7", padding: 12, borderRadius: 14, borderWidth: 1, borderColor: "#fde68a", flexDirection: "row", alignItems: "center" }}>
-          <Ionicons name="key" size={20} color="#d97706" style={{ marginRight: 10 }} />
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 12, fontWeight: "800", color: "#b45309", textTransform: "uppercase" }}>
-              {activeOtpBooking.deliveryOtp 
-                ? "📦 Active Delivery OTP Code" 
-                : activeOtpBooking.isTailorOrder 
-                  ? "✂️ Active Tailor Verification OTP" 
-                  : "💈 Active Barber Check-in OTP (12h Validity)"}
-            </Text>
-            <Text style={{ fontSize: 16, fontWeight: "900", color: "#92400e", letterSpacing: 2, marginTop: 2 }}>
-              {activeOtpBooking.deliveryOtp || activeOtpBooking.otp || activeOtpBooking.verificationPin}
-            </Text>
-          </View>
-          <View style={{ backgroundColor: "#d97706", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
-            <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 11 }}>
-              {activeOtpBooking.isTailorOrder ? "Show Tailor" : "Show Barber"}
-            </Text>
-          </View>
+      {viewMode === "Shop Queue" && (
+        <View style={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 6, alignItems: "flex-end" }}>
+          <Pressable
+            style={[styles.walkInBtn, { width: "auto", paddingHorizontal: 14, height: 38, borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 6 }]}
+            onPress={() => setWalkInModalVisible(true)}
+          >
+            <Ionicons name="person-add" size={16} color="#fff" />
+            <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>+ Walk-in Client</Text>
+          </Pressable>
         </View>
       )}
-
-      <View style={styles.searchSection}>
-        <View style={styles.searchInputWrapper}>
-          <Ionicons name="search" size={20} color="#94a3b8" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search by name or phone..."
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholderTextColor="#94a3b8"
-          />
-        </View>
-        {viewMode === "Shop Queue" && (
-          <Pressable style={styles.walkInBtn} onPress={() => setWalkInModalVisible(true)}>
-            <Ionicons name="person-add" size={20} color="#fff" />
-          </Pressable>
-        )}
-      </View>
 
       <FlatList
         data={filteredItems}

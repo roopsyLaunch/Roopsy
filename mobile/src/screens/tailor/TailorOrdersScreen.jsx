@@ -1524,43 +1524,7 @@ export function TailorOrdersScreen({ navigation, route }) {
             </ScrollView>
           </View>
 
-          {/* Quick Active OTP Alert Banner */}
-          {activeOtpBooking && (
-            <View style={{ marginHorizontal: 16, marginTop: 10, backgroundColor: "#fef3c7", padding: 12, borderRadius: 14, borderWidth: 1, borderColor: "#fde68a", flexDirection: "row", alignItems: "center" }}>
-              <Ionicons name="key" size={20} color="#d97706" style={{ marginRight: 10 }} />
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 11, fontWeight: "800", color: "#b45309", textTransform: "uppercase" }}>
-                  {activeOtpBooking.deliveryOtp 
-                    ? "📦 Active Delivery OTP Code" 
-                    : activeOtpBooking.isTailorOrder 
-                      ? "✂️ Active Tailor Verification OTP" 
-                      : "💈 Active Barber Check-in OTP (12h Validity)"}
-                </Text>
-                <Text style={{ fontSize: 16, fontWeight: "900", color: "#92400e", letterSpacing: 2, marginTop: 2 }}>
-                  {activeOtpBooking.deliveryOtp || activeOtpBooking.otp || activeOtpBooking.verificationPin}
-                </Text>
-              </View>
-              <View style={{ backgroundColor: "#d97706", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
-                <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 11 }}>
-                  {activeOtpBooking.isTailorOrder ? "Show Tailor" : "Show Barber"}
-                </Text>
-              </View>
-            </View>
-          )}
 
-          {/* Search Bar */}
-          <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
-            <View style={styles.searchInputWrapper}>
-              <Ionicons name="search" size={18} color="#94a3b8" />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search appointments..."
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                placeholderTextColor="#94a3b8"
-              />
-            </View>
-          </View>
 
           <FlatList
             data={filteredCustomerAppointments}
