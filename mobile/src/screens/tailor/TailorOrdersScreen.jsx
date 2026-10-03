@@ -296,6 +296,29 @@ export function TailorOrdersScreen({ navigation, route }) {
     setDeliveryOtpModalVisible(true);
   };
 
+  const [startingStitchingOrderId, setStartingStitchingOrderId] = useState(null);
+
+  const handleStartStitching = async (orderId) => {
+    const curOrder = orders.find(o => (o._id || o.id) === orderId);
+    if (curOrder && (curOrder.status === "cancelled" || curOrder.status === "declined")) {
+      return Alert.alert("Order Cancelled", "Cannot start stitching for a cancelled order.");
+    }
+    if (curOrder && !curOrder.isOtpVerified) {
+      return Alert.alert("Handover Required 🔒", "Please verify customer cloth handover OTP first before starting stitching.");
+    }
+    setStartingStitchingOrderId(orderId);
+    try {
+      const res = await api.post(`/tailors/orders/${orderId}/start-stitching`);
+      Alert.alert("Stitching Started! 🪡", res.data?.message || "Order moved to Stitching in Progress. Customer has been notified!");
+      await loadOrders();
+    } catch (err) {
+      console.error(err);
+      Alert.alert("Error", err?.response?.data?.error || "Could not start stitching.");
+    } finally {
+      setStartingStitchingOrderId(null);
+    }
+  };
+
   const handleGenerateDeliveryOtp = async (orderId) => {
     const curOrder = orders.find(o => (o._id || o.id) === orderId);
     if (curOrder && (curOrder.status === "cancelled" || curOrder.status === "declined")) {
@@ -878,8 +901,40 @@ export function TailorOrdersScreen({ navigation, route }) {
           </View>
         )}
 
-        {/* Delivery OTP Card for Ready / Active Orders */}
-        {item.isOtpVerified && item.status !== "completed" && item.status !== "cancelled" && item.status !== "declined" && (
+        {/* Step 2: Start Stitching - Visible only when Handover OTP is verified and stitching NOT started yet */}
+        {item.isOtpVerified && item.status !== "completed" && item.status !== "cancelled" && item.status !== "declined" && !(item.isStitchingStarted || item.status === "stitching" || ["trial", "alteration", "ironing", "quality_check", "packing", "ready", "dispatched"].includes(item.status)) && (
+          <View style={{ backgroundColor: "#f5f3ff", padding: 10, borderRadius: 8, marginBottom: 8, borderWidth: 1.5, borderColor: "#ddd6fe" }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <View style={{ flex: 1, marginRight: 8 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+                  <Ionicons name="cut" size={16} color="#7c3aed" />
+                  <Text style={{ fontSize: 12.5, fontWeight: "800", color: "#6d28d9" }}>
+                    Next Step: Start Stitching 🪡
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 10.5, color: "#7c3aed", marginTop: 2 }}>
+                  Cloth received! Start stitching to unlock Delivery OTP.
+                </Text>
+              </View>
+              <Pressable
+                style={{ backgroundColor: "#7c3aed", paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6, flexDirection: "row", alignItems: "center", gap: 4 }}
+                onPress={() => handleStartStitching(item._id)}
+                disabled={startingStitchingOrderId === item._id}
+              >
+                {startingStitchingOrderId === item._id ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 11.5 }}>
+                    Start Stitching 🪡
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        )}
+
+        {/* Delivery OTP Card for Ready / Active Orders - ONLY AFTER stitching started */}
+        {item.isOtpVerified && item.status !== "completed" && item.status !== "cancelled" && item.status !== "declined" && (item.isStitchingStarted || item.status === "stitching" || ["trial", "alteration", "ironing", "quality_check", "packing", "ready", "dispatched"].includes(item.status)) && (
           <View style={{ backgroundColor: item.isDeliveryOtpVerified ? "#ecfdf5" : item.deliveryOtp ? "#e0f2fe" : "#f0fdf4", paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8, marginBottom: 8, borderWidth: 1, borderColor: item.isDeliveryOtpVerified ? "#a7f3d0" : item.deliveryOtp ? "#bae6fd" : "#bbf7d0" }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
               <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8, gap: 5 }}>
@@ -1403,6 +1458,26 @@ export function TailorOrdersScreen({ navigation, route }) {
                 Cloth Handover OTP Verified ✅
               </Text>
             </View>
+
+            {/* Waiting for tailor to start stitching */}
+            {!(item.isStitchingStarted || item.status === "stitching" || item.deliveryOtp || ["trial", "alteration", "ironing", "quality_check", "packing", "ready", "dispatched", "completed"].includes(item.status)) && (
+              <View style={{ backgroundColor: "#fefce8", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderColor: "#fef08a" }}>
+                <Ionicons name="hourglass-outline" size={14} color="#b45309" />
+                <Text style={{ fontSize: 11, fontWeight: "700", color: "#92400e" }}>
+                  Cloth Handed Over • Tailor will start stitching soon 🪡
+                </Text>
+              </View>
+            )}
+
+            {/* Stitching In Progress */}
+            {(item.isStitchingStarted || item.status === "stitching") && !item.deliveryOtp && (
+              <View style={{ backgroundColor: "#f5f3ff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderColor: "#ddd6fe" }}>
+                <Ionicons name="cut" size={14} color="#7c3aed" />
+                <Text style={{ fontSize: 11, fontWeight: "700", color: "#6d28d9" }}>
+                  🪡 Stitching In Progress (सिलाई चल रही है) • Delivery OTP will generate when ready
+                </Text>
+              </View>
+            )}
 
             {/* Delivery OTP (When ready for delivery) */}
             {item.deliveryOtp && (

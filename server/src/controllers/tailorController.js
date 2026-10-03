@@ -716,6 +716,68 @@ exports.uploadDeliveryProof = async (req, res) => {
   }
 };
 
+exports.startStitching = async (req, res) => {
+  try {
+    const tailor = await Tailor.findOne({ userId: req.user._id });
+    if (!tailor) return res.status(403).json({ error: "Not a tailor" });
+
+    const order = await TailorOrder.findOne({ _id: req.params.id, tailorId: tailor._id });
+    if (!order) return res.status(404).json({ error: "Order not found" });
+
+    if (order.status === "cancelled" || order.status === "declined") {
+      return res.status(400).json({ error: "Cannot start stitching on a cancelled or declined order." });
+    }
+
+    if (!order.isOtpVerified) {
+      return res.status(400).json({
+        error: "Customer cloth handover OTP must be verified first before starting stitching! 🔒"
+      });
+    }
+
+    order.status = "stitching";
+    order.isStitchingStarted = true;
+    order.stitchingStartedAt = new Date();
+    order.statusHistory.push({
+      status: "stitching",
+      changedAt: new Date(),
+      note: "Stitching started by tailor partner 🪡"
+    });
+
+    await order.save();
+
+    // Notify Customer
+    const custId = order.customerId;
+    const notifTitle = "Stitching Started! 🪡";
+    const notifBody = `The tailor has started stitching your outfit for order #${order._id.toString().slice(-6)}. You will receive Delivery OTP when your outfit is ready!`;
+
+    await Notification.create({
+      userId: custId,
+      title: notifTitle,
+      body: notifBody,
+      type: "general",
+      data: { orderId: order._id, status: "stitching" }
+    }).catch(err => console.error("Notification create error:", err));
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user_${custId.toString()}`).emit("bookingUpdated", {
+        orderId: order._id,
+        status: "stitching",
+        isStitchingStarted: true
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Stitching started successfully! 🪡 Customer has been notified.",
+      order: enrichOrderTimeline(order)
+    });
+  } catch (error) {
+    console.error("startStitching error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
 exports.generateDeliveryOtp = async (req, res) => {
   try {
     const tailor = await Tailor.findOne({ userId: req.user._id });
@@ -730,6 +792,18 @@ exports.generateDeliveryOtp = async (req, res) => {
 
     if (!order.isOtpVerified) {
       return res.status(400).json({ error: "Initial booking OTP must be verified before generating delivery OTP." });
+    }
+
+    const hasStitchingStarted = Boolean(
+      order.isStitchingStarted ||
+      order.status === "stitching" ||
+      ["trial", "alteration", "ironing", "quality_check", "packing", "ready", "dispatched"].includes(order.status)
+    );
+
+    if (!hasStitchingStarted) {
+      return res.status(400).json({
+        error: "Stitching not started yet! 🪡 Please tap 'Start Stitching' first before generating delivery OTP."
+      });
     }
 
     // Generate random 4-digit Delivery OTP
@@ -966,6 +1040,10 @@ exports.updateOrderStatus = async (req, res) => {
     const updatePayload = {};
     if (status) {
       updatePayload.status = status;
+      if (status === "stitching") {
+        updatePayload.isStitchingStarted = true;
+        if (!order.stitchingStartedAt) updatePayload.stitchingStartedAt = new Date();
+      }
       if (CANCELLATION_STATUSES.includes(status)) {
         updatePayload.otp = "";
         updatePayload.deliveryOtp = "";

@@ -1399,6 +1399,26 @@ export function MyBookingsScreen({ navigation, route }) {
               </Text>
             </View>
 
+            {/* Waiting for tailor to start stitching */}
+            {!(item.isStitchingStarted || item.status === "stitching" || item.deliveryOtp || ["trial", "alteration", "ironing", "quality_check", "packing", "ready", "dispatched", "completed"].includes(item.status)) && (
+              <View style={{ backgroundColor: "#fefce8", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderColor: "#fef08a" }}>
+                <Ionicons name="hourglass-outline" size={14} color="#b45309" />
+                <Text style={{ fontSize: 11, fontWeight: "700", color: "#92400e" }}>
+                  Cloth Handed Over • Tailor will start stitching soon 🪡
+                </Text>
+              </View>
+            )}
+
+            {/* Stitching In Progress */}
+            {(item.isStitchingStarted || item.status === "stitching") && !item.deliveryOtp && (
+              <View style={{ backgroundColor: "#f5f3ff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderColor: "#ddd6fe" }}>
+                <Ionicons name="cut" size={14} color="#7c3aed" />
+                <Text style={{ fontSize: 11, fontWeight: "700", color: "#6d28d9" }}>
+                  🪡 Stitching In Progress (सिलाई चल रही है) • Delivery OTP will generate when ready
+                </Text>
+              </View>
+            )}
+
             {/* Delivery OTP (When ready for delivery) */}
             {item.deliveryOtp && (
               <View style={{

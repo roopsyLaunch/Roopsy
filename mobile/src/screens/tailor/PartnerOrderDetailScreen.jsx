@@ -196,6 +196,28 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
     }
   };
 
+  const [startingStitching, setStartingStitching] = useState(false);
+
+  const handleStartStitching = async () => {
+    if (order?.status === "cancelled" || order?.status === "declined") {
+      return Alert.alert("Order Cancelled", "Cannot start stitching on a cancelled order.");
+    }
+    if (!order?.isOtpVerified) {
+      return Alert.alert("Handover Required 🔒", "Please verify customer cloth handover OTP first before starting stitching.");
+    }
+    setStartingStitching(true);
+    try {
+      const res = await api.post(`/tailors/orders/${orderId}/start-stitching`);
+      await loadOrder();
+      Alert.alert("Stitching Started! 🪡", res.data?.message || "Order moved to Stitching in Progress. Customer has been notified!");
+    } catch (err) {
+      console.error(err);
+      Alert.alert("Error", err?.response?.data?.error || "Could not start stitching.");
+    } finally {
+      setStartingStitching(false);
+    }
+  };
+
   const handleGenerateDeliveryOtp = async () => {
     if (order?.status === "cancelled" || order?.status === "declined") {
       return Alert.alert("Order Cancelled", "Cannot generate delivery OTP for a cancelled order.");
@@ -509,8 +531,48 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
           </View>
         )}
 
+        {/* Step 2: Start Stitching Section (Enabled only after Handover OTP verified) */}
+        {order.isOtpVerified && !["cancelled", "declined", "completed"].includes(order.status) && !(order.isStitchingStarted || order.status === "stitching" || ["trial", "alteration", "ironing", "quality_check", "packing", "ready", "dispatched", "completed"].includes(order.status)) && (
+          <Section title="Step 2: Production & Stitching" icon="cut">
+            <View style={{ backgroundColor: "#f5f3ff", padding: 14, borderRadius: 14, borderWidth: 1.5, borderColor: "#ddd6fe" }}>
+              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 12 }}>
+                <Ionicons name="cut" size={24} color="#7c3aed" style={{ marginRight: 10 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: "800", color: "#6d28d9" }}>
+                    START STITCHING (सिलाई शुरू करें) 🪡
+                  </Text>
+                  <Text style={{ fontSize: 12, color: "#7c3aed", marginTop: 2 }}>
+                    Cloth handover is verified. Tap below when you begin cutting / stitching.
+                  </Text>
+                </View>
+              </View>
+
+              <Pressable
+                style={{ backgroundColor: "#7c3aed", paddingVertical: 12, borderRadius: 10, alignItems: "center", justifyContent: "center" }}
+                onPress={handleStartStitching}
+                disabled={startingStitching}
+              >
+                {startingStitching ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 14 }}>
+                    🪡 Start Stitching Now
+                  </Text>
+                )}
+              </Pressable>
+
+              <View style={{ backgroundColor: "#ede9fe", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, marginTop: 10, flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Ionicons name="lock-closed" size={13} color="#6d28d9" />
+                <Text style={{ fontSize: 11, color: "#6d28d9", fontWeight: "700" }}>
+                  Delivery OTP will unlock after stitching has started
+                </Text>
+              </View>
+            </View>
+          </Section>
+        )}
+
         {/* Cloth Delivery & Proof Section */}
-        {order.isOtpVerified && !["cancelled", "declined"].includes(order.status) && (
+        {order.isOtpVerified && (order.isStitchingStarted || order.status === "stitching" || ["trial", "alteration", "ironing", "quality_check", "packing", "ready", "dispatched", "completed"].includes(order.status)) && !["cancelled", "declined"].includes(order.status) && (
           <Section title="Cloth Delivery & Verification Proof" icon="cube">
             <View style={{ backgroundColor: order.isDeliveryOtpVerified ? "#ecfdf5" : order.deliveryOtp ? "#e0f2fe" : "#f0fdf4", padding: 14, borderRadius: 14, borderWidth: 1, borderColor: order.isDeliveryOtpVerified ? "#a7f3d0" : order.deliveryOtp ? "#bae6fd" : "#bbf7d0" }}>
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
