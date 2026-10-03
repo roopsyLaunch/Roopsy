@@ -250,10 +250,38 @@ export function TailorOrdersScreen({ navigation, route }) {
     }
   };
 
+  const handleCaptureDeliveryProofForOrder = async (orderId) => {
+    try {
+      const uri = await pickOrCaptureImage({
+        title: "Finished Outfit Delivery Photo 📸",
+        message: "Click or choose photo of the finished delivered outfit (कपड़ा डिलीवरी प्रमाण):"
+      });
+      if (!uri) return;
+
+      setUploadingDeliveryProof(true);
+      const uploadedUrl = await uploadImageAsync(uri);
+      if (!uploadedUrl) {
+        return Alert.alert("Error", "Could not upload delivery photo");
+      }
+
+      await api.patch(`/tailors/orders/${orderId}/delivery-proof`, {
+        deliveryProofImageUrl: uploadedUrl
+      });
+      await loadOrders();
+      Alert.alert("Photo Saved! 📦📸", "Cloth delivery proof photo has been successfully saved & confirmed!");
+    } catch (err) {
+      console.error(err);
+      Alert.alert("Error", err?.response?.data?.error || "Could not save delivery photo.");
+    } finally {
+      setUploadingDeliveryProof(false);
+    }
+  };
+
   const handleOpenDeliveryOtpModal = (orderId) => {
+    const curOrder = orders.find(o => (o._id || o.id) === orderId);
     setDeliveryOrderId(orderId);
     setDeliveryOtpInput("");
-    setDeliveryProofUri(null);
+    setDeliveryProofUri(curOrder?.deliveryProofImageUrl || null);
     setDeliveryOtpModalVisible(true);
   };
 
@@ -267,7 +295,7 @@ export function TailorOrdersScreen({ navigation, route }) {
       await api.post(`/tailors/orders/${orderId}/generate-delivery-otp`);
       setDeliveryOrderId(orderId);
       setDeliveryOtpInput("");
-      setDeliveryProofUri(null);
+      setDeliveryProofUri(curOrder?.deliveryProofImageUrl || null);
       setDeliveryOtpModalVisible(true);
       await loadOrders();
       Alert.alert("Delivery OTP Generated 📦", "Customer has received the 4-digit Delivery OTP. Please enter and verify it when delivering the outfit.");
@@ -290,8 +318,8 @@ export function TailorOrdersScreen({ navigation, route }) {
     }
     setVerifyingDeliveryOtp(true);
     try {
-      let uploadedDeliveryUrl = "";
-      if (deliveryProofUri) {
+      let uploadedDeliveryUrl = curOrder?.deliveryProofImageUrl || "";
+      if (deliveryProofUri && deliveryProofUri !== curOrder?.deliveryProofImageUrl) {
         setUploadingDeliveryProof(true);
         uploadedDeliveryUrl = await uploadImageAsync(deliveryProofUri);
       }
@@ -834,30 +862,64 @@ export function TailorOrdersScreen({ navigation, route }) {
 
         {/* Delivery OTP Card for Ready / Active Orders */}
         {item.isOtpVerified && item.status !== "completed" && item.status !== "cancelled" && item.status !== "declined" && (
-          <View style={{ backgroundColor: item.isDeliveryOtpVerified ? "#ecfdf5" : item.deliveryOtp ? "#e0f2fe" : "#f0fdf4", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: item.isDeliveryOtpVerified ? "#a7f3d0" : item.deliveryOtp ? "#bae6fd" : "#bbf7d0", flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-            <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 }}>
-              <Ionicons name={item.isDeliveryOtpVerified ? "checkmark-done-circle" : "cube"} size={20} color={item.isDeliveryOtpVerified ? "#059669" : item.deliveryOtp ? "#0284c7" : "#16a34a"} style={{ marginRight: 8 }} />
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 13, fontWeight: "800", color: item.isDeliveryOtpVerified ? "#047857" : item.deliveryOtp ? "#0369a1" : "#15803d" }}>
-                  {item.isDeliveryOtpVerified ? "Delivery OTP Verified ✅" : item.deliveryOtp ? "Delivery OTP Sent to Customer 📦" : "Ready for Delivery"}
-                </Text>
-                <Text style={{ fontSize: 11, color: item.deliveryOtp ? "#0284c7" : "#166534", marginTop: 2 }}>
-                  {item.isDeliveryOtpVerified ? "Order completed successfully" : item.deliveryOtp ? "Enter customer Delivery OTP to finish delivery" : "Tap Deliver Order to send Delivery OTP to customer"}
-                </Text>
-              </View>
-            </View>
-            {!item.isDeliveryOtpVerified && (
-              <Pressable
-                style={{ backgroundColor: item.deliveryOtp ? "#0284c7" : "#16a34a", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
-                onPress={() => item.deliveryOtp ? handleOpenDeliveryOtpModal(item._id) : handleGenerateDeliveryOtp(item._id)}
-                disabled={generatingDeliveryOtp}
-              >
-                {generatingDeliveryOtp ? <ActivityIndicator color="#fff" size="small" /> : (
-                  <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 12 }}>
-                    {item.deliveryOtp ? "Verify Delivery OTP" : "Deliver Order 📦"}
+          <View style={{ backgroundColor: item.isDeliveryOtpVerified ? "#ecfdf5" : item.deliveryOtp ? "#e0f2fe" : "#f0fdf4", padding: 12, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: item.isDeliveryOtpVerified ? "#a7f3d0" : item.deliveryOtp ? "#bae6fd" : "#bbf7d0" }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 }}>
+                <Ionicons name={item.isDeliveryOtpVerified ? "checkmark-done-circle" : "cube"} size={20} color={item.isDeliveryOtpVerified ? "#059669" : item.deliveryOtp ? "#0284c7" : "#16a34a"} style={{ marginRight: 8 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 13, fontWeight: "800", color: item.isDeliveryOtpVerified ? "#047857" : item.deliveryOtp ? "#0369a1" : "#15803d" }}>
+                    {item.isDeliveryOtpVerified ? "Delivery OTP Verified ✅" : item.deliveryOtp ? "Delivery OTP Sent to Customer 📦" : "Ready for Delivery"}
                   </Text>
+                  <Text style={{ fontSize: 11, color: item.deliveryOtp ? "#0284c7" : "#166534", marginTop: 2 }}>
+                    {item.isDeliveryOtpVerified ? "Order completed successfully" : item.deliveryOtp ? "Enter customer Delivery OTP to finish delivery" : "Tap Deliver Order to send Delivery OTP to customer"}
+                  </Text>
+                </View>
+              </View>
+              {!item.isDeliveryOtpVerified && (
+                <Pressable
+                  style={{ backgroundColor: item.deliveryOtp ? "#0284c7" : "#16a34a", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
+                  onPress={() => item.deliveryOtp ? handleOpenDeliveryOtpModal(item._id) : handleGenerateDeliveryOtp(item._id)}
+                  disabled={generatingDeliveryOtp}
+                >
+                  {generatingDeliveryOtp ? <ActivityIndicator color="#fff" size="small" /> : (
+                    <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 12 }}>
+                      {item.deliveryOtp ? "Verify Delivery OTP" : "Deliver Order 📦"}
+                    </Text>
+                  )}
+                </Pressable>
+              )}
+            </View>
+
+            {/* Delivery Photo Proof action row */}
+            {!item.isDeliveryOtpVerified && (
+              <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: item.deliveryOtp ? "#bae6fd" : "#bbf7d0" }}>
+                {item.deliveryProofImageUrl ? (
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                      <Image source={{ uri: item.deliveryProofImageUrl }} style={{ width: 34, height: 34, borderRadius: 6, marginRight: 8, borderWidth: 1, borderColor: "#86efac" }} />
+                      <Text style={{ fontSize: 11, fontWeight: "700", color: "#15803d" }}>Delivery Photo Saved ✅</Text>
+                    </View>
+                    <Pressable
+                      onPress={() => handleCaptureDeliveryProofForOrder(item._id)}
+                      disabled={uploadingDeliveryProof}
+                      style={{ backgroundColor: "#dcfce7", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}
+                    >
+                      <Text style={{ fontSize: 10, fontWeight: "700", color: "#15803d" }}>Change 📷</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Pressable
+                    onPress={() => handleCaptureDeliveryProofForOrder(item._id)}
+                    disabled={uploadingDeliveryProof}
+                    style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "#ffffff", paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: item.deliveryOtp ? "#bae6fd" : "#bbf7d0" }}
+                  >
+                    <Ionicons name="camera" size={14} color="#0284c7" style={{ marginRight: 6 }} />
+                    <Text style={{ fontSize: 11, fontWeight: "700", color: "#0284c7" }}>
+                      Upload Delivery Photo (कपड़ा डिलीवरी फोटो) 📸
+                    </Text>
+                  </Pressable>
                 )}
-              </Pressable>
+              </View>
             )}
           </View>
         )}
@@ -1178,6 +1240,38 @@ export function TailorOrdersScreen({ navigation, route }) {
             </View>
           </View>
         )}
+
+        {/* Delivered Outfit Proof Photo */}
+        {item.deliveryProofImageUrl ? (
+          <View style={{
+            backgroundColor: "#f0fdf4",
+            padding: 12,
+            borderRadius: 12,
+            marginBottom: 12,
+            borderWidth: 1,
+            borderColor: "#bbf7d0"
+          }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                <Ionicons name="shield-checkmark" size={16} color="#16a34a" style={{ marginRight: 6 }} />
+                <Text style={{ fontSize: 11, fontWeight: "800", color: "#15803d" }}>
+                  DELIVERED OUTFIT PROOF (डिलीवरी प्रमाण फोटो) 📦📸
+                </Text>
+              </View>
+              <View style={{ backgroundColor: "#dcfce7", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                <Text style={{ fontSize: 9, fontWeight: "800", color: "#16a34a" }}>Delivered Proof ✅</Text>
+              </View>
+            </View>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Image source={{ uri: item.deliveryProofImageUrl }} style={{ width: 50, height: 50, borderRadius: 8, marginRight: 10 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, color: "#166534", fontWeight: "600" }}>
+                  Photo of finished outfit uploaded by tailor partner upon delivery.
+                </Text>
+              </View>
+            </View>
+          </View>
+        ) : null}
 
         <View style={styles.servicesBox}>
           {(item.services || []).map((s, i) => (
