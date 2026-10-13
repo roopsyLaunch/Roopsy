@@ -16,12 +16,11 @@ function getHostIp() {
 }
 
 /**
- * Android emulator: 10.0.2.2 = host machine.
- * Physical device: dynamically resolves from Expo hostUri or EXPO_PUBLIC_API_URL.
- * Production / Release builds: ALWAYS uses the live production Render server.
+ * Hostinger VPS Server: http://76.13.246.224:4000
+ * Both Development and Production builds run on the Hostinger VPS backend server.
  */
 export function getApiBaseUrl() {
-  // 1. In standalone / production builds (Play Store APK/AAB), ALWAYS enforce live production server
+  // 1. In standalone / production builds (Play Store APK/AAB), ALWAYS enforce Hostinger VPS server
   if (typeof __DEV__ !== "undefined" && !__DEV__) {
     return LIVE_PRODUCTION_URL;
   }
