@@ -259,11 +259,13 @@ exports.createOrder = async (req, res) => {
       const dbSvc = dbServices.find(d => d._id.toString() === (s.serviceId || s._id || s.id)?.toString());
       const sMode = s.serviceMode || dbSvc?.serviceMode || "shop";
       const cTime = (s.completionTime || dbSvc?.completionTime || "").trim();
+      const unitPrice = Number(s.price ?? dbSvc?.price ?? 0);
+      const qty = Math.max(1, parseInt(s.quantity, 10) || 1);
       return {
         serviceId: s.serviceId || s._id || s.id,
         name: s.name || dbSvc?.name || "Stitching Service",
-        price: Number(s.price ?? dbSvc?.price ?? 0),
-        quantity: s.quantity || 1,
+        price: unitPrice,
+        quantity: qty,
         serviceMode: sMode,
         completionTime: cTime,
       };
@@ -347,14 +349,15 @@ exports.createOrder = async (req, res) => {
     // Notify Tailor Partner
     if (targetTailor && targetTailor.userId) {
       const customerName = req.user?.name || "Customer";
-      const serviceNames = (services || []).map(s => s.name).join(", ");
+      const serviceNames = normalizedServices.map(s => `${s.name}${s.quantity > 1 ? ` (x${s.quantity} pcs)` : ""}`).join(", ");
       const addr = (homeServiceAddress || "").trim();
+      const totalPieces = normalizedServices.reduce((acc, s) => acc + (s.quantity || 1), 0);
       const notifTitle = hasPremium
         ? `👑 VIP PREMIUM BOOKING: ${customerName}`
         : isHomeService 
-          ? `New Home Tailoring: ${customerName} 🏠` 
-          : `New Tailor Booking: ${customerName} ✂️`;
-      const notifBody = `${hasPremium ? "👑 PRIORITY VIP ORDER\n" : ""}👤 Customer: ${customerName}\n✂️ Services: ${serviceNames || "Stitching"} (₹${totalAmount})${addr ? `\n📍 Address: ${addr}` : ""}`;
+          ? `New Home Tailoring: ${customerName} (${totalPieces} pcs) 🏠` 
+          : `New Tailor Booking: ${customerName} (${totalPieces} pcs) ✂️`;
+      const notifBody = `${hasPremium ? "👑 PRIORITY VIP ORDER\n" : ""}👤 Customer: ${customerName}\n✂️ Services: ${serviceNames || "Stitching"} [${totalPieces} pcs total] (₹${totalAmount})${addr ? `\n📍 Address: ${addr}` : ""}`;
       
       await Notification.create({
         userId: targetTailor.userId,
@@ -422,7 +425,14 @@ exports.getTailorOrders = async (req, res) => {
     const tailor = await Tailor.findOne({ userId: req.user._id });
     if (!tailor) return res.status(403).json({ error: "Not a tailor" });
 
-    const orders = await TailorOrder.find({ tailorId: tailor._id }).populate("customerId", "name email phone avatarUrl").sort({ createdAt: -1 });
+    const orders = await TailorOrder.find({ tailorId: tailor._id }).populate("customerId", "name email phone avatarUrl");
+    // Serial-wise sorting: active/pending orders first, newest order appears on top
+    orders.sort((a, b) => {
+      const isDoneA = ["completed", "cancelled", "declined"].includes(a.status);
+      const isDoneB = ["completed", "cancelled", "declined"].includes(b.status);
+      if (isDoneA !== isDoneB) return isDoneA ? 1 : -1;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
     res.json({ orders: orders.map(enrichOrderTimeline) });
   } catch (error) {
     console.error(error);
@@ -437,8 +447,14 @@ exports.getCustomerOrders = async (req, res) => {
         path: "tailorId",
         select: "shopName address avatarUrl mobileNumber ownerName userId",
         populate: { path: "userId", select: "phone name" }
-      })
-      .sort({ createdAt: -1 });
+      });
+    // Serial-wise sorting: active orders first, newest order appears on top
+    orders.sort((a, b) => {
+      const isDoneA = ["completed", "cancelled", "declined"].includes(a.status);
+      const isDoneB = ["completed", "cancelled", "declined"].includes(b.status);
+      if (isDoneA !== isDoneB) return isDoneA ? 1 : -1;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
     res.json({ orders: orders.map(enrichOrderTimeline) });
   } catch (error) {
     console.error(error);
@@ -482,19 +498,44 @@ exports.cancelCustomerOrder = async (req, res) => {
     const tailor = await Tailor.findById(order.tailorId);
     if (tailor && tailor.userId) {
       const customerName = req.user?.name || "Customer";
-      const notifBody = `${customerName} cancelled tailor booking #${order._id.toString().slice(-6)}`;
+      const serviceList = (order.services || []).map(s => s && s.name ? `${s.name} (x${s.quantity || 1})` : "").filter(Boolean).join(", ");
+      const notifTitle = "Tailor Booking Cancelled by Customer ❌";
+      const notifBody = `${customerName} cancelled order #${order._id.toString().slice(-6)}${serviceList ? ` (${serviceList})` : ""}.`;
 
       await Notification.create({
         userId: tailor.userId,
-        title: "Booking Cancelled by Customer ❌",
+        title: notifTitle,
         body: notifBody,
-        type: "general",
-        data: { orderId: order._id, type: "tailor_order_cancelled" }
+        type: "tailor_order_cancelled",
+        data: {
+          orderId: order._id,
+          type: "tailor_order_cancelled",
+          status: "cancelled",
+          customerName,
+          services: serviceList,
+          shopName: tailor.shopName,
+        }
       }).catch(err => console.error("Notification create error:", err));
 
       const io = req.app.get("io");
       if (io) {
-        io.to(`user_${tailor.userId.toString()}`).emit("bookingUpdated", { orderId: order._id, status: "cancelled" });
+        const partnerPayload = {
+          orderId: order._id,
+          status: "cancelled",
+          title: notifTitle,
+          message: notifBody,
+          type: "tailor_order_cancelled",
+          customerName,
+          services: serviceList,
+          shopName: tailor.shopName,
+        };
+        io.to(`user_${tailor.userId.toString()}`).emit("bookingUpdated", partnerPayload);
+        io.to(`user_${tailor.userId.toString()}`).emit("bookingCancelled", partnerPayload);
+        io.to(`user_${tailor.userId.toString()}`).emit("notification", {
+          title: notifTitle,
+          body: notifBody,
+          data: partnerPayload,
+        });
       }
     }
 
@@ -719,10 +760,15 @@ exports.uploadDeliveryProof = async (req, res) => {
 exports.startStitching = async (req, res) => {
   try {
     const tailor = await Tailor.findOne({ userId: req.user._id });
-    if (!tailor) return res.status(403).json({ error: "Not a tailor" });
+    if (!tailor && req.user.role !== "admin") return res.status(403).json({ error: "Not a tailor" });
 
-    const order = await TailorOrder.findOne({ _id: req.params.id, tailorId: tailor._id });
+    const orderId = req.params.id;
+    let order = await TailorOrder.findById(orderId);
     if (!order) return res.status(404).json({ error: "Order not found" });
+
+    if (tailor && order.tailorId && order.tailorId.toString() !== tailor._id.toString() && req.user.role !== "admin") {
+      return res.status(403).json({ error: "Unauthorized: this order does not belong to your shop" });
+    }
 
     if (order.status === "cancelled" || order.status === "declined") {
       return res.status(400).json({ error: "Cannot start stitching on a cancelled or declined order." });
@@ -774,6 +820,76 @@ exports.startStitching = async (req, res) => {
     });
   } catch (error) {
     console.error("startStitching error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+exports.completeOrder = async (req, res) => {
+  try {
+    const tailor = await Tailor.findOne({ userId: req.user._id });
+    if (!tailor && req.user.role !== "admin") return res.status(403).json({ error: "Not a tailor" });
+
+    const orderId = req.params.id;
+    let order = await TailorOrder.findById(orderId);
+    if (!order) return res.status(404).json({ error: "Order not found" });
+
+    if (tailor && order.tailorId && order.tailorId.toString() !== tailor._id.toString() && req.user.role !== "admin") {
+      return res.status(403).json({ error: "Unauthorized: this order does not belong to your shop" });
+    }
+
+    if (order.status === "cancelled" || order.status === "declined") {
+      return res.status(400).json({ error: "Cannot complete a cancelled or declined order." });
+    }
+
+    if (!order.isOtpVerified) {
+      return res.status(400).json({
+        error: "Cloth handover OTP must be verified first before completing the order."
+      });
+    }
+
+    order.status = "ready";
+    order.isStitchingStarted = true;
+    if (!order.stitchingStartedAt) order.stitchingStartedAt = new Date();
+    order.isStitchingCompleted = true;
+    order.stitchingCompletedAt = new Date();
+    order.statusHistory.push({
+      status: "ready",
+      changedAt: new Date(),
+      note: "Stitching completed by tailor partner. Outfit is ready for pickup or delivery ✅"
+    });
+
+    await order.save();
+
+    // Notify Customer in professional English
+    const custId = order.customerId;
+    const shopName = tailor?.shopName || "your tailor partner";
+    const notifTitle = "Order Stitching Completed! 🎉";
+    const notifBody = `Your order #${order._id.toString().slice(-6)} has been completed by ${shopName}. Your outfit is ready! You can now receive or pick up your order.`;
+
+    await Notification.create({
+      userId: custId,
+      title: notifTitle,
+      body: notifBody,
+      type: "general",
+      data: { orderId: order._id, status: "ready", isStitchingCompleted: true }
+    }).catch(err => console.error("Notification create error:", err));
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user_${custId.toString()}`).emit("bookingUpdated", {
+        orderId: order._id,
+        status: "ready",
+        isStitchingCompleted: true
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Order marked as completed! Customer has been notified that the outfit is ready.",
+      order: enrichOrderTimeline(order)
+    });
+  } catch (error) {
+    console.error("completeOrder error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -1044,6 +1160,12 @@ exports.updateOrderStatus = async (req, res) => {
         updatePayload.isStitchingStarted = true;
         if (!order.stitchingStartedAt) updatePayload.stitchingStartedAt = new Date();
       }
+      if (status === "ready") {
+        updatePayload.isStitchingStarted = true;
+        if (!order.stitchingStartedAt) updatePayload.stitchingStartedAt = new Date();
+        updatePayload.isStitchingCompleted = true;
+        if (!order.stitchingCompletedAt) updatePayload.stitchingCompletedAt = new Date();
+      }
       if (CANCELLATION_STATUSES.includes(status)) {
         updatePayload.otp = "";
         updatePayload.deliveryOtp = "";
@@ -1118,12 +1240,20 @@ exports.updateOrderStatus = async (req, res) => {
     if (status && updated && updated.customerId) {
       const custId = updated.customerId._id || updated.customerId;
       const finalOtp = updated.otp || generatedOtp;
-      const notifTitle = (status === "accepted" || status === "confirmed") ? "Booking Confirmed! ✂️" : status === "declined" ? "Booking Declined" : `Booking Update: ${status}`;
+      const notifTitle = (status === "accepted" || status === "confirmed")
+        ? "Booking Confirmed! ✂️"
+        : status === "declined"
+        ? "Booking Declined"
+        : status === "ready"
+        ? "Order Stitching Completed! 🎉"
+        : `Booking Update: ${status}`;
       const deliveryInfo = updated.deliveryDate
         ? ` • Delivery: ${new Date(updated.deliveryDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} (${updated.completionTime || `${updated.estimatedDays || 1} Days`})`
         : "";
       const notifBody = (status === "accepted" || status === "confirmed")
         ? `Tailor partner confirmed your booking! Your OTP is: ${finalOtp}${deliveryInfo}`
+        : status === "ready"
+        ? `Your order #${updated._id.toString().slice(-6)} has been completed! Your outfit is ready to receive or pick up.`
         : `Your booking status has been updated to ${status}.`;
 
       await Notification.create({
@@ -1131,7 +1261,7 @@ exports.updateOrderStatus = async (req, res) => {
         title: notifTitle,
         body: notifBody,
         type: "general",
-        data: { orderId: updated._id, otp: finalOtp }
+        data: { orderId: updated._id, otp: finalOtp, status, isStitchingCompleted: status === "ready" ? true : updated.isStitchingCompleted }
       }).catch(err => console.error("Notification create error:", err));
 
       // Send Initial OTP SMS to Customer on Acceptance
@@ -1146,7 +1276,12 @@ exports.updateOrderStatus = async (req, res) => {
 
       const io = req.app.get("io");
       if (io) {
-        io.to(`user_${custId.toString()}`).emit("bookingUpdated", { orderId: updated._id, status, otp: finalOtp });
+        io.to(`user_${custId.toString()}`).emit("bookingUpdated", {
+          orderId: updated._id,
+          status,
+          otp: finalOtp,
+          isStitchingCompleted: status === "ready" ? true : updated.isStitchingCompleted
+        });
       }
     }
 

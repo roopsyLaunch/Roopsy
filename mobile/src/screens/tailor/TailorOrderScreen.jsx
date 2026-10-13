@@ -27,7 +27,8 @@ export function TailorOrderScreen({ route, navigation }) {
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const servicesTotal = services.reduce((acc, s) => acc + s.price, 0);
+  const servicesTotal = services.reduce((acc, s) => acc + (s.price || 0) * (s.quantity || 1), 0);
+  const totalPieces = services.reduce((acc, s) => acc + (s.quantity || 1), 0);
   const fabricTotal = fabricDetails ? fabricDetails.totalFabricCost : 0;
   const visitTotal = visitFee || 0;
   const grandTotal = servicesTotal + fabricTotal + visitTotal;
@@ -50,7 +51,7 @@ export function TailorOrderScreen({ route, navigation }) {
     try {
       await api.post("/tailors/orders", {
         tailorId: tailor._id,
-        services: services.map(s => ({ serviceId: s._id, name: s.name, price: s.price, quantity: 1 })),
+        services: services.map(s => ({ serviceId: s._id || s.id, name: s.name, price: s.price, quantity: s.quantity || 1 })),
         totalAmount: grandTotal,
         fabricSource,
         fabricDetails,
@@ -95,15 +96,23 @@ export function TailorOrderScreen({ route, navigation }) {
         
         {/* Services & Cost Summary */}
         <View style={styles.summaryCard}>
-          <Text style={styles.sectionTitleDark}>Cost Breakdown</Text>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <Text style={styles.sectionTitleDark}>Cost Breakdown</Text>
+            <View style={{ backgroundColor: "#ccfbf1", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+              <Text style={{ fontSize: 11, fontWeight: "800", color: "#0f766e" }}>{totalPieces} Pcs Total</Text>
+            </View>
+          </View>
           
           <Text style={styles.subheadingDark}>Stitching Services</Text>
-          {services.map(svc => (
-            <View key={svc._id} style={styles.row}>
-              <Text style={styles.rowLabelDark}>{svc.name}</Text>
-              <Text style={styles.rowValueDark}>₹{svc.price}</Text>
-            </View>
-          ))}
+          {services.map(svc => {
+            const qty = svc.quantity || 1;
+            return (
+              <View key={svc._id || svc.id} style={styles.row}>
+                <Text style={styles.rowLabelDark}>{svc.name} (× {qty} pcs)</Text>
+                <Text style={styles.rowValueDark}>₹{(svc.price || 0) * qty}</Text>
+              </View>
+            );
+          })}
           
           {fabricSource === "shop" && fabricDetails && (
             <>

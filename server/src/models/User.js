@@ -27,6 +27,9 @@ const userSchema = new mongoose.Schema(
     favoriteShops: [{ type: mongoose.Schema.Types.ObjectId, ref: "Barber" }],
     expoPushToken: { type: String, default: "" },
     address: { type: userAddressSchema, default: undefined },
+    isBlocked: { type: Boolean, default: false },
+    blockedUntil: { type: Date, default: null },
+    blockReason: { type: String, default: "" },
   },
   { timestamps: true }
 );

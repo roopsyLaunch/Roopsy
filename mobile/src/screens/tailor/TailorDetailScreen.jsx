@@ -83,6 +83,10 @@ export function TailorDetailScreen({ route, navigation }) {
   const [zoomImagesList, setZoomImagesList] = useState([]);
   const [zoomImageIndex, setZoomImageIndex] = useState(0);
 
+  const [quantityModalVisible, setQuantityModalVisible] = useState(false);
+  const [activeServiceForQty, setActiveServiceForQty] = useState(null);
+  const [inputQuantity, setInputQuantity] = useState(1);
+
   const isFollowing = (favorites || []).includes(tailorId);
 
   useEffect(() => {
@@ -166,21 +170,20 @@ export function TailorDetailScreen({ route, navigation }) {
   const toggleService = (svc) => {
     if (!svc) return;
     const svcId = svc._id || svc.id;
-    const isAlreadySelected = selectedServices.some((s) => (s._id || s.id) === svcId);
+    const existing = selectedServices.find((s) => (s._id || s.id) === svcId);
 
-    // If already selected, deselect it
-    if (isAlreadySelected) {
+    // If already selected, clicking it again UNSELECTS it!
+    if (existing) {
       setSelectedServices((prev) => prev.filter((s) => (s._id || s.id) !== svcId));
       return;
     }
 
+    // If not selected, validate VIP rules and select with qty 1
     const tappedIsVIP = isVipService(svc);
     const currentlySelectedVIP = selectedServices.find((s) => isVipService(s));
 
-    // Case 1: Customer tapped a VIP service
     if (tappedIsVIP) {
-      // If a VIP service is already selected, ask to switch
-      if (currentlySelectedVIP) {
+      if (currentlySelectedVIP && (currentlySelectedVIP._id || currentlySelectedVIP.id) !== svcId) {
         Alert.alert(
           "VIP Service Exclusive",
           `VIP services operate on a dedicated priority turnaround schedule and can only be booked one at a time.\n\nWould you like to switch your selection to "${svc.name}"?`,
@@ -188,15 +191,16 @@ export function TailorDetailScreen({ route, navigation }) {
             { text: "Cancel", style: "cancel" },
             {
               text: "Switch to This VIP",
-              onPress: () => setSelectedServices([svc]),
+              onPress: () => {
+                setSelectedServices([{ ...svc, quantity: 1 }]);
+              },
             },
           ]
         );
         return;
       }
 
-      // If normal services are already selected, ask before replacing with VIP
-      if (selectedServices.length > 0) {
+      if (!currentlySelectedVIP && selectedServices.length > 0) {
         Alert.alert(
           "VIP Service Exclusive",
           `VIP services feature a dedicated delivery timeline and cannot be combined with regular services.\n\nWould you like to clear the selected regular services and book "${svc.name}" as VIP?`,
@@ -204,37 +208,162 @@ export function TailorDetailScreen({ route, navigation }) {
             { text: "Keep Regular Services", style: "cancel" },
             {
               text: "Select VIP Only 👑",
-              onPress: () => setSelectedServices([svc]),
+              onPress: () => {
+                setSelectedServices([{ ...svc, quantity: 1 }]);
+              },
             },
           ]
         );
         return;
       }
 
-      // No services selected yet, select VIP directly
-      setSelectedServices([svc]);
-      return;
+      setSelectedServices([{ ...svc, quantity: 1 }]);
+    } else {
+      if (currentlySelectedVIP) {
+        Alert.alert(
+          "VIP Service Selected",
+          `You currently have a VIP service selected with a dedicated turnaround time. VIP services cannot be combined with regular services.\n\nWould you like to replace the VIP service with "${svc.name}"? (You can select multiple regular services together).`,
+          [
+            { text: "Keep VIP Service", style: "cancel" },
+            {
+              text: "Select Regular Service",
+              onPress: () => {
+                setSelectedServices([{ ...svc, quantity: 1 }]);
+              },
+            },
+          ]
+        );
+        return;
+      }
+
+      setSelectedServices((prev) => [...prev, { ...svc, quantity: 1 }]);
+    }
+  };
+
+  const openQuantityModal = (svc) => {
+    if (!svc) return;
+    const svcId = svc._id || svc.id;
+    const existing = selectedServices.find((s) => (s._id || s.id) === svcId);
+
+    const tappedIsVIP = isVipService(svc);
+    const currentlySelectedVIP = selectedServices.find((s) => isVipService(s));
+
+    // Case 1: VIP Service checks
+    if (tappedIsVIP) {
+      if (currentlySelectedVIP && (currentlySelectedVIP._id || currentlySelectedVIP.id) !== svcId) {
+        Alert.alert(
+          "VIP Service Exclusive",
+          `VIP services operate on a dedicated priority turnaround schedule and can only be booked one at a time.\n\nWould you like to switch your selection to "${svc.name}"?`,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Switch to This VIP",
+              onPress: () => {
+                setSelectedServices([]);
+                setActiveServiceForQty(svc);
+                setInputQuantity(1);
+                setQuantityModalVisible(true);
+              },
+            },
+          ]
+        );
+        return;
+      }
+
+      if (!currentlySelectedVIP && selectedServices.length > 0) {
+        Alert.alert(
+          "VIP Service Exclusive",
+          `VIP services feature a dedicated delivery timeline and cannot be combined with regular services.\n\nWould you like to clear the selected regular services and book "${svc.name}" as VIP?`,
+          [
+            { text: "Keep Regular Services", style: "cancel" },
+            {
+              text: "Select VIP Only 👑",
+              onPress: () => {
+                setSelectedServices([]);
+                setActiveServiceForQty(svc);
+                setInputQuantity(1);
+                setQuantityModalVisible(true);
+              },
+            },
+          ]
+        );
+        return;
+      }
+    } else {
+      // Case 2: Normal service tapped while VIP is selected
+      if (currentlySelectedVIP) {
+        Alert.alert(
+          "VIP Service Selected",
+          `You currently have a VIP service selected with a dedicated turnaround time. VIP services cannot be combined with regular services.\n\nWould you like to replace the VIP service with "${svc.name}"? (You can select multiple regular services together).`,
+          [
+            { text: "Keep VIP Service", style: "cancel" },
+            {
+              text: "Select Regular Service",
+              onPress: () => {
+                setSelectedServices([]);
+                setActiveServiceForQty(svc);
+                setInputQuantity(1);
+                setQuantityModalVisible(true);
+              },
+            },
+          ]
+        );
+        return;
+      }
     }
 
-    // Case 2: Customer tapped a NORMAL service
-    if (currentlySelectedVIP) {
-      // Customer has a VIP service selected and tapped a normal service
-      Alert.alert(
-        "VIP Service Selected",
-        `You currently have a VIP service selected with a dedicated turnaround time. VIP services cannot be combined with regular services.\n\nWould you like to replace the VIP service with "${svc.name}"? (You can select multiple regular services together).`,
-        [
-          { text: "Keep VIP Service", style: "cancel" },
-          {
-            text: "Select Regular Service",
-            onPress: () => setSelectedServices([svc]),
-          },
-        ]
+    // Open Quantity Modal
+    setActiveServiceForQty(svc);
+    setInputQuantity(existing ? (existing.quantity || 1) : 1);
+    setQuantityModalVisible(true);
+  };
+
+  const handleConfirmQuantity = (qtyToSet) => {
+    if (!activeServiceForQty) return;
+    const qty = Math.max(1, parseInt(qtyToSet, 10) || 1);
+    const svcId = activeServiceForQty._id || activeServiceForQty.id;
+    const isVIP = isVipService(activeServiceForQty);
+
+    if (isVIP) {
+      setSelectedServices([{ ...activeServiceForQty, quantity: qty }]);
+    } else {
+      setSelectedServices((prev) => {
+        const without = prev.filter((s) => (s._id || s.id) !== svcId);
+        return [...without, { ...activeServiceForQty, quantity: qty }];
+      });
+    }
+    setQuantityModalVisible(false);
+    setActiveServiceForQty(null);
+  };
+
+  const handleRemoveService = (svcId) => {
+    setSelectedServices((prev) => prev.filter((s) => (s._id || s.id) !== svcId));
+    setQuantityModalVisible(false);
+    setActiveServiceForQty(null);
+  };
+
+  const handleIncrementQuantity = (svc) => {
+    const svcId = svc._id || svc.id;
+    setSelectedServices((prev) =>
+      prev.map((s) =>
+        (s._id || s.id) === svcId ? { ...s, quantity: (s.quantity || 1) + 1 } : s
+      )
+    );
+  };
+
+  const handleDecrementQuantity = (svc) => {
+    const svcId = svc._id || svc.id;
+    const existing = selectedServices.find((s) => (s._id || s.id) === svcId);
+    if (!existing) return;
+    if ((existing.quantity || 1) <= 1) {
+      setSelectedServices((prev) => prev.filter((s) => (s._id || s.id) !== svcId));
+    } else {
+      setSelectedServices((prev) =>
+        prev.map((s) =>
+          (s._id || s.id) === svcId ? { ...s, quantity: s.quantity - 1 } : s
+        )
       );
-      return;
     }
-
-    // Normal service and no VIP currently selected: can select as many normal services as desired!
-    setSelectedServices((prev) => [...prev, svc]);
   };
 
   const isOwnShop = useMemo(() => {
@@ -354,7 +483,11 @@ export function TailorDetailScreen({ route, navigation }) {
   }
 
   const totalPrice = useMemo(() => {
-    return selectedServices.reduce((acc, s) => acc + (s.price || 0), 0);
+    return selectedServices.reduce((acc, s) => acc + (s.price || 0) * (s.quantity || 1), 0);
+  }, [selectedServices]);
+
+  const totalQuantity = useMemo(() => {
+    return selectedServices.reduce((acc, s) => acc + (s.quantity || 1), 0);
   }, [selectedServices]);
 
   if (loading) {
@@ -704,7 +837,7 @@ export function TailorDetailScreen({ route, navigation }) {
               style={[styles.bannerActionBtn, activeServiceType === "vip" && styles.vipBannerActionBtn]}
               onPress={() => {
                 if (currentDisplayServices.length > 0) {
-                  toggleService(currentDisplayServices[0]);
+                  openQuantityModal(currentDisplayServices[0]);
                 }
               }}
             >
@@ -796,7 +929,9 @@ export function TailorDetailScreen({ route, navigation }) {
           >
             {currentDisplayServices.map((service, idx) => {
               const svcId = service._id || service.id;
-              const isSelected = !!selectedServices.find((s) => (s._id || s.id) === svcId);
+              const selectedSvc = selectedServices.find((s) => (s._id || s.id) === svcId);
+              const isSelected = !!selectedSvc;
+              const selectedQty = selectedSvc ? (selectedSvc.quantity || 1) : 0;
               const isVIP = isVipService(service);
               const timeHighlight = isVIP && service.completionTime ? `⚡ Ready in ${service.completionTime}` : null;
               const badgeLabel = timeHighlight
@@ -851,13 +986,13 @@ export function TailorDetailScreen({ route, navigation }) {
 
                     {/* Top Right Heart / Select */}
                     <Pressable
-                      style={[styles.cardHeartBtn, isVIP && styles.cardHeartBtnVIP]}
+                      style={[styles.cardHeartBtn, isVIP && styles.cardHeartBtnVIP, isSelected && styles.cardHeartBtnSelected]}
                       onPress={() => toggleService(service)}
                     >
                       <Ionicons
                         name={isSelected ? "checkmark-circle" : "checkmark-circle-outline"}
                         size={22}
-                        color={isSelected ? (isVIP ? "#a855f7" : "#0d9488") : "#ffffff"}
+                        color={isSelected ? (isVIP ? "#7c3aed" : "#0d9488") : "#ffffff"}
                       />
                     </Pressable>
                   </View>
@@ -890,9 +1025,12 @@ export function TailorDetailScreen({ route, navigation }) {
 
                     {/* Price, Mode & Select Button */}
                     <View style={styles.serviceFooterRow}>
-                      <View>
+                      <View style={{ flex: 1 }}>
                         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                          <Text style={[styles.servicePriceText, isVIP && styles.vipPriceText]}>₹{service.price}</Text>
+                          <Text style={[styles.servicePriceText, isVIP && styles.vipPriceText]}>
+                            ₹{service.price}
+                            <Text style={styles.perPieceUnitText}> /pc</Text>
+                          </Text>
                           {service.originalPrice > service.price && (
                             <Text style={styles.originalPriceStrike}>₹{service.originalPrice}</Text>
                           )}
@@ -905,8 +1043,12 @@ export function TailorDetailScreen({ route, navigation }) {
                           )}
                         </View>
 
-                        {/* Delivery Time Highlight for Premium VIP Services */}
-                        {isVIP && (service.completionTime || service.estimatedDays) ? (
+                        {/* If selected with qty > 1, show item total preview */}
+                        {isSelected && selectedQty > 1 ? (
+                          <View style={styles.itemTotalTag}>
+                            <Text style={styles.itemTotalTagText}>Total: ₹{service.price * selectedQty} ({selectedQty} pcs)</Text>
+                          </View>
+                        ) : isVIP && (service.completionTime || service.estimatedDays) ? (
                           <View style={styles.vipDeliveryTag}>
                             <Ionicons name="time" size={11} color="#7c3aed" style={{ marginRight: 3 }} />
                             <Text style={styles.vipDeliveryTagText}>
@@ -916,23 +1058,46 @@ export function TailorDetailScreen({ route, navigation }) {
                         ) : (
                           <View style={styles.durationRow}>
                             <Ionicons name="cut-outline" size={13} color="#64748b" style={{ marginRight: 3 }} />
-                            <Text style={styles.durationText}>Custom fit</Text>
+                            <Text style={styles.durationText}>Per unit stitching</Text>
                           </View>
                         )}
                       </View>
 
-                      <Pressable
-                        style={[
-                          styles.bookNowBtn,
-                          isVIP && styles.bookNowBtnVIP,
-                          isSelected && (isVIP ? styles.bookNowBtnVIPSelected : styles.bookNowBtnSelected)
-                        ]}
-                        onPress={() => toggleService(service)}
-                      >
-                        <Text style={styles.bookNowBtnText}>
-                          {isSelected ? "Selected ✓" : isVIP ? "Select VIP 👑" : "Select"}
-                        </Text>
-                      </Pressable>
+                      {/* Action Button: If selected, show stepper on card */}
+                      {isSelected ? (
+                        <View style={styles.cardStepperRow}>
+                          <Pressable
+                            style={styles.cardStepBtnMinus}
+                            onPress={() => handleDecrementQuantity(service)}
+                          >
+                            <Ionicons name="remove" size={14} color="#0d9488" />
+                          </Pressable>
+                          <Pressable
+                            style={styles.cardStepCountBox}
+                            onPress={() => openQuantityModal(service)}
+                          >
+                            <Text style={styles.cardStepCountText}>{selectedQty}</Text>
+                          </Pressable>
+                          <Pressable
+                            style={styles.cardStepBtnPlus}
+                            onPress={() => handleIncrementQuantity(service)}
+                          >
+                            <Ionicons name="add" size={14} color="#ffffff" />
+                          </Pressable>
+                        </View>
+                      ) : (
+                        <Pressable
+                          style={[
+                            styles.bookNowBtn,
+                            isVIP && styles.bookNowBtnVIP,
+                          ]}
+                          onPress={() => toggleService(service)}
+                        >
+                          <Text style={styles.bookNowBtnText}>
+                            {isVIP ? "Select VIP 👑" : "+ Select"}
+                          </Text>
+                        </Pressable>
+                      )}
                     </View>
                   </View>
                 </Pressable>
@@ -1004,14 +1169,14 @@ export function TailorDetailScreen({ route, navigation }) {
                 color={selectedServices.some(isVipService) ? "#7c3aed" : "#0d9488"}
               />
               <View style={[styles.badgeNumber, selectedServices.some(isVipService) && { backgroundColor: "#7c3aed" }]}>
-                <Text style={styles.badgeNumberText}>{selectedServices.length}</Text>
+                <Text style={styles.badgeNumberText}>{totalQuantity}</Text>
               </View>
             </View>
             <View style={{ marginLeft: 12 }}>
               <Text style={[styles.footerCountText, selectedServices.some(isVipService) && { color: "#7c3aed", fontWeight: "700" }]}>
                 {selectedServices.some(isVipService)
-                  ? "👑 1 VIP Service (Dedicated Timeline)"
-                  : `${selectedServices.length} Item(s) Selected`}
+                  ? `👑 VIP: ${totalQuantity} Piece(s)`
+                  : `${selectedServices.length} Service(s) • ${totalQuantity} Pcs Total`}
               </Text>
               <Text style={styles.footerPriceText}>₹{totalPrice}</Text>
             </View>
@@ -1037,6 +1202,150 @@ export function TailorDetailScreen({ route, navigation }) {
           </Pressable>
         </View>
       )}
+
+      {/* ================= QUANTITY SELECTION MODAL ================= */}
+      <Modal
+        visible={quantityModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setQuantityModalVisible(false)}
+      >
+        <View style={styles.qtyModalOverlay}>
+          <Pressable
+            style={styles.qtyModalBackdrop}
+            onPress={() => setQuantityModalVisible(false)}
+          />
+          <View style={styles.qtyModalSheet}>
+            <View style={styles.qtyModalHeader}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <View style={styles.qtyModalIconWrap}>
+                  <Ionicons name="cut" size={20} color="#0d9488" />
+                </View>
+                <View>
+                  <Text style={styles.qtyModalTitle}>Select Stitching Quantity</Text>
+                  <Text style={styles.qtyModalSubtitle}>सिलाई की मात्रा चुनें</Text>
+                </View>
+              </View>
+              <Pressable
+                onPress={() => setQuantityModalVisible(false)}
+                style={styles.qtyModalCloseBtn}
+              >
+                <Ionicons name="close" size={22} color="#64748b" />
+              </Pressable>
+            </View>
+
+            {activeServiceForQty && (
+              <View style={styles.qtyServiceInfoBox}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.qtyServiceName} numberOfLines={1}>
+                    {activeServiceForQty.name}
+                  </Text>
+                  <Text style={styles.qtyServiceCategory}>
+                    {activeServiceForQty.category || "Tailoring"} • Custom Stitching
+                  </Text>
+                </View>
+                <View style={styles.qtyRateBadge}>
+                  <Text style={styles.qtyRateBadgeText}>₹{activeServiceForQty.price}</Text>
+                  <Text style={styles.qtyRateBadgeUnit}>/pc (प्रति कपड़ा)</Text>
+                </View>
+              </View>
+            )}
+
+            <Text style={styles.qtyQuestionText}>
+              How many clothes/pieces do you want to stitch?
+            </Text>
+            <Text style={styles.qtyQuestionSubText}>
+              आपको इस सेवा के कितने कपड़े सिलवाने हैं?
+            </Text>
+
+            {/* Stepper Counter */}
+            <View style={styles.stepperContainer}>
+              <Pressable
+                style={[styles.stepperBtn, inputQuantity <= 1 && styles.stepperBtnDisabled]}
+                onPress={() => setInputQuantity((prev) => Math.max(1, prev - 1))}
+                disabled={inputQuantity <= 1}
+              >
+                <Ionicons name="remove" size={24} color={inputQuantity <= 1 ? "#cbd5e1" : "#0f172a"} />
+              </Pressable>
+
+              <View style={styles.stepperNumberBox}>
+                <Text style={styles.stepperNumberText}>{inputQuantity}</Text>
+                <Text style={styles.stepperNumberUnit}>Pieces / कपड़े</Text>
+              </View>
+
+              <Pressable
+                style={styles.stepperBtn}
+                onPress={() => setInputQuantity((prev) => prev + 1)}
+              >
+                <Ionicons name="add" size={24} color="#0f172a" />
+              </Pressable>
+            </View>
+
+            {/* Quick Quantity Chips */}
+            <View style={styles.quickChipsRow}>
+              {[1, 2, 3, 4, 5, 10].map((num) => (
+                <Pressable
+                  key={num}
+                  style={[
+                    styles.quickChip,
+                    inputQuantity === num && styles.quickChipActive,
+                  ]}
+                  onPress={() => setInputQuantity(num)}
+                >
+                  <Text
+                    style={[
+                      styles.quickChipText,
+                      inputQuantity === num && styles.quickChipTextActive,
+                    ]}
+                  >
+                    {num} {num === 1 ? "Pc" : "Pcs"}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {/* Price Breakdown Calculation Card */}
+            {activeServiceForQty && (
+              <View style={styles.calcSummaryBox}>
+                <View style={styles.calcRow}>
+                  <Text style={styles.calcLabel}>Unit Stitching Rate</Text>
+                  <Text style={styles.calcValue}>₹{activeServiceForQty.price} × {inputQuantity} pcs</Text>
+                </View>
+                <View style={styles.calcDivider} />
+                <View style={styles.calcRow}>
+                  <Text style={styles.calcTotalLabel}>Total Service Amount</Text>
+                  <Text style={styles.calcTotalValue}>₹{(activeServiceForQty.price || 0) * inputQuantity}</Text>
+                </View>
+              </View>
+            )}
+
+            {/* Action Buttons */}
+            <View style={styles.qtyModalActions}>
+              {selectedServices.some((s) => (s._id || s.id) === (activeServiceForQty?._id || activeServiceForQty?.id)) && (
+                <Pressable
+                  style={styles.qtyRemoveBtn}
+                  onPress={() => handleRemoveService(activeServiceForQty._id || activeServiceForQty.id)}
+                >
+                  <Ionicons name="trash-outline" size={18} color="#ef4444" style={{ marginRight: 4 }} />
+                  <Text style={styles.qtyRemoveBtnText}>Remove</Text>
+                </Pressable>
+              )}
+
+              <Pressable
+                style={styles.qtyConfirmBtn}
+                onPress={() => handleConfirmQuantity(inputQuantity)}
+              >
+                <Ionicons name="checkmark-circle" size={18} color="#ffffff" style={{ marginRight: 6 }} />
+                <Text style={styles.qtyConfirmBtnText}>
+                  {selectedServices.some((s) => (s._id || s.id) === (activeServiceForQty?._id || activeServiceForQty?.id))
+                    ? `Update Quantity • ₹${(activeServiceForQty?.price || 0) * inputQuantity}`
+                    : `Add to Order • ₹${(activeServiceForQty?.price || 0) * inputQuantity}`}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* ================= ZOOM IMAGE MODAL ================= */}
       <Modal visible={zoomModalVisible} transparent animationType="fade">
@@ -2013,5 +2322,330 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
   },
+
+  /* Quantity & Stepper on Service Card */
+  perPieceUnitText: {
+    fontSize: 11,
+    color: "#64748b",
+    fontWeight: "600",
+  },
+  itemTotalTag: {
+    backgroundColor: "#ccfbf1",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    alignSelf: "flex-start",
+    marginTop: 2,
+  },
+  itemTotalTagText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#0f766e",
+  },
+  cardStepperRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f0fdfa",
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: "#0d9488",
+    paddingHorizontal: 3,
+    paddingVertical: 2,
+  },
+  cardStepBtnMinus: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "#ccfbf1",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardStepCountBox: {
+    paddingHorizontal: 10,
+    minWidth: 28,
+    alignItems: "center",
+  },
+  cardStepCountText: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#0f766e",
+  },
+  cardStepBtnPlus: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "#0d9488",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardHeartBtnSelected: {
+    backgroundColor: "rgba(255, 255, 255, 0.95)",
+  },
+
+  /* Quantity Selection Modal */
+  qtyModalOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(15, 23, 42, 0.6)",
+  },
+  qtyModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  qtyModalSheet: {
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    padding: 22,
+    paddingBottom: 34,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 20,
+  },
+  qtyModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f5f9",
+    paddingBottom: 12,
+  },
+  qtyModalIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: "#ccfbf1",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  qtyModalTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  qtyModalSubtitle: {
+    fontSize: 11,
+    color: "#0d9488",
+    fontWeight: "700",
+  },
+  qtyModalCloseBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#f1f5f9",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  qtyServiceInfoBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f8fafc",
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    marginBottom: 16,
+  },
+  qtyServiceName: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  qtyServiceCategory: {
+    fontSize: 12,
+    color: "#64748b",
+    marginTop: 2,
+    fontWeight: "500",
+  },
+  qtyRateBadge: {
+    backgroundColor: "#f0fdfa",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#99f6e4",
+    alignItems: "flex-end",
+  },
+  qtyRateBadgeText: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: "#0d9488",
+  },
+  qtyRateBadgeUnit: {
+    fontSize: 10,
+    color: "#0f766e",
+    fontWeight: "600",
+  },
+  qtyQuestionText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0f172a",
+    textAlign: "center",
+  },
+  qtyQuestionSubText: {
+    fontSize: 12,
+    color: "#64748b",
+    textAlign: "center",
+    marginTop: 2,
+    marginBottom: 16,
+  },
+
+  /* Stepper Counter */
+  stepperContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 18,
+    marginBottom: 18,
+  },
+  stepperBtn: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: "#f1f5f9",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  stepperBtnDisabled: {
+    opacity: 0.4,
+    backgroundColor: "#f8fafc",
+  },
+  stepperNumberBox: {
+    minWidth: 120,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 18,
+    backgroundColor: "#f0fdfa",
+    borderWidth: 2,
+    borderColor: "#0d9488",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stepperNumberText: {
+    fontSize: 32,
+    fontWeight: "900",
+    color: "#0f766e",
+  },
+  stepperNumberUnit: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#0d9488",
+    marginTop: -2,
+  },
+
+  /* Quick Chips */
+  quickChipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: 8,
+    marginBottom: 18,
+  },
+  quickChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 100,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+  },
+  quickChipActive: {
+    backgroundColor: "#0d9488",
+    borderColor: "#0d9488",
+  },
+  quickChipText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#475569",
+  },
+  quickChipTextActive: {
+    color: "#ffffff",
+  },
+
+  /* Calculation Summary Box */
+  calcSummaryBox: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    marginBottom: 20,
+  },
+  calcRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  calcLabel: {
+    fontSize: 12,
+    color: "#64748b",
+    fontWeight: "600",
+  },
+  calcValue: {
+    fontSize: 13,
+    color: "#334155",
+    fontWeight: "700",
+  },
+  calcDivider: {
+    height: 1,
+    backgroundColor: "#e2e8f0",
+    marginVertical: 8,
+  },
+  calcTotalLabel: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  calcTotalValue: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: "#0d9488",
+  },
+
+  /* Modal Actions */
+  qtyModalActions: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  qtyRemoveBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: "#fee2e2",
+    borderWidth: 1,
+    borderColor: "#fca5a5",
+  },
+  qtyRemoveBtnText: {
+    color: "#dc2626",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  qtyConfirmBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: "#0d9488",
+    shadowColor: "#0d9488",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  qtyConfirmBtnText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "800",
+  },
 });
+
 

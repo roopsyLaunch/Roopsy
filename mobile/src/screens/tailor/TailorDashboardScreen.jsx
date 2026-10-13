@@ -287,7 +287,9 @@ export function TailorDashboardScreen({ navigation }) {
               <View style={[styles.orderDot, { backgroundColor: getStageColor(order.status) }]} />
               <View style={styles.orderInfo}>
                 <Text style={styles.orderCustomer}>{order.customerId?.name || "Customer"}</Text>
-                <Text style={styles.orderServices}>{order.services.map(s => s.name).join(", ")}</Text>
+                <Text style={styles.orderServices}>
+                  {order.services.map(s => `${s.name}${s.quantity > 1 ? ` (x${s.quantity})` : ""}`).join(", ")}
+                </Text>
               </View>
               <View style={styles.orderRight}>
                 <Text style={styles.orderAmount}>₹{order.totalAmount}</Text>

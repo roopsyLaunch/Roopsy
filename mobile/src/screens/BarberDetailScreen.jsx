@@ -107,6 +107,8 @@ export function BarberDetailScreen({ route, navigation }) {
   const [confirmModalVisible, setConfirmModalVisible] = useState(false);
   const [selectedETA, setSelectedETA] = useState(15);
   const [customETA, setCustomETA] = useState("");
+  const [isCustomETAActive, setIsCustomETAActive] = useState(false);
+  const [customETATab, setCustomETATab] = useState("minutes"); // "minutes" | "time"
   const [selectedChairIndex, setSelectedChairIndex] = useState(null);
 
   const [liveSeats, setLiveSeats] = useState([]);
@@ -126,6 +128,7 @@ export function BarberDetailScreen({ route, navigation }) {
   // Normalize services
   const services = useMemo(() => {
     return rawServices.map((s) => {
+      const sId = s.id || s._id;
       let mappedCat = s.category || "General";
       const catLower = mappedCat.toLowerCase();
       if (catLower === "haircut") mappedCat = "Hair";
@@ -134,6 +137,8 @@ export function BarberDetailScreen({ route, navigation }) {
       else if (catLower === "massage") mappedCat = "Massage";
       return {
         ...s,
+        id: sId,
+        _id: sId,
         category: mappedCat,
         originalPrice: s.originalPrice || s.price || 0,
         discountAmount: s.discountAmount || 0,
@@ -142,7 +147,10 @@ export function BarberDetailScreen({ route, navigation }) {
   }, [rawServices]);
 
   const selectedServices = useMemo(
-    () => services.filter((s) => selectedServiceIds.includes(s.id)),
+    () => services.filter((s) => {
+      const sid = s.id || s._id;
+      return selectedServiceIds.includes(sid) || (s.id && selectedServiceIds.includes(s.id)) || (s._id && selectedServiceIds.includes(s._id));
+    }),
     [services, selectedServiceIds]
   );
   const totalDuration = selectedServices.reduce((sum, s) => sum + (s.durationMinutes || 0), 0);
@@ -263,6 +271,7 @@ export function BarberDetailScreen({ route, navigation }) {
     })();
 
     const socket = getSocket();
+    let timer;
     if (socket) {
       socket.emit("joinBarberRoom", barberId);
       const handleSlotsUpdated = (data) => {
@@ -270,9 +279,15 @@ export function BarberDetailScreen({ route, navigation }) {
         setRefreshTrigger((prev) => prev + 1);
       };
       socket.on("slotsUpdated", handleSlotsUpdated);
+      socket.on(`shop_${barberId}_seats`, handleSlotsUpdated);
+      timer = setInterval(() => {
+        setRefreshTrigger((prev) => prev + 1);
+      }, 30000);
       return () => {
         socket.emit("leaveBarberRoom", barberId);
         socket.off("slotsUpdated", handleSlotsUpdated);
+        socket.off(`shop_${barberId}_seats`, handleSlotsUpdated);
+        if (timer) clearInterval(timer);
       };
     }
   }, [barberId, loadBarber]);
@@ -306,6 +321,49 @@ export function BarberDetailScreen({ route, navigation }) {
     const close = (typeof wh.close === "string" ? wh.close : wh.end) || b?.dailyCloseTime || "09:00 PM";
     return `${open} - ${close}`;
   }, [b]);
+
+  // Generates upcoming 15-minute intervals for today to allow one-tap clock time selection
+  const upcomingTodayTimeSlots = useMemo(() => {
+    const slotsList = [];
+    const now = new Date();
+    let startTime = new Date(now.getTime() + 10 * 60000);
+    const remainder = startTime.getMinutes() % 15;
+    if (remainder !== 0) {
+      startTime.setMinutes(startTime.getMinutes() + (15 - remainder));
+    }
+    startTime.setSeconds(0, 0);
+
+    let closeHour = 22;
+    let closeMinute = 0;
+    if (b?.dailyCloseTime) {
+      const match = String(b.dailyCloseTime).match(/(\d+):(\d+)\s*(AM|PM)?/i);
+      if (match) {
+        let h = parseInt(match[1], 10);
+        const m = parseInt(match[2], 10);
+        const ampm = match[3]?.toUpperCase();
+        if (ampm === "PM" && h < 12) h += 12;
+        if (ampm === "AM" && h === 12) h = 0;
+        closeHour = h;
+        closeMinute = m;
+      }
+    }
+    const endOfDay = new Date(now);
+    endOfDay.setHours(closeHour, closeMinute, 0, 0);
+
+    let cur = new Date(startTime);
+    while (cur <= endOfDay && slotsList.length < 16) {
+      const diffMins = Math.round((cur.getTime() - now.getTime()) / 60000);
+      if (diffMins >= 5) {
+        slotsList.push({
+          timeIso: cur.toISOString(),
+          label: cur.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true }),
+          diffMins,
+        });
+      }
+      cur = new Date(cur.getTime() + 15 * 60000);
+    }
+    return slotsList;
+  }, [b?.dailyCloseTime, confirmModalVisible]);
 
   useEffect(() => {
     if (nextDates.length) {
@@ -447,9 +505,15 @@ export function BarberDetailScreen({ route, navigation }) {
   }
 
   function toggleService(service) {
+    if (!service) return;
+    const sid = service.id || service._id;
+    if (!sid) return;
     setSelectedServiceIds((prev) => {
-      if (prev.includes(service.id)) return prev.filter((sid) => sid !== service.id);
-      return [...prev, service.id];
+      const isAlreadySelected = prev.some((id) => id === sid || (service.id && id === service.id) || (service._id && id === service._id));
+      if (isAlreadySelected) {
+        return prev.filter((id) => id !== sid && id !== service.id && id !== service._id);
+      }
+      return [...prev, sid];
     });
   }
 
@@ -491,8 +555,8 @@ export function BarberDetailScreen({ route, navigation }) {
     const chosenChair = liveSeats.find((s) => s.index === selectedChairIndex);
     const isChairOccupied = !isHomeServiceSelected && isToday && chosenChair && !chosenChair.isAvailable;
 
-    if (!selectedSlot && selectedETA === null && !isHomeServiceSelected && !isChairOccupied) {
-      Alert.alert("Time Selection Required", "Please select your estimated arrival time (ETA).");
+    if (!selectedSlot && (selectedETA === null || selectedETA === undefined || selectedETA <= 0) && !isHomeServiceSelected && !isChairOccupied) {
+      Alert.alert("Time Selection Required", "Please select or enter your estimated arrival time (minimum 5 minutes).");
       return;
     }
 
@@ -518,15 +582,19 @@ export function BarberDetailScreen({ route, navigation }) {
     setBookingBusy(true);
 
     try {
+      const defaultCustAddr = user?.address?.line1 ? [user.address.line1, user.address.city, user.address.pincode].filter(Boolean).join(", ") : "";
+      const effectiveCustAddress = (homeAddress || defaultCustAddr || "").trim();
+      const effectiveCustLocation = homeLocation || (user?.address?.lat && user?.address?.lng ? { lat: user.address.lat, lng: user.address.lng } : undefined);
+
       const bookingPayload = {
         barberId,
         serviceIds: selectedServiceIds,
         staffId: selectedStaffId,
         startTime: startTimeIso,
-        notes: "",
+        notes: effectiveCustAddress || "",
         isHomeService: isHomeServiceSelected,
-        homeServiceAddress: (homeAddress || "").trim() || undefined,
-        homeServiceLocation: homeLocation || undefined,
+        homeServiceAddress: effectiveCustAddress || undefined,
+        homeServiceLocation: effectiveCustLocation,
         customerETA: !isHomeServiceSelected && !isChairOccupied && selectedETA !== null ? selectedETA : undefined,
         seatIndex: !isHomeServiceSelected && selectedChairIndex !== null ? selectedChairIndex : undefined,
       };
@@ -940,13 +1008,14 @@ export function BarberDetailScreen({ route, navigation }) {
             contentContainerStyle={styles.horizontalServicesScroll}
           >
             {currentDisplayServices.map((service, idx) => {
-              const isSelected = selectedServiceIds.includes(service.id);
+              const sid = service.id || service._id;
+              const isSelected = selectedServiceIds.includes(sid) || (service.id && selectedServiceIds.includes(service.id)) || (service._id && selectedServiceIds.includes(service._id));
               const badgeLabel = idx === 0 ? "🔥 Popular" : idx === 1 ? "⭐ Trending" : "✨ Recommended";
               const badgeColor = idx === 0 ? "#4f46e5" : idx === 1 ? "#7c3aed" : "#0284c7";
 
               return (
                 <Pressable
-                  key={service.id}
+                  key={sid}
                   style={[styles.serviceItemCard, isSelected && styles.serviceItemCardSelected]}
                   onPress={() => toggleService(service)}
                   activeOpacity={0.9}
@@ -1063,7 +1132,9 @@ export function BarberDetailScreen({ route, navigation }) {
               {liveSeats.map((seat) => {
                 const available = seat.isAvailable !== false;
                 const isChosen = selectedChairIndex === seat.index;
-                const freeInMins = seat.freeInMinutes || 0;
+                const freeInMins = seat.nextAvailableAt
+                  ? Math.max(1, Math.ceil((new Date(seat.nextAvailableAt).getTime() - Date.now()) / 60000))
+                  : (seat.freeInMinutes || 0);
                 const nextTimeStr = seat.nextAvailableAt
                   ? new Date(seat.nextAvailableAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
                   : "";
@@ -1234,7 +1305,9 @@ export function BarberDetailScreen({ route, navigation }) {
                     {liveSeats.map((seat) => {
                       const isChosen = selectedChairIndex === seat.index;
                       const isAvail = seat.isAvailable !== false;
-                      const freeInMins = seat.freeInMinutes || 0;
+                      const freeInMins = seat.nextAvailableAt
+                        ? Math.max(1, Math.ceil((new Date(seat.nextAvailableAt).getTime() - Date.now()) / 60000))
+                        : (seat.freeInMinutes || 0);
                       return (
                         <Pressable
                           key={seat.index}
@@ -1300,25 +1373,249 @@ export function BarberDetailScreen({ route, navigation }) {
                 }
                 return (
                   <View style={{ marginBottom: 16 }}>
-                    <Text style={styles.modalSectionLabel}>Immediate Walk-in (ETA)</Text>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <Text style={styles.modalSectionLabel}>Immediate Walk-in (ETA)</Text>
+                      {selectedETA ? (
+                        <View style={styles.etaPreviewHeaderBadge}>
+                          <Ionicons name="time" size={13} color="#4f46e5" style={{ marginRight: 4 }} />
+                          <Text style={styles.etaPreviewHeaderText}>
+                            {new Date(Date.now() + selectedETA * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    {/* Quick Presets & Custom Option */}
                     <View style={styles.etaOptionsRow}>
                       {[5, 10, 15, 30].map((mins) => {
-                        const isActive = selectedETA === mins;
+                        const isActive = !isCustomETAActive && selectedETA === mins;
                         return (
                           <Pressable
                             key={mins}
                             style={[styles.etaBtn, isActive && styles.etaBtnActive]}
                             onPress={() => {
+                              setIsCustomETAActive(false);
                               setSelectedETA(mins);
                               setSelectedSlot(null);
-                              setCustomETA("");
+                              setCustomETA(String(mins));
                             }}
                           >
-                            <Text style={[styles.etaBtnText, isActive && styles.etaBtnTextActive]}>{mins} mins</Text>
+                            <Text style={[styles.etaBtnText, isActive && styles.etaBtnTextActive]}>{mins}m</Text>
                           </Pressable>
                         );
                       })}
+
+                      <Pressable
+                        style={[
+                          styles.etaBtn,
+                          styles.etaBtnCustom,
+                          isCustomETAActive && styles.etaBtnActive,
+                        ]}
+                        onPress={() => {
+                          setIsCustomETAActive(true);
+                          setSelectedSlot(null);
+                          if (!customETA || isNaN(parseInt(customETA, 10))) {
+                            setCustomETA(String(selectedETA || 25));
+                            setSelectedETA(selectedETA || 25);
+                          }
+                        }}
+                      >
+                        <Ionicons
+                          name="options-outline"
+                          size={13}
+                          color={isCustomETAActive ? "#ffffff" : "#4f46e5"}
+                          style={{ marginRight: 4 }}
+                        />
+                        <Text style={[styles.etaBtnText, isCustomETAActive && styles.etaBtnTextActive]}>
+                          Custom
+                        </Text>
+                      </Pressable>
                     </View>
+
+                    {/* If preset selected, display clean arrival time notice */}
+                    {!isCustomETAActive && (
+                      <View style={styles.etaPresetNoticeRow}>
+                        <Ionicons name="flash" size={13} color="#4f46e5" style={{ marginRight: 6 }} />
+                        <Text style={styles.etaPresetNoticeText}>
+                          Arrival: Today around <Text style={{ fontWeight: "800", color: "#312e81" }}>{new Date(Date.now() + (selectedETA || 15) * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}</Text> ({selectedETA || 15} mins)
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* Custom ETA Card (Apne according time add karne ke liye) */}
+                    {isCustomETAActive && (
+                      <View style={styles.customETACard}>
+                        {/* Tab Switcher: In Minutes vs Specific Clock Time */}
+                        <View style={styles.customETATabsRow}>
+                          <Pressable
+                            style={[styles.customETATabBtn, customETATab === "minutes" && styles.customETATabBtnActive]}
+                            onPress={() => setCustomETATab("minutes")}
+                          >
+                            <Ionicons
+                              name="hourglass-outline"
+                              size={14}
+                              color={customETATab === "minutes" ? "#4f46e5" : "#64748b"}
+                              style={{ marginRight: 5 }}
+                            />
+                            <Text style={[styles.customETATabText, customETATab === "minutes" && styles.customETATabTextActive]}>
+                              By Minutes
+                            </Text>
+                          </Pressable>
+
+                          <Pressable
+                            style={[styles.customETATabBtn, customETATab === "time" && styles.customETATabBtnActive]}
+                            onPress={() => setCustomETATab("time")}
+                          >
+                            <Ionicons
+                              name="time-outline"
+                              size={14}
+                              color={customETATab === "time" ? "#4f46e5" : "#64748b"}
+                              style={{ marginRight: 5 }}
+                            />
+                            <Text style={[styles.customETATabText, customETATab === "time" && styles.customETATabTextActive]}>
+                              Pick Clock Time
+                            </Text>
+                          </Pressable>
+                        </View>
+
+                        {/* TAB 1: BY MINUTES */}
+                        {customETATab === "minutes" ? (
+                          <View style={{ marginTop: 12 }}>
+                            <Text style={styles.customSubHeader}>Set arrival time (in minutes from now):</Text>
+                            
+                            {/* Stepper & Numeric Input */}
+                            <View style={styles.stepperRow}>
+                              <Pressable
+                                style={styles.stepperBtn}
+                                onPress={() => {
+                                  const cur = selectedETA || 15;
+                                  const nextVal = Math.max(5, cur - 5);
+                                  setSelectedETA(nextVal);
+                                  setCustomETA(String(nextVal));
+                                }}
+                              >
+                                <Ionicons name="remove" size={20} color="#1e293b" />
+                              </Pressable>
+
+                              <View style={styles.stepperInputContainer}>
+                                <TextInput
+                                  style={styles.stepperTextInput}
+                                  value={customETA ? String(customETA) : String(selectedETA || 15)}
+                                  keyboardType="number-pad"
+                                  maxLength={3}
+                                  selectTextOnFocus
+                                  onChangeText={(text) => {
+                                    const cleaned = text.replace(/[^0-9]/g, "");
+                                    setCustomETA(cleaned);
+                                    const num = parseInt(cleaned, 10);
+                                    if (!isNaN(num) && num > 0) {
+                                      setSelectedETA(num);
+                                    }
+                                  }}
+                                />
+                                <Text style={styles.stepperUnitText}>mins</Text>
+                              </View>
+
+                              <Pressable
+                                style={styles.stepperBtn}
+                                onPress={() => {
+                                  const cur = selectedETA || 15;
+                                  const nextVal = Math.min(300, cur + 5);
+                                  setSelectedETA(nextVal);
+                                  setCustomETA(String(nextVal));
+                                }}
+                              >
+                                <Ionicons name="add" size={20} color="#1e293b" />
+                              </Pressable>
+                            </View>
+
+                            {/* Quick Shortcut Increments */}
+                            <View style={styles.quickShortcutsRow}>
+                              {[
+                                { label: "+5m", add: 5 },
+                                { label: "+10m", add: 10 },
+                                { label: "+15m", add: 15 },
+                                { label: "+30m", add: 30 },
+                                { label: "45m", set: 45 },
+                                { label: "60m (1h)", set: 60 },
+                              ].map((item, idx) => (
+                                <Pressable
+                                  key={idx}
+                                  style={styles.quickShortcutChip}
+                                  onPress={() => {
+                                    const cur = selectedETA || 15;
+                                    const nextVal = item.set !== undefined ? item.set : Math.min(300, cur + item.add);
+                                    setSelectedETA(nextVal);
+                                    setCustomETA(String(nextVal));
+                                  }}
+                                >
+                                  <Text style={styles.quickShortcutChipText}>{item.label}</Text>
+                                </Pressable>
+                              ))}
+                            </View>
+                          </View>
+                        ) : (
+                          /* TAB 2: SPECIFIC CLOCK TIME TODAY */
+                          <View style={{ marginTop: 12 }}>
+                            <Text style={styles.customSubHeader}>Tap your preferred arrival time today:</Text>
+                            {upcomingTodayTimeSlots.length > 0 ? (
+                              <ScrollView
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={{ paddingVertical: 4, gap: 8 }}
+                              >
+                                {upcomingTodayTimeSlots.map((slot, idx) => {
+                                  const isChosen = selectedETA === slot.diffMins;
+                                  return (
+                                    <Pressable
+                                      key={idx}
+                                      style={[
+                                        styles.clockSlotPill,
+                                        isChosen && styles.clockSlotPillActive,
+                                      ]}
+                                      onPress={() => {
+                                        setSelectedETA(slot.diffMins);
+                                        setCustomETA(String(slot.diffMins));
+                                      }}
+                                    >
+                                      <Text style={[styles.clockSlotTime, isChosen && styles.clockSlotTimeActive]}>
+                                        {slot.label}
+                                      </Text>
+                                      <Text style={[styles.clockSlotSub, isChosen && styles.clockSlotSubActive]}>
+                                        in {slot.diffMins}m
+                                      </Text>
+                                    </Pressable>
+                                  );
+                                })}
+                              </ScrollView>
+                            ) : (
+                              <View style={styles.noSlotsHintBox}>
+                                <Ionicons name="information-circle-outline" size={16} color="#64748b" style={{ marginRight: 6 }} />
+                                <Text style={styles.noSlotsHintText}>
+                                  No upcoming daytime slots remaining today. You can set arrival minutes directly in "By Minutes".
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                        )}
+
+                        {/* Real-time Arrival Summary Banner */}
+                        <View style={styles.etaLiveStatusBanner}>
+                          <View style={styles.etaLiveStatusIconCircle}>
+                            <Ionicons name="checkmark-done" size={16} color="#16a34a" />
+                          </View>
+                          <View style={{ flex: 1, marginLeft: 10 }}>
+                            <Text style={styles.etaLiveStatusTitle}>
+                              Expected Arrival at Barber Shop
+                            </Text>
+                            <Text style={styles.etaLiveStatusValue}>
+                              Today at {new Date(Date.now() + (selectedETA || 15) * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                              {" "}<Text style={{ fontWeight: "600", color: "#15803d" }}>(~{selectedETA || 15} mins)</Text>
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    )}
                   </View>
                 );
               })()}
@@ -1372,8 +1669,8 @@ export function BarberDetailScreen({ route, navigation }) {
 
               {/* Customer Address Input & Auto Address (GPS) Option */}
               <View style={{ marginBottom: 16 }}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                  <Text style={styles.modalSectionLabel}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 8 }}>
+                  <Text style={[styles.modalSectionLabel, { flex: 1, flexShrink: 1, marginBottom: 0 }]} numberOfLines={1} ellipsizeMode="tail">
                     {isHomeServiceSelected ? "Service Address (Required)" : "Your Address / Location (Optional)"}
                   </Text>
                   <Pressable
@@ -1388,6 +1685,7 @@ export function BarberDetailScreen({ route, navigation }) {
                         borderRadius: 8,
                         borderWidth: 1,
                         borderColor: "#c7d2fe",
+                        flexShrink: 0,
                       },
                       pressed && { opacity: 0.7 }
                     ]}
@@ -1415,6 +1713,16 @@ export function BarberDetailScreen({ route, navigation }) {
 
               {/* Pricing Summary */}
               <View style={styles.billSummaryBox}>
+                {!isHomeServiceSelected && selectedETA ? (
+                  <View style={[styles.billRow, { paddingBottom: 8, marginBottom: 8, borderBottomWidth: 1, borderBottomColor: "#f1f5f9" }]}>
+                    <Text style={[styles.billLabel, { fontWeight: "700", color: "#334155" }]}>
+                      🕒 Arrival ETA
+                    </Text>
+                    <Text style={[styles.billVal, { color: "#4f46e5", fontWeight: "800" }]}>
+                      Today ~{new Date(Date.now() + selectedETA * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })} ({selectedETA}m)
+                    </Text>
+                  </View>
+                ) : null}
                 <View style={styles.billRow}>
                   <Text style={styles.billLabel}>Service(s) Total</Text>
                   <Text style={styles.billVal}>₹{totalPrice}</Text>
@@ -2446,6 +2754,220 @@ const styles = StyleSheet.create({
   },
   etaBtnTextActive: {
     color: "#ffffff",
+  },
+  etaPreviewHeaderBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#eef2ff",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#c7d2fe",
+  },
+  etaPreviewHeaderText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#4f46e5",
+  },
+  etaBtnCustom: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f5f3ff",
+    borderColor: "#c4b5fd",
+  },
+  etaPresetNoticeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 8,
+    paddingHorizontal: 4,
+  },
+  etaPresetNoticeText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#475569",
+  },
+  customETACard: {
+    marginTop: 12,
+    padding: 14,
+    backgroundColor: "#f8fafc",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  customETATabsRow: {
+    flexDirection: "row",
+    backgroundColor: "#e2e8f0",
+    borderRadius: 10,
+    padding: 3,
+  },
+  customETATabBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  customETATabBtnActive: {
+    backgroundColor: "#ffffff",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  customETATabText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  customETATabTextActive: {
+    color: "#4f46e5",
+    fontWeight: "700",
+  },
+  customSubHeader: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#475569",
+    marginBottom: 8,
+  },
+  stepperRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    marginVertical: 4,
+  },
+  stepperBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 1,
+  },
+  stepperInputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderWidth: 1.5,
+    borderColor: "#4f46e5",
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    minWidth: 110,
+    justifyContent: "center",
+  },
+  stepperTextInput: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#0f172a",
+    textAlign: "center",
+    padding: 0,
+    minWidth: 40,
+  },
+  stepperUnitText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#64748b",
+    marginLeft: 6,
+  },
+  quickShortcutsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 10,
+    justifyContent: "center",
+  },
+  quickShortcutChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: "#ffffff",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+  },
+  quickShortcutChipText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#334155",
+  },
+  clockSlotPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    alignItems: "center",
+    minWidth: 78,
+  },
+  clockSlotPillActive: {
+    backgroundColor: "#4f46e5",
+    borderColor: "#4f46e5",
+  },
+  clockSlotTime: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#1e293b",
+  },
+  clockSlotTimeActive: {
+    color: "#ffffff",
+  },
+  clockSlotSub: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#64748b",
+    marginTop: 2,
+  },
+  clockSlotSubActive: {
+    color: "#e0e7ff",
+  },
+  noSlotsHintBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f1f5f9",
+    padding: 10,
+    borderRadius: 8,
+  },
+  noSlotsHintText: {
+    fontSize: 11,
+    color: "#64748b",
+    flex: 1,
+  },
+  etaLiveStatusBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f0fdf4",
+    borderWidth: 1,
+    borderColor: "#bbf7d0",
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 12,
+  },
+  etaLiveStatusIconCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "#dcfce7",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  etaLiveStatusTitle: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#166534",
+  },
+  etaLiveStatusValue: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#14532d",
+    marginTop: 1,
   },
   slotPill: {
     flexDirection: "row",

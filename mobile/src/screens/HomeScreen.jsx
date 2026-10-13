@@ -34,7 +34,7 @@ const SALON_FALLBACK_IMAGES = [
 ];
 
 // Banner model image fallback
-const BANNER_MODEL_IMAGE = "https://images.unsplash.com/photo-1560066984-138dadb4c035?w=500&auto=format&fit=crop&q=80";
+const BANNER_MODEL_IMAGE = "https://images.unsplash.com/photo-1560066984-138dadb4c035?w=1080&auto=format&fit=crop&q=80";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const CAROUSEL_CARD_WIDTH = (SCREEN_WIDTH - 40 - 12) / 2;
@@ -317,19 +317,17 @@ export function HomeScreen({ navigation, route }) {
   React.useEffect(() => {
     const socket = getSocket();
     const uId = user?.id || user?._id;
-    if (uId) {
-      socket.emit("joinUserRoom", uId);
-    }
     const handleNotif = () => {
       fetchNotifications();
     };
     socket.on("notificationReceived", handleNotif);
     socket.on("bookingUpdated", handleNotif);
+    socket.on("bookingCancelled", handleNotif);
     socket.on("tailorOrderUpdated", handleNotif);
     return () => {
-      if (uId) socket.emit("leaveUserRoom", uId);
       socket.off("notificationReceived", handleNotif);
       socket.off("bookingUpdated", handleNotif);
+      socket.off("bookingCancelled", handleNotif);
       socket.off("tailorOrderUpdated", handleNotif);
     };
   }, [user?.id, user?._id, fetchNotifications]);
@@ -507,32 +505,40 @@ export function HomeScreen({ navigation, route }) {
 
       {!isSearching && (
         <>
-          {/* Promo Banner Card */}
+      {/* Promo Hero Banner */}
       <Pressable 
         style={styles.bannerContainer}
-        onPress={() => navigation.navigate("UserGuide")}
+        onPress={() => navigation.navigate("Search", { category: "all" })}
+        activeOpacity={0.92}
       >
         <Image 
           source={{ uri: BANNER_MODEL_IMAGE }}
           style={styles.bannerBackgroundImage} 
         />
         <LinearGradient
-          colors={["rgba(109, 40, 217, 0.85)", "rgba(15, 23, 42, 0.45)"]}
+          colors={["rgba(90, 31, 186, 0.92)", "rgba(109, 40, 217, 0.74)", "rgba(124, 58, 237, 0.50)"]}
+          locations={[0, 0.55, 1]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
           style={StyleSheet.absoluteFillObject}
         />
         
-        <View style={styles.bannerTextSection}>
-          <Text style={styles.bannerTitle}>Look Good. Feel Great.</Text>
-          <Text style={styles.bannerSubtitle}>
-            Book trusted experts near you at the best prices.
-          </Text>
-        </View>
+        <View style={styles.bannerContentRow}>
+          <View style={styles.bannerTextSection}>
+            <Text style={styles.bannerTitle}>Look Good. Feel Great.</Text>
+            <Text style={styles.bannerSubtitle}>
+              Book trusted experts near you at the best prices.
+            </Text>
+          </View>
 
-        <View style={styles.exploreBtn}>
-          <Text style={styles.exploreBtnText}>Explore</Text>
-          <Ionicons name="arrow-forward" size={11} color="#7c3aed" style={{ marginLeft: 4 }} />
+          <Pressable 
+            style={styles.exploreBtn}
+            onPress={() => navigation.navigate("Search", { category: "all" })}
+            hitSlop={8}
+          >
+            <Text style={styles.exploreBtnText}>Explore</Text>
+            <Ionicons name="arrow-forward" size={14} color="#7c3aed" style={styles.exploreBtnIcon} />
+          </Pressable>
         </View>
       </Pressable>
 
@@ -1147,33 +1153,76 @@ const styles = StyleSheet.create({
 
   bannerContainer: {
     position: "relative",
-    flexDirection: "row",
-    borderRadius: 20,
+    height: 100,
+    borderRadius: 28,
     marginHorizontal: 20,
-    marginBottom: 24,
-    paddingHorizontal: 16,
-    height: 105,
+    marginBottom: 20,
     overflow: "hidden",
-    alignItems: "center",
-    justifyContent: "space-between",
+    backgroundColor: "#6d28d9",
+    shadowColor: "#7c3aed",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    elevation: 4,
   },
   bannerBackgroundImage: {
     ...StyleSheet.absoluteFillObject,
+    width: "100%",
+    height: "100%",
     resizeMode: "cover",
   },
-  bannerTextSection: { flex: 1, marginRight: 16, zIndex: 2, justifyContent: "center" },
-  bannerTitle: { fontSize: 18, fontWeight: "900", color: "#ffffff", lineHeight: 22 },
-  bannerSubtitle: { fontSize: 10.5, color: "rgba(255, 255, 255, 0.9)", marginTop: 4, lineHeight: 14, fontWeight: "600" },
+  bannerContentRow: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 22,
+    zIndex: 2,
+  },
+  bannerTextSection: {
+    flex: 1,
+    marginRight: 12,
+    justifyContent: "center",
+  },
+  bannerTitle: {
+    fontSize: 22,
+    fontWeight: "900",
+    color: "#ffffff",
+    lineHeight: 28,
+    letterSpacing: -0.3,
+  },
+  bannerSubtitle: {
+    fontSize: 13,
+    color: "#ffffff",
+    marginTop: 6,
+    lineHeight: 18,
+    fontWeight: "500",
+    opacity: 0.95,
+  },
   exploreBtn: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "#ffffff",
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 18,
-    zIndex: 2,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 24,
+    flexShrink: 0,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    elevation: 3,
   },
-  exploreBtnText: { color: "#7c3aed", fontSize: 11, fontWeight: "800" },
+  exploreBtnText: {
+    color: "#7c3aed",
+    fontSize: 13.5,
+    fontWeight: "800",
+    letterSpacing: -0.2,
+  },
+  exploreBtnIcon: {
+    marginLeft: 4,
+  },
 
   categoriesGrid: {
     flexDirection: "row",

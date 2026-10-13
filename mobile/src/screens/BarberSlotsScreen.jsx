@@ -10,6 +10,7 @@ import {
   Text,
   TextInput,
   View,
+  ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -47,6 +48,8 @@ export function BarberSlotsScreen({ navigation, isNested }) {
   const [walkInModalVisible, setWalkInModalVisible] = useState(false);
   const [walkInName, setWalkInName] = useState("");
   const [walkInPhone, setWalkInPhone] = useState("");
+  const [walkInSearch, setWalkInSearch] = useState("");
+  const [selectedWalkInChair, setSelectedWalkInChair] = useState(null);
   const [services, setServices] = useState([]);
   const [selectedWalkInServices, setSelectedWalkInServices] = useState([]);
   const [submittingWalkIn, setSubmittingWalkIn] = useState(false);
@@ -61,10 +64,21 @@ export function BarberSlotsScreen({ navigation, isNested }) {
       const inProgress = (bkRes.data.bookings || []).filter(b => b.status === "in-progress" || b.status === "confirmed");
       setActiveBookings(inProgress);
 
-      if (res.data.barber?.id) {
-        const sRes = await api.get(`/services?barberId=${res.data.barber.id}`);
-        setServices(sRes.data.services || []);
+      const bId = res.data?.barber?._id || res.data?.barber?.id;
+      let svcList = (res.data?.services || res.data?.barber?.services || []).map((s) => ({
+        ...s,
+        id: s.id || s._id,
+        _id: s._id || s.id,
+      }));
+      if (svcList.length === 0 && bId) {
+        const sRes = await api.get(`/services?barberId=${bId}`);
+        svcList = (sRes.data?.services || []).map((s) => ({
+          ...s,
+          id: s.id || s._id,
+          _id: s._id || s.id,
+        }));
       }
+      setServices(svcList);
     } catch (err) {
       console.error(err);
     }
@@ -108,6 +122,16 @@ export function BarberSlotsScreen({ navigation, isNested }) {
     );
   };
 
+  const selectedWalkInDetails = services.filter((s) => selectedWalkInServices.includes(s.id || s._id));
+  const walkInTotalPrice = selectedWalkInDetails.reduce((sum, s) => sum + (Number(s.price) || 0), 0);
+  const walkInTotalDuration = selectedWalkInDetails.reduce((sum, s) => sum + (Number(s.durationMinutes) || 0), 0);
+
+  const filteredServices = services.filter((s) => {
+    if (!walkInSearch.trim()) return true;
+    const q = walkInSearch.trim().toLowerCase();
+    return (s.name || "").toLowerCase().includes(q) || (s.category || "").toLowerCase().includes(q);
+  });
+
   const handleWalkInSubmit = async () => {
     if (selectedWalkInServices.length === 0) {
       alert("Please select at least one service");
@@ -116,14 +140,15 @@ export function BarberSlotsScreen({ navigation, isNested }) {
     setSubmittingWalkIn(true);
     try {
       await api.post("/bookings/walk-in", {
-        customerName: walkInName,
-        customerPhone: walkInPhone,
-        serviceIds: selectedWalkInServices
+        customerName: (walkInName || "").trim(),
+        serviceIds: selectedWalkInServices,
+        seatIndex: selectedWalkInChair !== null ? selectedWalkInChair : undefined,
       });
       setWalkInModalVisible(false);
       setWalkInName("");
       setWalkInPhone("");
       setSelectedWalkInServices([]);
+      setSelectedWalkInChair(null);
       await loadData();
     } catch(e) {
       console.error(e);
@@ -727,63 +752,232 @@ export function BarberSlotsScreen({ navigation, isNested }) {
       {/* WALK-IN MODAL */}
       <Modal visible={walkInModalVisible} transparent animationType="slide" onRequestClose={() => setWalkInModalVisible(false)}>
         <View style={styles.modalBg}>
-          <View style={styles.modalSheet}>
+          <View style={[styles.modalSheet, { maxHeight: "90%", paddingBottom: 16 }]}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Add Walk-In Customer</Text>
-              <Pressable onPress={() => setWalkInModalVisible(false)}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: "#ede9fe", justifyContent: "center", alignItems: "center" }}>
+                  <Text style={{ fontSize: 20 }}>💈</Text>
+                </View>
+                <View>
+                  <Text style={styles.modalTitle}>New Walk-In Customer</Text>
+                  <Text style={{ fontSize: 12, color: "#64748b", fontWeight: "600" }}>Fast in-shop queue booking</Text>
+                </View>
+              </View>
+              <Pressable onPress={() => setWalkInModalVisible(false)} hitSlop={8}>
                 <Ionicons name="close-circle" size={26} color="#cbd5e1" />
               </Pressable>
             </View>
-            <View style={styles.modalBody}>
-              <TextInput
-                style={styles.input}
-                placeholder="Customer Name (Optional)"
-                value={walkInName}
-                onChangeText={setWalkInName}
-                placeholderTextColor="#94a3b8"
-              />
-              <TextInput
-                style={[styles.input, { marginTop: 12 }]}
-                placeholder="Phone Number (Optional)"
-                value={walkInPhone}
-                onChangeText={setWalkInPhone}
-                keyboardType="phone-pad"
-                placeholderTextColor="#94a3b8"
-              />
-              <Text style={[styles.sectionTitle, { marginTop: 24, marginBottom: 12 }]}>Select Services</Text>
-              
-              {availableSeats === 0 && (
-                <View style={{ backgroundColor: "#fef3c7", padding: 12, borderRadius: 12, marginBottom: 16 }}>
-                  <Text style={{ color: "#d97706", fontSize: 13, fontWeight: "600" }}>⚠️ No chairs are currently available. This walk-in will be added to the queue.</Text>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 20, paddingBottom: 10 }}>
+              {/* Step 1: Customer Info */}
+              <View style={{ backgroundColor: "#f8fafc", padding: 14, borderRadius: 16, borderWidth: 1, borderColor: "#e2e8f0", marginBottom: 12 }}>
+                <Text style={{ fontSize: 11, fontWeight: "800", color: "#64748b", letterSpacing: 0.8, marginBottom: 8 }}>
+                  1. CUSTOMER NAME
+                </Text>
+                <TextInput
+                  style={[styles.input, { backgroundColor: "#ffffff" }]}
+                  placeholder="Enter Customer Name (e.g. Amit Sharma)"
+                  value={walkInName}
+                  onChangeText={setWalkInName}
+                  placeholderTextColor="#94a3b8"
+                />
+              </View>
+
+              {/* Step 2: Assign Chair */}
+              {seats.length > 0 && (
+                <View style={{ backgroundColor: "#f8fafc", padding: 14, borderRadius: 16, borderWidth: 1, borderColor: "#e2e8f0", marginBottom: 14 }}>
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: "#64748b", letterSpacing: 0.8, marginBottom: 8 }}>
+                    ASSIGN TO CHAIR
+                  </Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                    <Pressable
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        borderRadius: 10,
+                        backgroundColor: selectedWalkInChair === null ? "#6d28d9" : "#ffffff",
+                        borderWidth: 1,
+                        borderColor: selectedWalkInChair === null ? "#6d28d9" : "#e2e8f0",
+                      }}
+                      onPress={() => setSelectedWalkInChair(null)}
+                    >
+                      <Ionicons name="flash" size={13} color={selectedWalkInChair === null ? "#fff" : "#6d28d9"} />
+                      <Text style={{ fontSize: 12, fontWeight: "700", color: selectedWalkInChair === null ? "#fff" : "#334155" }}>
+                        Auto (Fastest Free)
+                      </Text>
+                    </Pressable>
+                    {seats.map((seat) => {
+                      const isChosen = selectedWalkInChair === seat.index;
+                      return (
+                        <Pressable
+                          key={seat.index}
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 6,
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            borderRadius: 10,
+                            backgroundColor: isChosen ? "#6d28d9" : "#ffffff",
+                            borderWidth: 1,
+                            borderColor: isChosen ? "#6d28d9" : "#e2e8f0",
+                          }}
+                          onPress={() => setSelectedWalkInChair(seat.index)}
+                        >
+                          <Text style={{ fontSize: 13 }}>💺</Text>
+                          <Text style={{ fontSize: 12, fontWeight: "700", color: isChosen ? "#fff" : "#334155" }}>
+                            {seat.label || `Chair ${seat.index + 1}`}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
                 </View>
               )}
-              
-              {services.length === 0 ? (
-                <Text style={{ color: "#ef4444", fontSize: 14, marginBottom: 16 }}>No services added to your shop yet. Please add services from the Manage tab first.</Text>
-              ) : (
-              <View style={styles.servicesGrid}>
-                {services.map(s => {
-                  const isSelected = selectedWalkInServices.includes(s.id || s._id);
-                  return (
-                    <Pressable
-                      key={s.id || s._id}
-                      style={[styles.servicePill, isSelected && styles.servicePillSelected]}
-                      onPress={() => toggleWalkInService(s.id || s._id)}
-                    >
-                      <Text style={[styles.servicePillText, isSelected && styles.servicePillTextSelected]}>{s.name}</Text>
+
+              {/* Step 2: Services */}
+              <View style={{ backgroundColor: "#f8fafc", padding: 14, borderRadius: 16, borderWidth: 1, borderColor: "#e2e8f0" }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: "#64748b", letterSpacing: 0.8 }}>
+                    2. CHOOSE SERVICES
+                  </Text>
+                  {selectedWalkInServices.length > 0 && (
+                    <View style={{ backgroundColor: "#6d28d9", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
+                      <Text style={{ color: "#fff", fontSize: 11, fontWeight: "800" }}>{selectedWalkInServices.length} Selected</Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Search */}
+                <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#ffffff", borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 10, paddingHorizontal: 12, marginBottom: 10 }}>
+                  <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+                  <TextInput
+                    style={{ flex: 1, height: 38, fontSize: 13, color: "#0f172a" }}
+                    placeholder="Search services..."
+                    placeholderTextColor="#94a3b8"
+                    value={walkInSearch}
+                    onChangeText={setWalkInSearch}
+                  />
+                  {walkInSearch.length > 0 && (
+                    <Pressable onPress={() => setWalkInSearch("")} hitSlop={6}>
+                      <Ionicons name="close-circle" size={16} color="#94a3b8" />
                     </Pressable>
-                  );
-                })}
+                  )}
+                </View>
+
+                {availableSeats === 0 && (
+                  <View style={{ backgroundColor: "#fef3c7", padding: 10, borderRadius: 10, marginBottom: 10, flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Ionicons name="information-circle" size={16} color="#d97706" />
+                    <Text style={{ color: "#b45309", fontSize: 12, fontWeight: "700", flex: 1 }}>
+                      All chairs busy. Customer will join next in the queue.
+                    </Text>
+                  </View>
+                )}
+
+                {services.length === 0 ? (
+                  <Text style={{ color: "#ef4444", fontSize: 13, paddingVertical: 10, textAlign: "center" }}>
+                    No services found for this shop.
+                  </Text>
+                ) : filteredServices.length === 0 ? (
+                  <Text style={{ color: "#94a3b8", fontSize: 13, paddingVertical: 10, textAlign: "center" }}>
+                    No services matching "{walkInSearch}"
+                  </Text>
+                ) : (
+                  <View style={{ gap: 8 }}>
+                    {filteredServices.map(s => {
+                      const sid = s.id || s._id;
+                      const isSelected = selectedWalkInServices.includes(sid);
+                      return (
+                        <Pressable
+                          key={sid}
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            backgroundColor: isSelected ? "#f5f3ff" : "#ffffff",
+                            borderWidth: 1.5,
+                            borderColor: isSelected ? "#8b5cf6" : "#e2e8f0",
+                            borderRadius: 12,
+                            padding: 12,
+                          }}
+                          onPress={() => toggleWalkInService(sid)}
+                        >
+                          <Ionicons
+                            name={isSelected ? "checkmark-circle" : "ellipse-outline"}
+                            size={22}
+                            color={isSelected ? "#6d28d9" : "#94a3b8"}
+                            style={{ marginRight: 10 }}
+                          />
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 14, fontWeight: "700", color: isSelected ? "#5b21b6" : "#1e293b" }}>
+                              {s.name}
+                            </Text>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
+                              <Text style={{ fontSize: 11, color: "#64748b", fontWeight: "600" }}>
+                                ⏱️ {s.durationMinutes || 30} mins
+                              </Text>
+                              {s.category && (
+                                <Text style={{ fontSize: 11, color: "#94a3b8" }}>• {s.category}</Text>
+                              )}
+                            </View>
+                          </View>
+                          <View style={{ backgroundColor: isSelected ? "#ede9fe" : "#f1f5f9", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}>
+                            <Text style={{ fontSize: 13, fontWeight: "800", color: isSelected ? "#6d28d9" : "#0f172a" }}>
+                              ₹{s.price || 0}
+                            </Text>
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                )}
               </View>
-              )}
-              
-              <Pressable 
-                style={[styles.actionBtn, { backgroundColor: services.length === 0 ? "#94a3b8" : "#6d28d9", marginTop: 32 }]} 
-                onPress={handleWalkInSubmit} 
-                disabled={submittingWalkIn || services.length === 0}
-              >
-                {submittingWalkIn ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionBtnText}>{availableSeats === 0 ? "Add Walk-In to Queue" : "Add Walk-In & Lock Chair"}</Text>}
-              </Pressable>
+            </ScrollView>
+
+            {/* Bottom summary and action */}
+            <View style={{ paddingHorizontal: 20, paddingTop: 12, borderTopWidth: 1, borderTopColor: "#f1f5f9" }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12, backgroundColor: "#f8fafc", padding: 12, borderRadius: 12 }}>
+                <View>
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#64748b" }}>TOTAL ESTIMATE</Text>
+                  <Text style={{ fontSize: 12, fontWeight: "600", color: "#475569", marginTop: 2 }}>
+                    {selectedWalkInServices.length} {selectedWalkInServices.length === 1 ? "service" : "services"} • ~{walkInTotalDuration} mins
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 20, fontWeight: "900", color: "#6d28d9" }}>
+                  ₹{walkInTotalPrice}
+                </Text>
+              </View>
+
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <Pressable
+                  style={{ flex: 1, height: 50, borderRadius: 14, backgroundColor: "#f1f5f9", justifyContent: "center", alignItems: "center" }}
+                  onPress={() => setWalkInModalVisible(false)}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: "700", color: "#64748b" }}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={{
+                    flex: 2,
+                    height: 50,
+                    borderRadius: 14,
+                    backgroundColor: selectedWalkInServices.length === 0 ? "#cbd5e1" : "#6d28d9",
+                    justifyContent: "center",
+                    alignItems: "center",
+                  }}
+                  onPress={handleWalkInSubmit}
+                  disabled={submittingWalkIn || selectedWalkInServices.length === 0}
+                >
+                  {submittingWalkIn ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={{ fontSize: 14, fontWeight: "800", color: "#ffffff" }}>
+                      {availableSeats === 0 ? "Add to Queue" : "Confirm & Book"}
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
             </View>
           </View>
         </View>

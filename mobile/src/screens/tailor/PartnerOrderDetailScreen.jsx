@@ -207,14 +207,60 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
     }
     setStartingStitching(true);
     try {
-      const res = await api.post(`/tailors/orders/${orderId}/start-stitching`);
+      let res;
+      try {
+        res = await api.post(`/tailors/orders/${orderId}/start-stitching`);
+      } catch (postErr) {
+        if (postErr?.response?.status === 404 || postErr?.response?.status === 501) {
+          res = await api.patch(`/tailors/orders/${orderId}/status`, {
+            status: "stitching",
+            note: "Stitching started by tailor partner 🪡"
+          });
+        } else {
+          throw postErr;
+        }
+      }
       await loadOrder();
-      Alert.alert("Stitching Started! 🪡", res.data?.message || "Order moved to Stitching in Progress. Customer has been notified!");
+      Alert.alert("Stitching Started! 🪡", res?.data?.message || "Order moved to Stitching in Progress. Customer has been notified!");
     } catch (err) {
       console.error(err);
-      Alert.alert("Error", err?.response?.data?.error || "Could not start stitching.");
+      Alert.alert("Error", err?.response?.data?.error || err?.message || "Could not start stitching.");
     } finally {
       setStartingStitching(false);
+    }
+  };
+
+  const [completingOrder, setCompletingOrder] = useState(false);
+
+  const handleCompleteOrder = async () => {
+    if (order?.status === "cancelled" || order?.status === "declined") {
+      return Alert.alert("Order Cancelled", "Cannot complete a cancelled order.");
+    }
+    setCompletingOrder(true);
+    try {
+      let res;
+      try {
+        res = await api.post(`/tailors/orders/${orderId}/complete-order`);
+      } catch (postErr) {
+        if (postErr?.response?.status === 404 || postErr?.response?.status === 501) {
+          res = await api.patch(`/tailors/orders/${orderId}/status`, {
+            status: "ready",
+            note: "Stitching completed by tailor partner. Outfit is ready ✅"
+          });
+        } else {
+          throw postErr;
+        }
+      }
+      await loadOrder();
+      Alert.alert(
+        "Order Completed & Ready! 🎉",
+        res?.data?.message || "Order marked as completed and ready for pickup/delivery. Customer has been notified!"
+      );
+    } catch (err) {
+      console.error(err);
+      Alert.alert("Error", err?.response?.data?.error || err?.message || "Could not complete order.");
+    } finally {
+      setCompletingOrder(false);
     }
   };
 
@@ -570,16 +616,59 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
               <View style={{ backgroundColor: "#ede9fe", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, marginTop: 10, flexDirection: "row", alignItems: "center", gap: 6 }}>
                 <Ionicons name="lock-closed" size={13} color="#6d28d9" />
                 <Text style={{ fontSize: 11, color: "#6d28d9", fontWeight: "700" }}>
-                  Delivery OTP will unlock after stitching has started
+                  Complete Order step will unlock after stitching has started
                 </Text>
               </View>
             </View>
           </Section>
         )}
 
-        {/* Cloth Delivery & Proof Section */}
-        {order.isOtpVerified && (order.isStitchingStarted || order.status === "stitching" || ["trial", "alteration", "ironing", "quality_check", "packing", "ready", "dispatched", "completed"].includes(order.status)) && !["cancelled", "declined"].includes(order.status) && (
-          <Section title="Cloth Delivery & Verification Proof" icon="cube">
+        {/* Step 3: Stitching In Progress & Complete Order (Enabled when stitching has started) */}
+        {order.isOtpVerified && !["cancelled", "declined", "completed"].includes(order.status) && (order.status === "stitching" || (order.isStitchingStarted && !order.isStitchingCompleted && order.status !== "ready" && !order.deliveryOtp)) && (
+          <Section title="Step 3: Complete Stitching & Mark Ready" icon="checkmark-circle">
+            <View style={{ backgroundColor: "#f5f3ff", padding: 14, borderRadius: 14, borderWidth: 1.5, borderColor: "#ddd6fe" }}>
+              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 12 }}>
+                <Ionicons name="cut" size={24} color="#7c3aed" style={{ marginRight: 10 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: "800", color: "#6d28d9" }}>
+                    STITCHING IN PROGRESS 🪡
+                  </Text>
+                  <Text style={{ fontSize: 12, color: "#7c3aed", marginTop: 2 }}>
+                    Outfit is being stitched. Once completed, tap below to mark as ready and notify the customer to receive it.
+                  </Text>
+                </View>
+              </View>
+
+              <Pressable
+                style={{ backgroundColor: "#059669", paddingVertical: 12, borderRadius: 10, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6 }}
+                onPress={handleCompleteOrder}
+                disabled={completingOrder}
+              >
+                {completingOrder ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-done-circle" size={18} color="#ffffff" />
+                    <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 14 }}>
+                      Complete Order & Mark Ready ✅
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+
+              <View style={{ backgroundColor: "#ede9fe", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, marginTop: 10, flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Ionicons name="information-circle" size={14} color="#6d28d9" />
+                <Text style={{ fontSize: 11, color: "#6d28d9", fontWeight: "700" }}>
+                  Delivery OTP will unlock after you mark the order as complete
+                </Text>
+              </View>
+            </View>
+          </Section>
+        )}
+
+        {/* Step 4: Cloth Delivery & Verification Proof - ONLY AFTER Stitching is Completed */}
+        {order.isOtpVerified && !["cancelled", "declined"].includes(order.status) && (order.status === "ready" || order.isStitchingCompleted || order.deliveryOtp || order.status === "completed" || ["dispatched"].includes(order.status)) && (
+          <Section title="Step 4: Cloth Delivery & Verification Proof" icon="cube">
             <View style={{ backgroundColor: order.isDeliveryOtpVerified ? "#ecfdf5" : order.deliveryOtp ? "#e0f2fe" : "#f0fdf4", padding: 14, borderRadius: 14, borderWidth: 1, borderColor: order.isDeliveryOtpVerified ? "#a7f3d0" : order.deliveryOtp ? "#bae6fd" : "#bbf7d0" }}>
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                 <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
@@ -836,9 +925,25 @@ export function PartnerOrderDetailScreen({ route, navigation }) {
 
         {/* Services & Pricing */}
         <Section title="Services & Cost" icon="receipt">
-          {order.services.map((svc, i) => (
-            <InfoRow key={i} label={`${svc.name} × ${svc.quantity}`} value={`₹${svc.price * svc.quantity}`} />
-          ))}
+          {(() => {
+            const totalPieces = (order.services || []).reduce((acc, s) => acc + (s.quantity || 1), 0);
+            return (
+              <View style={{ backgroundColor: "#f5f3ff", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, marginBottom: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={{ fontSize: 12, fontWeight: "700", color: "#6d28d9" }}>Total Items to Stitch</Text>
+                <Text style={{ fontSize: 13, fontWeight: "900", color: "#6d28d9" }}>{totalPieces} Pieces ({order.services.length} services)</Text>
+              </View>
+            );
+          })()}
+          {order.services.map((svc, i) => {
+            const qty = svc.quantity || 1;
+            return (
+              <InfoRow
+                key={i}
+                label={`${svc.name} (₹${svc.price}/pc) × ${qty} pcs`}
+                value={`₹${(svc.price || 0) * qty}`}
+              />
+            );
+          })}
           {order.fabricSource === "shop" && order.fabricDetails && (
             <InfoRow label={`Fabric: ${order.fabricDetails.name} (${order.fabricDetails.metersNeeded}m)`} value={`₹${order.fabricDetails.totalFabricCost}`} />
           )}

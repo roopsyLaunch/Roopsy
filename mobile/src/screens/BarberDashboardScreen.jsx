@@ -461,12 +461,14 @@ export function BarberDashboardScreen() {
       socket.on("slotsUpdated", load);
       socket.on("queueUpdated", load);
       socket.on("bookingUpdated", load);
+      socket.on("bookingCancelled", load);
 
       return () => {
         socket.emit("leaveBarberRoom", barberId);
         socket.off("slotsUpdated", load);
         socket.off("queueUpdated", load);
         socket.off("bookingUpdated", load);
+        socket.off("bookingCancelled", load);
       };
     }
   }, [barber, load]);

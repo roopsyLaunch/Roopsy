@@ -21,6 +21,122 @@ const { availableSeatSlots } = require("../utils/barberSeats");
 const CHECKIN_WINDOW_START_MINS = 10;
 const CHECKIN_WINDOW_END_MINS = 5;
 
+// SEQUENTIAL QUEUE NOTIFIER & ACTIVATOR (BARBER SECTION)
+// When earlier service finishes (or cancels), activates next customer in FIFO queue and generates their Check-in OTP.
+async function activateNextBookingInQueue(barberId, io) {
+  if (!barberId) return null;
+
+  try {
+    if (io) {
+      io.to(`barber_${barberId.toString()}`).emit("queueUpdated");
+    }
+
+    // 1. Is there any booking currently in-progress for this barber?
+    const activeInProgress = await Booking.findOne({
+      barberId,
+      status: "in-progress"
+    });
+    if (activeInProgress) {
+      return null;
+    }
+
+    // 2. Find the NEXT confirmed/arrived customer in line (strictly by who booked first: createdAt: 1)
+    const nextBooking = await Booking.findOne({
+      barberId,
+      status: { $in: ["confirmed", "arrived"] },
+      isOtpVerified: false
+    })
+      .sort({ createdAt: 1 })
+      .populate("customerId")
+      .populate("serviceIds");
+
+    if (!nextBooking) return null;
+
+    const Barber = require("../models/Barber");
+    const barber = await Barber.findById(barberId);
+    const shopName = barber?.shopName || "the salon";
+
+    // 3. DO NOT auto-generate Check-in OTP.
+    // OTP will strictly be generated only when the dukandaar (barber) clicks "Generate OTP".
+    const hasExistingPin = Boolean(nextBooking.verificationPin);
+
+    // 4. Notify Customer via Push Notification & Sockets
+    if (nextBooking.customerId) {
+      const custId = (nextBooking.customerId._id || nextBooking.customerId).toString();
+      const notifTitle = hasExistingPin ? "It's Your Turn! Check-in OTP 🔑" : "It's Your Turn! 💈";
+      const notifBody = hasExistingPin
+        ? `The previous service is completed! Your turn has arrived at ${shopName}. Your Check-in OTP is: ${nextBooking.verificationPin}. Please share this OTP with your barber.`
+        : `The previous service is completed! Your turn has arrived at ${shopName}. Please be ready, your barber will generate your Check-in OTP.`;
+
+      const Notification = require("../models/Notification");
+      await Notification.create({
+        userId: nextBooking.customerId._id || nextBooking.customerId,
+        title: notifTitle,
+        body: notifBody,
+        type: "booking_otp_turn",
+        data: {
+          bookingId: nextBooking._id,
+          verificationPin: nextBooking.verificationPin || "",
+          shopName
+        }
+      }).catch(err => console.error("Notification create error:", err));
+
+      if (hasExistingPin) {
+        try {
+          const custUser = await User.findById(custId);
+          if (custUser?.phone) {
+            const { sendCustomSms } = require("../services/smsService");
+            sendCustomSms(custUser.phone, nextBooking.verificationPin).catch(() => {});
+          }
+        } catch (smsErr) {
+          console.error("SMS send error:", smsErr);
+        }
+      }
+
+      if (io) {
+        io.to(`user_${custId}`).emit("bookingUpdated", {
+          bookingId: nextBooking._id,
+          barberId: nextBooking.barberId,
+          status: nextBooking.status,
+          verificationPin: nextBooking.verificationPin || "",
+          otpExpiresAt: nextBooking.otpExpiresAt || null,
+          isOtpVerified: false,
+          message: hasExistingPin 
+            ? `Your turn has arrived at ${shopName}! Check-in OTP: ${nextBooking.verificationPin} 🔑`
+            : `Your turn has arrived at ${shopName}! 💈`
+        });
+        if (hasExistingPin) {
+          io.to(`user_${custId}`).emit("otpGenerated", {
+            bookingId: nextBooking._id,
+            verificationPin: nextBooking.verificationPin
+          });
+        }
+      }
+    }
+
+    if (io) {
+      io.to(`barber_${barberId.toString()}`).emit("bookingUpdated", {
+        bookingId: nextBooking._id,
+        status: nextBooking.status,
+        verificationPin: nextBooking.verificationPin || ""
+      });
+      io.to(`barber_${barberId.toString()}`).emit("queueUpdated");
+      if (barber && barber.userId) {
+        io.to(`user_${barber.userId.toString()}`).emit("bookingUpdated", {
+          bookingId: nextBooking._id,
+          status: nextBooking.status,
+          verificationPin: nextBooking.verificationPin || ""
+        });
+      }
+    }
+
+    return nextBooking;
+  } catch (err) {
+    console.error("[Queue Sequence] Error updating next booking in queue:", err);
+    return null;
+  }
+}
+
 async function autoSuggestChair(barber, startTime, durationMinutes) {
   const start = new Date(startTime);
   const finish = new Date(start.getTime() + durationMinutes * 60000);
@@ -224,35 +340,63 @@ async function create(req, res) {
       return res.status(409).json({ error: suggestion.conflict });
   }
 
-  let finalSeatIndex = suggestion.seatIndex;
-  let finalSeatLabel = suggestion.seatLabel;
-  let queuePosition = suggestion.addToQueue ? suggestion.queuePosition : 0;
+  const { calculateNextChairFreeTime, enrichBarberSeats } = require("../utils/barberSeats");
 
+  let effectiveSeatIndex = seatIndex;
+  if (effectiveSeatIndex === undefined || effectiveSeatIndex === null) {
+    if (suggestion.seatIndex !== null && suggestion.seatIndex !== undefined) {
+      effectiveSeatIndex = suggestion.seatIndex;
+    } else {
+      effectiveSeatIndex = (barber.seats && barber.seats[0]?.index !== undefined) ? barber.seats[0].index : 0;
+    }
+  }
+
+  const chosenSeat = (barber.seats || []).find(s => s.index === effectiveSeatIndex && s.status !== 'maintenance')
+    || (barber.seats && barber.seats[0])
+    || { index: 0, label: "Chair 1" };
+
+  let finalSeatIndex = chosenSeat.index ?? 0;
+  let finalSeatLabel = chosenSeat.label || `Chair ${finalSeatIndex + 1}`;
   let finalStartTime = start;
   let finalEndTime = end;
 
-  if (seatIndex !== undefined) {
-    const seat = barber.seats.find(s => s.index === seatIndex);
-    if (seat && seat.status !== 'maintenance') {
-      finalSeatIndex = seat.index;
-      finalSeatLabel = seat.label || `Chair ${seatIndex + 1}`;
-      
-      const { calculateNextChairFreeTime } = require("../utils/barberSeats");
-      const { startTime: nextStart, endTime: nextEnd } = await calculateNextChairFreeTime(
-        barber,
-        seatIndex,
-        start,
-        totalMinutes
-      );
-      finalStartTime = nextStart;
-      finalEndTime = nextEnd;
+  if (!isHomeService) {
+    const { startTime: nextStart, endTime: nextEnd } = await calculateNextChairFreeTime(
+      barber,
+      finalSeatIndex,
+      start,
+      totalMinutes
+    );
+    finalStartTime = nextStart;
+    finalEndTime = nextEnd;
+  }
+
+  // Calculate sequential queuePosition
+  let queuePosition = 1;
+  if (!isHomeService) {
+    const todayStart = new Date(finalStartTime.getFullYear(), finalStartTime.getMonth(), finalStartTime.getDate(), 0, 0, 0, 0);
+    const todayEnd = new Date(finalStartTime.getFullYear(), finalStartTime.getMonth(), finalStartTime.getDate(), 23, 59, 59, 999);
+    const seatQ = (finalSeatIndex === 0 || !barber.seats || barber.seats.length <= 1)
+      ? { $or: [{ seatIndex: finalSeatIndex }, { seatIndex: null }, { seatIndex: { $exists: false } }] }
+      : { seatIndex: finalSeatIndex };
+    const existingActive = await Booking.find({
+      barberId: barber._id,
+      ...seatQ,
+      status: { $in: ["in-progress", "confirmed", "arrived", "pending"] },
+      startTime: { $lt: todayEnd },
+      endTime: { $gt: todayStart },
+    });
+    if (existingActive.length > 0) {
+      const maxQueue = existingActive.reduce((m, b) => Math.max(m, b.queuePosition || 0), 0);
+      queuePosition = Math.max(existingActive.length + 1, maxQueue + 1);
     }
   }
 
   let finalHomeAddress = homeServiceAddress || "";
   let finalHomeLocation = homeServiceLocation || undefined;
-  if (isHomeService && !finalHomeAddress && req.user?.address?.line1) {
-    finalHomeAddress = `${req.user.address.line1}, ${req.user.address.city || ""}`.trim();
+  if (!finalHomeAddress && req.user?.address?.line1) {
+    const parts = [req.user.address.line1, req.user.address.city, req.user.address.pincode].filter(Boolean);
+    finalHomeAddress = parts.join(", ").trim();
     if (!finalHomeLocation && req.user.address.lat && req.user.address.lng) {
       finalHomeLocation = { lat: req.user.address.lat, lng: req.user.address.lng };
     }
@@ -265,12 +409,13 @@ async function create(req, res) {
     startTime: finalStartTime,
     endTime: finalEndTime,
     expectedDuration: totalMinutes,
-    status: "pending",
+    status: "confirmed", // Automatically confirmed upon customer booking!
     notes: notes || "",
     seatIndex: finalSeatIndex,
     seatLabel: finalSeatLabel,
-    verificationPin: "", // Generated upon confirmation by barber partner
+    verificationPin: "", // No OTP generated on booking creation; generated only when dukandaar clicks "Generate OTP"
     otpExpiresAt: null,
+    isOtpVerified: false,
     isHomeService: isHomeService || false,
     homeServiceAddress: finalHomeAddress,
     homeServiceLocation: finalHomeLocation,
@@ -283,7 +428,7 @@ async function create(req, res) {
 
   // Audit Log
   await AuditLog.create({
-    actionType: "Booking Created",
+    actionType: "Booking Created (Confirmed)",
     entityId: booking._id,
     entityModel: "Booking",
     actorId: req.user._id,
@@ -300,7 +445,7 @@ async function create(req, res) {
       const serviceNames = (services || []).map(s => s.name).join(", ");
       const addr = (homeServiceAddress || "").trim();
 
-      const notifTitle = isHomeService ? `New Home Booking: ${customerName} 🏠` : `New Booking: ${customerName} 💈`;
+      const notifTitle = isHomeService ? `New Home Booking: ${customerName} (Confirmed) 🏠` : `New Booking: ${customerName} (Confirmed) 💈`;
       const notifBody = `👤 Customer: ${customerName}\n✂️ Services: ${serviceNames || "Grooming"} (₹${totalAmount})${addr ? `\n📍 Address: ${addr}` : ""}`;
 
       await Notification.create({
@@ -311,6 +456,7 @@ async function create(req, res) {
         data: {
           bookingId: booking._id,
           type: "barber_booking",
+          status: "confirmed",
           customerName,
           services: serviceNames,
           totalAmount,
@@ -323,8 +469,25 @@ async function create(req, res) {
     }
   }
 
+  // Send Push Notification to Customer (Confirmed without OTP)
+  try {
+    const Notification = require("../models/Notification");
+    await Notification.create({
+      userId: req.user._id,
+      title: "Booking Confirmed! 💈",
+      body: `Your appointment at ${barber.shopName} has been confirmed! The shopkeeper will generate your Check-in OTP when it is your turn. Please wait for your turn.`,
+      type: "booking_status",
+      data: {
+        bookingId: booking._id,
+        barberId: barber._id,
+        status: "confirmed",
+      }
+    });
+  } catch (e) {
+    console.error("Failed to create booking confirmation notification for customer", e);
+  }
+
   // Update barber's live seats with latest occupancy & waiting times
-  const { enrichBarberSeats } = require("../utils/barberSeats");
   const enrichedSeats = await enrichBarberSeats(barber);
   barber.seats = enrichedSeats.map(s => ({
     index: s.index,
@@ -340,6 +503,31 @@ async function create(req, res) {
     io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: enrichedSeats });
     io.emit(`shop_${barber._id.toString()}_seats`, { seats: enrichedSeats });
     io.to(`barber_${barber._id.toString()}`).emit("queueUpdated");
+    io.to(`barber_${barber._id.toString()}`).emit("bookingUpdated", {
+      bookingId: booking._id,
+      status: "confirmed",
+      verificationPin: "",
+    });
+    if (barber.userId) {
+      io.to(`user_${barber.userId.toString()}`).emit("newBooking", {
+        bookingId: booking._id,
+        status: "confirmed",
+        customerName: req.user?.name || "Customer",
+        message: `New confirmed booking from ${req.user?.name || "Customer"} 💈`,
+      });
+      io.to(`user_${barber.userId.toString()}`).emit("bookingUpdated", {
+        bookingId: booking._id,
+        status: "confirmed",
+      });
+    }
+    io.to(`user_${req.user._id.toString()}`).emit("bookingUpdated", {
+      bookingId: booking._id,
+      barberId: barber._id,
+      status: "confirmed",
+      verificationPin: "",
+      otpExpiresAt: null,
+      message: `Your appointment at ${barber.shopName} is confirmed! 💈`,
+    });
   }
 
   // Release lock
@@ -352,17 +540,33 @@ function formatBooking(b) {
   const services = (b.serviceIds || []).map(s => s && s.name ? { id: s._id, name: s.name, category: s.category, durationMinutes: s.durationMinutes, price: s.price } : { id: s });
   
   let arrivalTime = b.startTime;
-  if (b.customerETA != null && b.createdAt) {
-    arrivalTime = new Date(new Date(b.createdAt).getTime() + b.customerETA * 60000);
-  }
+
+  const barberDoc = b.barberId && typeof b.barberId === 'object' && b.barberId.shopName ? b.barberId : null;
+  const barberAddressFormatted = barberDoc?.address
+    ? [barberDoc.address.line1, barberDoc.address.line2, barberDoc.address.city, barberDoc.address.state, barberDoc.address.pincode].filter(Boolean).join(", ")
+    : "";
+
+  const custDoc = b.customerId && typeof b.customerId === 'object' ? b.customerId : null;
+  const custAddr = custDoc?.address;
+  const custAddressParts = custAddr
+    ? [custAddr.line1, custAddr.city, custAddr.pincode].filter(Boolean)
+    : [];
+  const custAddressFormatted = custAddressParts.join(", ");
+  const resolvedCustomerAddress = b.homeServiceAddress || custAddressFormatted || (b.notes && b.notes.length > 3 ? b.notes : "");
+  const resolvedCustomerLocation = b.homeServiceLocation || (custAddr?.lat && custAddr?.lng ? { lat: custAddr.lat, lng: custAddr.lng } : null);
 
   return {
     id: b._id, customerId: b.customerId, barberId: b.barberId, serviceIds: services.map(x => x.id), services,
     startTime: b.startTime, arrivalTime: arrivalTime, endTime: b.endTime, expectedDuration: b.expectedDuration, status: b.status, notes: b.notes,
     createdAt: b.createdAt, seatIndex: b.seatIndex, seatLabel: b.seatLabel, verificationPin: b.verificationPin,
     isHomeService: b.isHomeService,
-    homeServiceAddress: b.homeServiceAddress || (b.customerId?.address?.line1 ? `${b.customerId.address.line1}, ${b.customerId.address.city || ""}`.trim() : ""),
-    homeServiceLocation: b.homeServiceLocation || (b.customerId?.address?.lat && b.customerId?.address?.lng ? { lat: b.customerId.address.lat, lng: b.customerId.address.lng } : undefined),
+    homeServiceAddress: resolvedCustomerAddress,
+    homeServiceLocation: resolvedCustomerLocation,
+    customerAddress: resolvedCustomerAddress,
+    customerLocation: resolvedCustomerLocation,
+    shopAddress: barberAddressFormatted,
+    shopLocation: barberDoc?.location || null,
+    shopName: barberDoc?.shopName || "",
     selectedVariants: b.selectedVariants,
     isWalkIn: b.isWalkIn, guestName: b.guestName, guestPhone: b.guestPhone,
     queuePosition: b.queuePosition, arrivedAt: b.arrivedAt, startedAt: b.startedAt, completedAt: b.completedAt, delayMinutes: b.delayMinutes,
@@ -386,12 +590,26 @@ async function listMine(req, res) {
     .populate({
       path: "barberId",
       populate: { path: "userId", select: "phone name" }
-    })
-    .sort({ createdAt: -1 });
+    });
+
+  // Serial-wise sorting by time: newest booking appears on top (above earlier bookings)
+  bookings.sort((a, b) => {
+    const isDoneA = ["completed", "cancelled", "declined"].includes(a.status);
+    const isDoneB = ["completed", "cancelled", "declined"].includes(b.status);
+    if (isDoneA !== isDoneB) return isDoneA ? 1 : -1;
+    const timeA = new Date(a.startTime || a.createdAt).getTime();
+    const timeB = new Date(b.startTime || b.createdAt).getTime();
+    return timeB - timeA;
+  });
 
   const out = bookings.map((b) => {
     const barber = b.barberId;
     const partnerPhone = barber ? (barber.mobileNumber || barber.phone || barber.userId?.phone || "") : "";
+    const addrParts = barber?.address
+      ? [barber.address.line1, barber.address.line2, barber.address.city, barber.address.state, barber.address.pincode].filter(Boolean)
+      : [];
+    const formattedAddress = addrParts.join(", ");
+
     return {
       ...formatBooking(b),
       barber: barber
@@ -403,6 +621,10 @@ async function listMine(req, res) {
             mobileNumber: partnerPhone,
             businessCategory: barber.businessCategory,
             genderPreference: barber.genderPreference,
+            address: barber.address || null,
+            formattedAddress: formattedAddress,
+            location: barber.location || null,
+            shopPosterUrl: barber.shopPosterUrl || "",
           }
         : null,
     };
@@ -413,18 +635,49 @@ async function listMine(req, res) {
 async function listForBarber(req, res) {
   const barber = await Barber.findOne({ userId: req.user._id });
   if (!barber) return res.json({ bookings: [] });
-  const bookings = await Booking.find({ barberId: barber._id }).populate("serviceIds").populate("customerId", "name email phone avatarUrl address").sort({ createdAt: -1 });
-  const out = bookings.map(b => ({
-    ...formatBooking(b),
-    customer: b.customerId ? { 
-      id: b.customerId._id, 
-      name: b.customerId.name, 
-      email: b.customerId.email, 
-      phone: b.customerId.phone, 
-      avatarUrl: b.customerId.avatarUrl,
-      address: b.customerId.address
-    } : null,
-  }));
+  const bookings = await Booking.find({ barberId: barber._id })
+    .populate("serviceIds")
+    .populate("customerId", "name email phone avatarUrl address");
+
+  // Serial-wise sorting by queue sequence: In-progress at top, then queuePosition / time
+  bookings.sort((a, b) => {
+    if (a.status === "in-progress" && b.status !== "in-progress") return -1;
+    if (b.status === "in-progress" && a.status !== "in-progress") return 1;
+    const isDoneA = ["completed", "cancelled", "declined"].includes(a.status);
+    const isDoneB = ["completed", "cancelled", "declined"].includes(b.status);
+    if (isDoneA !== isDoneB) return isDoneA ? 1 : -1;
+    if (a.queuePosition && b.queuePosition && a.queuePosition !== b.queuePosition) {
+      return a.queuePosition - b.queuePosition;
+    }
+    const timeA = new Date(a.startTime || a.createdAt).getTime();
+    const timeB = new Date(b.startTime || b.createdAt).getTime();
+    if (timeA !== timeB) return timeA - timeB;
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  });
+
+  const out = bookings.map(b => {
+    const formatted = formatBooking(b);
+    const custDoc = b.customerId;
+    const custAddrParts = custDoc?.address
+      ? [custDoc.address.line1, custDoc.address.city, custDoc.address.pincode].filter(Boolean)
+      : [];
+    const custAddrFormatted = custAddrParts.join(", ");
+    const effectiveCustAddress = formatted.customerAddress || custAddrFormatted || "";
+
+    return {
+      ...formatted,
+      customerAddress: effectiveCustAddress,
+      customer: custDoc ? { 
+        id: custDoc._id, 
+        name: custDoc.name, 
+        email: custDoc.email, 
+        phone: custDoc.phone, 
+        avatarUrl: custDoc.avatarUrl,
+        address: custDoc.address,
+        formattedAddress: effectiveCustAddress
+      } : null,
+    };
+  });
   res.json({ bookings: out });
 }
 
@@ -438,9 +691,13 @@ async function patch(req, res) {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const booking = await Booking.findById(req.params.id);
   if (!booking) return res.status(404).json({ error: "Booking not found" });
-  const barber = await Barber.findOne({ userId: req.user._id });
+  const barber = await Barber.findById(booking.barberId);
+  const userBarber = await Barber.findOne({ userId: req.user._id });
   const isCustomer = booking.customerId && booking.customerId.toString() === req.user._id.toString();
-  const isOwnBarber = barber && booking.barberId.toString() === barber._id.toString();
+  const isOwnBarber = barber && (
+    (userBarber && userBarber._id.toString() === barber._id.toString()) ||
+    (barber.userId && barber.userId.toString() === req.user._id.toString())
+  );
 
   if (parsed.data.status === "cancelled") {
     if (!isCustomer && !isOwnBarber && req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
@@ -454,22 +711,44 @@ async function patch(req, res) {
     booking.status = parsed.data.status;
     const now = new Date();
 
-    // Generate Check-in OTP on confirmation by barber partner with 12 hours validity
+    // When booking is confirmed, OTP is NOT generated automatically.
+    // OTP will only be generated when the dukandaar clicks "Generate OTP".
     if (booking.status === "confirmed") {
-      if (!booking.verificationPin || booking.verificationPin === "WALK") {
-        booking.verificationPin = Math.floor(1000 + Math.random() * 9000).toString();
+
+      // When shop partner confirms, start arrival countdown from confirmation moment for shop visit
+      if (!booking.isHomeService) {
+        let etaMins = booking.customerETA;
+        if (!etaMins || etaMins <= 0) {
+          if (booking.startTime && booking.createdAt) {
+            const diffMinutes = Math.round((new Date(booking.startTime).getTime() - new Date(booking.createdAt).getTime()) / 60000);
+            if (diffMinutes > 0 && diffMinutes <= 180) {
+              etaMins = diffMinutes;
+            }
+          }
+        }
+        if (etaMins && etaMins > 0) {
+          const arrivalFromNow = new Date(Date.now() + etaMins * 60000);
+          booking.startTime = arrivalFromNow;
+          booking.endTime = new Date(arrivalFromNow.getTime() + (booking.expectedDuration || 30) * 60000);
+        }
       }
-      booking.otpExpiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000); // 12 hours expiry
     }
 
     if (booking.status === "arrived") booking.arrivedAt = now;
     if (booking.status === "in-progress") {
       booking.startedAt = now;
-      if (barber && booking.seatIndex !== null && booking.seatIndex !== undefined) {
-        const seat = barber.seats.find(s => s.index === booking.seatIndex);
+      booking.startTime = now;
+      booking.endTime = new Date(now.getTime() + (booking.expectedDuration || 30) * 60000);
+      if (booking.seatIndex === null || booking.seatIndex === undefined) {
+        booking.seatIndex = 0;
+        booking.seatLabel = "Chair 1";
+      }
+      if (barber) {
+        const targetIdx = booking.seatIndex ?? 0;
+        const seat = (barber.seats || []).find(s => s.index === targetIdx) || (barber.seats && barber.seats[0]);
         if (seat) {
           seat.isAvailable = false;
-          seat.occupiedUntil = new Date(booking.startedAt.getTime() + (booking.expectedDuration || 30) * 60000);
+          seat.occupiedUntil = new Date(now.getTime() + (booking.expectedDuration || 30) * 60000);
           await barber.save();
         }
       }
@@ -524,77 +803,194 @@ async function patch(req, res) {
   await booking.populate("serviceIds");
 
   const io = req.app.get("io");
-  if (io) {
-    if (booking.customerId) {
-      io.to(`user_${booking.customerId.toString()}`).emit("bookingUpdated", { 
-        bookingId: booking._id,
-        barberId: booking.barberId,
-        status: booking.status,
-        verificationPin: booking.verificationPin,
-        otpExpiresAt: booking.otpExpiresAt,
-        isCompletionOtpVerified: booking.isCompletionOtpVerified,
-        requestReview: booking.status === "completed",
-        message: booking.status === "completed" ? "Service Completed ✅" : `Status updated to ${booking.status}`
-      });
-      if (booking.status === "completed") {
-        io.to(`user_${booking.customerId.toString()}`).emit("serviceCompleted", {
-          bookingId: booking._id,
-          barberId: booking.barberId,
-          requestReview: true
-        });
-      }
-    }
-    if (barber) {
-      io.to(`user_${barber.userId.toString()}`).emit("bookingUpdated", { bookingId: booking._id });
-      io.to(`barber_${barber._id.toString()}`).emit("bookingUpdated", { bookingId: booking._id });
-      io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: barber.seats });
+
+  // If service completed, cancelled, or marked no-show, activate the next booking in queue sequence
+  if (["completed", "cancelled", "no-show"].includes(booking.status)) {
+    await activateNextBookingInQueue(booking.barberId, io);
+  }
+
+  if (barber) {
+    const { enrichBarberSeats } = require("../utils/barberSeats");
+    const enrichedSeats = await enrichBarberSeats(barber);
+    barber.seats = enrichedSeats.map(s => ({
+      index: s.index,
+      label: s.label,
+      isAvailable: s.isAvailable,
+      status: s.status,
+      occupiedUntil: s.occupiedUntil ? new Date(s.occupiedUntil) : null,
+    }));
+    await barber.save();
+    if (io) {
+      io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: enrichedSeats });
+      io.emit(`shop_${barber._id.toString()}_seats`, { seats: enrichedSeats });
       io.to(`barber_${barber._id.toString()}`).emit("queueUpdated");
     }
   }
 
-  // Send Push Notification & SMS to Customer upon confirmation
-  if (booking.customerId && parsed.data.status !== undefined) {
-    let title = "Booking Update";
-    let body = `Your booking status is now: ${parsed.data.status}`;
-    if (parsed.data.status === "confirmed") {
-      title = "Booking Confirmed! ✅";
-      body = barber 
-        ? `Your appointment at ${barber.shopName} has been confirmed. Your Check-in OTP is: ${booking.verificationPin} (valid for 12 hours).` 
-        : `Your appointment has been confirmed. Your Check-in OTP is: ${booking.verificationPin} (valid for 12 hours).`;
+  // Handle Cancellation Notifications & Sockets
+  if (parsed.data.status === "cancelled") {
+    const customer = await User.findById(booking.customerId);
+    const customerName = customer?.name || req.user?.name || "Customer";
+    const serviceNames = (booking.serviceIds || []).map(s => s && s.name ? s.name : s).filter(Boolean).join(", ");
 
-      // Send SMS with confirmed OTP
-      try {
-        User.findById(booking.customerId).then(cust => {
-          if (cust?.phone) {
-            const { sendCustomSms } = require("../services/smsService");
-            sendCustomSms(cust.phone, booking.verificationPin).catch(() => {});
+    if (isCustomer) {
+      // Customer cancelled -> Notify Barber / Beauty Parlour Partner
+      const notifTitle = "Booking Cancelled by Customer ❌";
+      const notifBody = `${customerName} cancelled their booking${serviceNames ? ` for: ${serviceNames}` : ""}.`;
+
+      if (barber && barber.userId) {
+        await Notification.create({
+          userId: barber.userId,
+          title: notifTitle,
+          body: notifBody,
+          type: "booking_cancelled",
+          data: {
+            bookingId: booking._id,
+            type: "booking_cancelled",
+            status: "cancelled",
+            customerName,
+            serviceNames,
+            shopName: barber.shopName,
           }
-        }).catch(() => {});
-      } catch (err) {
-        console.error("SMS notification error:", err);
+        }).catch(err => console.error("Notification create error:", err));
+
+        if (io) {
+          const partnerPayload = {
+            bookingId: booking._id,
+            barberId: barber._id,
+            status: "cancelled",
+            title: notifTitle,
+            message: notifBody,
+            type: "booking_cancelled",
+            customerName,
+            serviceNames,
+            shopName: barber.shopName,
+          };
+          io.to(`user_${barber.userId.toString()}`).emit("bookingUpdated", partnerPayload);
+          io.to(`user_${barber.userId.toString()}`).emit("bookingCancelled", partnerPayload);
+          io.to(`user_${barber.userId.toString()}`).emit("notification", {
+            title: notifTitle,
+            body: notifBody,
+            data: partnerPayload,
+          });
+          io.to(`barber_${barber._id.toString()}`).emit("bookingUpdated", partnerPayload);
+          io.to(`barber_${barber._id.toString()}`).emit("bookingCancelled", partnerPayload);
+        }
       }
-    } else if (parsed.data.status === "cancelled") {
-      title = "Booking Cancelled";
-      body = barber ? `Your booking at ${barber.shopName} has been cancelled.` : "Your booking is cancelled.";
-    } else if (parsed.data.status === "in-progress") {
-      title = "Haircut Started";
-      body = "You are now in the chair!";
-    } else if (parsed.data.status === "completed") {
-      title = "Thank You!";
-      body = "Your booking is complete. Don't forget to leave a review!";
+
+      if (io && booking.customerId) {
+        io.to(`user_${booking.customerId.toString()}`).emit("bookingUpdated", {
+          bookingId: booking._id,
+          barberId: barber?._id,
+          status: "cancelled",
+          title: "Booking Cancelled",
+          message: "Your booking has been cancelled."
+        });
+      }
+    } else {
+      // Partner or Admin cancelled -> Notify Customer
+      const notifTitle = "Booking Cancelled ⚠️";
+      const notifBody = barber ? `Your booking at ${barber.shopName} has been cancelled.` : "Your booking is cancelled.";
+      if (booking.customerId) {
+        await Notification.create({
+          userId: booking.customerId,
+          title: notifTitle,
+          body: notifBody,
+          type: "booking_status",
+          data: { bookingId: booking._id, status: "cancelled" }
+        }).catch(e => console.error(e));
+
+        if (io) {
+          io.to(`user_${booking.customerId.toString()}`).emit("bookingUpdated", {
+            bookingId: booking._id,
+            barberId: barber?._id,
+            status: "cancelled",
+            title: notifTitle,
+            message: notifBody,
+          });
+        }
+      }
+    }
+  } else {
+    // Non-cancellation status updates
+    if (io) {
+      if (booking.customerId) {
+        io.to(`user_${booking.customerId.toString()}`).emit("bookingUpdated", { 
+          bookingId: booking._id,
+          barberId: booking.barberId,
+          status: booking.status,
+          startTime: booking.startTime,
+          arrivalTime: booking.startTime,
+          verificationPin: booking.verificationPin,
+          otpExpiresAt: booking.otpExpiresAt,
+          isCompletionOtpVerified: booking.isCompletionOtpVerified,
+          requestReview: booking.status === "completed",
+          message: booking.status === "completed" ? "Service Completed ✅" : `Status updated to ${booking.status}`
+        });
+        if (booking.status === "completed") {
+          io.to(`user_${booking.customerId.toString()}`).emit("serviceCompleted", {
+            bookingId: booking._id,
+            barberId: booking.barberId,
+            requestReview: true
+          });
+        }
+      }
+      if (barber) {
+        io.to(`user_${barber.userId.toString()}`).emit("bookingUpdated", { bookingId: booking._id, status: booking.status });
+        io.to(`barber_${barber._id.toString()}`).emit("bookingUpdated", { bookingId: booking._id, status: booking.status });
+        io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: barber.seats });
+        io.to(`barber_${barber._id.toString()}`).emit("queueUpdated");
+      }
     }
 
-    try {
-      const Notification = require("../models/Notification");
-      await Notification.create({
-        userId: booking.customerId,
-        title,
-        body,
-        type: "booking_status",
-        data: { bookingId: booking._id }
-      });
-    } catch (e) {
-      console.error("Failed to create booking update notification", e);
+    // Send Push Notification & SMS to Customer upon confirmation or status change
+    if (booking.customerId && parsed.data.status !== undefined) {
+      let title = "Booking Update";
+      let body = `Your booking status is now: ${parsed.data.status}`;
+      if (parsed.data.status === "confirmed") {
+        if (booking.verificationPin) {
+          title = "Booking Confirmed! Check-in OTP 🔑";
+          body = barber
+            ? `Your appointment at ${barber.shopName} has been confirmed! Your Check-in OTP is: ${booking.verificationPin}. Please share this code with your barber.`
+            : `Your appointment has been confirmed! Your Check-in OTP is: ${booking.verificationPin}. Please share this code with your barber.`;
+
+          // Send SMS to Customer with OTP
+          if (booking.customerId) {
+            try {
+              const custUser = await User.findById(booking.customerId);
+              if (custUser?.phone) {
+                const { sendCustomSms } = require("../services/smsService");
+                sendCustomSms(custUser.phone, booking.verificationPin).catch(() => {});
+              }
+            } catch (smsErr) {
+              console.error("SMS send error:", smsErr);
+            }
+          }
+        } else {
+          title = "Booking Confirmed! In Queue ⏳";
+          body = barber
+            ? `Your appointment at ${barber.shopName} has been confirmed! You are in the queue. Your Check-in OTP will appear as soon as the previous customer's service is completed.`
+            : `Your appointment has been confirmed! You are in the queue. Your Check-in OTP will appear as soon as the previous customer's service is completed.`;
+        }
+      } else if (parsed.data.status === "in-progress") {
+        title = "Haircut Started";
+        body = "You are now in the chair!";
+      } else if (parsed.data.status === "completed") {
+        title = "Thank You!";
+        body = "Your booking is complete. Don't forget to leave a review!";
+      }
+
+      try {
+        await Notification.create({
+          userId: booking.customerId,
+          title,
+          body,
+          type: "booking_status",
+          data: { bookingId: booking._id }
+        });
+      } catch (e) {
+        console.error("Failed to create booking update notification", e);
+      }
     }
   }
 
@@ -612,6 +1008,7 @@ async function patch(req, res) {
     if (io) {
       io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: enrichedSeats });
       io.emit(`shop_${barber._id.toString()}_seats`, { seats: enrichedSeats });
+      io.to(`barber_${barber._id.toString()}`).emit("queueUpdated");
     }
   }
 
@@ -638,12 +1035,12 @@ async function getUnifiedQueue(req, res) {
     startTime: { $gte: startOfDay, $lt: endOfDay }
   }).populate("serviceIds").populate("customerId", "name phone avatarUrl").sort({ startTime: 1 });
 
-  // Priority sorting: In-Progress > Arrived > Online/Walk-in (by startTime)
+  // Priority sorting: In-Progress > Arrived > Confirmed / Pending (strictly by createdAt: who booked first)
   bookings.sort((a, b) => {
     const pA = a.status === "in-progress" ? 3 : a.status === "arrived" ? 2 : 1;
     const pB = b.status === "in-progress" ? 3 : b.status === "arrived" ? 2 : 1;
     if (pA !== pB) return pB - pA;
-    return new Date(a.startTime).getTime() - new Date(b.startTime).getTime();
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
   });
 
   const out = bookings.map(b => ({
@@ -863,6 +1260,118 @@ async function availableSlots(req, res) {
   });
 }
 
+const generateCheckinOtpSchema = z.object({ bookingId: z.string().length(24) });
+async function generateCheckinOtp(req, res) {
+  const bookingId = req.params.id || req.body.bookingId;
+  const parsed = generateCheckinOtpSchema.safeParse({ bookingId });
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const booking = await Booking.findById(bookingId).populate("customerId").populate("serviceIds");
+  if (!booking) return res.status(404).json({ error: "Booking not found" });
+
+  if (booking.status === "cancelled") {
+    return res.status(400).json({ error: "Cannot generate OTP for a cancelled booking." });
+  }
+  if (booking.status === "completed") {
+    return res.status(400).json({ error: "This booking service has already been completed." });
+  }
+  if (booking.status === "in-progress") {
+    return res.status(400).json({ error: "Service is already in progress for this booking." });
+  }
+  if (booking.status === "pending") {
+    booking.status = "confirmed";
+  }
+
+  const barber = await Barber.findById(booking.barberId);
+  const userBarber = await Barber.findOne({ userId: req.user._id });
+  const isOwnBarber = barber && (
+    (userBarber && userBarber._id.toString() === barber._id.toString()) ||
+    (barber.userId && barber.userId.toString() === req.user._id.toString())
+  );
+  if (!isOwnBarber && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Only the assigned barber can generate this check-in OTP." });
+  }
+
+  // Generate 4-digit check-in OTP
+  const newOtp = Math.floor(1000 + Math.random() * 9000).toString();
+  booking.verificationPin = newOtp;
+  booking.otpExpiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000); // 12 hours expiry
+  await booking.save();
+
+  const shopName = barber?.shopName || "the salon";
+
+  // 4. Send Notification & SMS to Customer
+  if (booking.customerId) {
+    const custId = (booking.customerId._id || booking.customerId).toString();
+    const notifTitle = "It's Your Turn! Check-in OTP 🔑";
+    const notifBody = `Your turn has arrived at ${shopName}! Your Check-in OTP is: ${newOtp}. Please share this OTP with your barber to start your service.`;
+
+    const Notification = require("../models/Notification");
+    await Notification.create({
+      userId: booking.customerId._id || booking.customerId,
+      title: notifTitle,
+      body: notifBody,
+      type: "booking_otp_turn",
+      data: {
+        bookingId: booking._id,
+        verificationPin: newOtp,
+        shopName
+      }
+    }).catch(err => console.error("Notification create error:", err));
+
+    try {
+      const custUser = await User.findById(custId);
+      if (custUser?.phone) {
+        const { sendCustomSms } = require("../services/smsService");
+        sendCustomSms(custUser.phone, newOtp).catch(() => {});
+      }
+    } catch (smsErr) {
+      console.error("SMS send error:", smsErr);
+    }
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user_${custId}`).emit("bookingUpdated", {
+        bookingId: booking._id,
+        barberId: booking.barberId,
+        status: booking.status,
+        verificationPin: newOtp,
+        otpExpiresAt: booking.otpExpiresAt,
+        isOtpVerified: false,
+        message: "Your turn has arrived! Check-in OTP generated 🔑"
+      });
+      io.to(`user_${custId}`).emit("otpGenerated", {
+        bookingId: booking._id,
+        verificationPin: newOtp
+      });
+    }
+  }
+
+  const io = req.app.get("io");
+  if (io) {
+    io.to(`barber_${booking.barberId.toString()}`).emit("bookingUpdated", {
+      bookingId: booking._id,
+      status: booking.status,
+      verificationPin: newOtp
+    });
+    io.to(`barber_${booking.barberId.toString()}`).emit("queueUpdated");
+    if (barber && barber.userId) {
+      io.to(`user_${barber.userId.toString()}`).emit("bookingUpdated", {
+        bookingId: booking._id,
+        status: booking.status,
+        verificationPin: newOtp
+      });
+    }
+  }
+
+  return res.json({
+    success: true,
+    message: "Check-in OTP generated and sent to customer!",
+    verificationPin: newOtp,
+    booking: formatBooking(booking)
+  });
+}
+
 const verifyOtpSchema = z.object({ bookingId: z.string().length(24), otp: z.string().length(4) });
 async function verifyOtp(req, res) {
   const parsed = verifyOtpSchema.safeParse(req.body);
@@ -877,6 +1386,30 @@ async function verifyOtp(req, res) {
 
   const barber = await Barber.findOne({ userId: req.user._id });
   if (!barber || booking.barberId.toString() !== barber._id.toString()) return res.status(403).json({ error: "Forbidden" });
+
+  if (!booking.verificationPin) {
+    return res.status(400).json({ error: "Check-in OTP has not been generated for this booking yet. Please click 'Generate OTP' button first in your queue to send OTP to the customer." });
+  }
+
+  // 1. Ensure no other service is currently in progress on this chair
+  const totalSeats = (barber.seats && barber.seats.length > 0) ? barber.seats.length : (barber.seatCount || 1);
+  const chairQ = (totalSeats > 1 && booking.seatIndex !== null && booking.seatIndex !== undefined)
+    ? { seatIndex: booking.seatIndex }
+    : {};
+
+  const activeInProgress = await Booking.findOne({
+    barberId: booking.barberId,
+    ...chairQ,
+    status: "in-progress",
+    _id: { $ne: booking._id }
+  }).populate("customerId");
+
+  if (activeInProgress) {
+    const ongoingCustName = activeInProgress.customerId?.name || activeInProgress.guestName || "Current customer";
+    return res.status(400).json({
+      error: `Haircut service for ${ongoingCustName} is currently in progress${booking.seatLabel ? ` on ${booking.seatLabel}` : ""}. Please complete that service first.`
+    });
+  }
 
   if (booking.otpExpiresAt && new Date() > new Date(booking.otpExpiresAt)) {
     return res.status(400).json({ error: "OTP expired! Check-in OTP is valid for 12 hours after booking confirmation." });
@@ -1121,6 +1654,8 @@ async function verifyCompletionOtp(req, res) {
         requestReview: true
       });
     }
+
+    await activateNextBookingInQueue(booking.barberId, io);
   }
 
   res.json({ success: true, message: "Completion OTP verified & service marked completed! 🎉", booking: formatBooking(booking) });
@@ -1143,6 +1678,7 @@ const walkInSchema = z.object({
   serviceIds: z.array(z.string().length(24)).min(1),
   customerName: z.string().optional(),
   customerPhone: z.string().optional(),
+  seatIndex: z.number().int().min(0).optional(),
 });
 
 async function walkIn(req, res) {
@@ -1154,58 +1690,138 @@ async function walkIn(req, res) {
   const shopIsOpen = calculateIsShopOpen(barber) || barber.isShopOpen;
   if (!shopIsOpen || barber.pauseBookings) return res.status(400).json({ error: "Shop is currently not accepting new bookings." });
   
-  const { serviceIds, customerName, customerPhone } = parsed.data;
+  const { serviceIds, customerName, customerPhone, seatIndex } = parsed.data;
   const services = await Service.find({ _id: { $in: serviceIds }, barberId: barber._id });
   const totalDuration = services.reduce((s, x) => s + (x.durationMinutes || 30), 0);
   
-  const start = new Date();
-  const end = new Date(start.getTime() + totalDuration * 60000);
-  const suggestion = await autoSuggestChair(barber, start, totalDuration);
-  
+  const now = new Date();
+  const { buildSeats, calculateNextChairFreeTime, enrichBarberSeats } = require("../utils/barberSeats");
+
+  // Get active shop chairs
+  let chairs = (barber.seats && barber.seats.length > 0)
+    ? barber.seats.filter(s => s.status !== 'maintenance')
+    : buildSeats(barber.seatCount || 1);
+  if (chairs.length === 0) {
+    chairs = buildSeats(barber.seatCount || 1);
+  }
+
+  let chosenChair = null;
+  let chosenStartTime = null;
+  let chosenEndTime = null;
+
+  if (seatIndex !== undefined && seatIndex !== null) {
+    const matched = chairs.find(s => s.index === seatIndex);
+    chosenChair = matched || chairs[0];
+    const { startTime: nextStart, endTime: nextEnd } = await calculateNextChairFreeTime(
+      barber,
+      chosenChair.index,
+      now,
+      totalDuration
+    );
+    chosenStartTime = nextStart;
+    chosenEndTime = nextEnd;
+  } else {
+    // Auto-select chair: pick the chair that is free earliest
+    for (const c of chairs) {
+      const { startTime: chairStart, endTime: chairEnd } = await calculateNextChairFreeTime(
+        barber,
+        c.index,
+        now,
+        totalDuration
+      );
+      if (!chosenChair || chairStart.getTime() < chosenStartTime.getTime()) {
+        chosenChair = c;
+        chosenStartTime = chairStart;
+        chosenEndTime = chairEnd;
+      }
+    }
+  }
+
+  if (!chosenChair) {
+    chosenChair = chairs[0];
+    chosenStartTime = now;
+    chosenEndTime = new Date(now.getTime() + totalDuration * 60000);
+  }
+
+  // Walk-in client is created in 'confirmed' state with chair booked.
+  // The shop partner can tap 'Start Service' to start, followed by 'Complete Service'.
+  const status = "confirmed";
+  const startedAt = null;
+
+  // Calculate queue position if chair has waiting line
+  let queuePosition = 1;
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  const seatQ = (chosenChair.index === 0 || !barber.seats || barber.seats.length <= 1)
+    ? { $or: [{ seatIndex: chosenChair.index }, { seatIndex: null }, { seatIndex: { $exists: false } }] }
+    : { seatIndex: chosenChair.index };
+  const existingActive = await Booking.find({
+    barberId: barber._id,
+    ...seatQ,
+    status: { $in: ["in-progress", "confirmed", "arrived", "pending"] },
+    startTime: { $lt: todayEnd },
+    endTime: { $gt: todayStart },
+  });
+  if (existingActive.length > 0) {
+    const maxQueue = existingActive.reduce((m, b) => Math.max(m, b.queuePosition || 0), 0);
+    queuePosition = Math.max(existingActive.length + 1, maxQueue + 1);
+  }
+
+  const finalSeatIndex = chosenChair.index;
+  const finalSeatLabel = chosenChair.label || `Chair ${chosenChair.index + 1}`;
+
+  const displayName = (customerName && customerName.trim()) 
+    ? customerName.trim() 
+    : `Walk-In Client`;
+
   const booking = new Booking({
     barberId: barber._id,
     serviceIds,
-    startTime: start,
-    endTime: end,
+    startTime: chosenStartTime,
+    endTime: chosenEndTime,
     expectedDuration: totalDuration,
-    status: "in-progress",
+    status: "confirmed",
     isWalkIn: true,
-    guestName: customerName || "Walk-In",
+    guestName: displayName,
     guestPhone: customerPhone || "",
-    seatIndex: suggestion.seatIndex,
-    seatLabel: suggestion.seatLabel,
-    queuePosition: suggestion.addToQueue ? suggestion.queuePosition : 0,
-    startedAt: new Date(),
+    seatIndex: finalSeatIndex,
+    seatLabel: finalSeatLabel,
+    queuePosition: queuePosition,
+    startedAt: null,
     verificationPin: "WALK",
+    isOtpVerified: true,
   });
   await booking.save();
   await booking.populate("serviceIds");
-  
+
   await AuditLog.create({
     actionType: "Walk-In Created",
     entityId: booking._id,
     entityModel: "Booking",
     actorId: req.user._id,
     actorModel: "Barber",
-    details: { name: customerName }
+    details: { name: displayName, chair: finalSeatLabel, status, startTime: chosenStartTime, duration: totalDuration }
   });
 
-  if (suggestion.seatIndex !== null && suggestion.seatIndex !== undefined) {
-    const seat = barber.seats.find(s => s.index === suggestion.seatIndex);
-    if (seat) {
-      seat.isAvailable = false;
-      seat.occupiedUntil = new Date(booking.startedAt.getTime() + totalDuration * 60000);
-      await barber.save();
-    }
-  }
+  // CRITICAL: Enrich barber live seats so chair immediately updates with timing (occupiedUntil & freeInMinutes)
+  const enrichedSeats = await enrichBarberSeats(barber);
+  barber.seats = enrichedSeats.map(s => ({
+    index: s.index,
+    label: s.label,
+    isAvailable: s.isAvailable,
+    status: s.status,
+    occupiedUntil: s.occupiedUntil ? new Date(s.occupiedUntil) : null,
+  }));
+  await barber.save();
 
   const io = req.app.get("io");
   if (io) {
+    io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: enrichedSeats });
+    io.emit(`shop_${barber._id.toString()}_seats`, { seats: enrichedSeats });
     io.to(`barber_${barber._id.toString()}`).emit("queueUpdated");
-    io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: barber.seats });
   }
   
-  res.json({ message: "Walk-in added", booking: formatBooking(booking) });
+  res.json({ message: "Walk-in added", booking: formatBooking(booking), seats: enrichedSeats });
 }
 
 async function reschedule(req, res) {
@@ -1258,6 +1874,7 @@ async function cancel(req, res) {
       return res.status(400).json({ error: "Cannot cancel an active or completed booking." });
   }
 
+  const isCustomer = booking.customerId && booking.customerId.toString() === req.user._id.toString();
   booking.status = "cancelled";
   booking.queuePosition = 0;
   booking.verificationPin = "";
@@ -1266,38 +1883,119 @@ async function cancel(req, res) {
       booking.cancellationReason = parsed.data.reason;
   }
   await booking.save();
+  await booking.populate("serviceIds");
   
   await AuditLog.create({
     actionType: "Booking Cancelled",
     entityId: booking._id,
     entityModel: "Booking",
     actorId: req.user._id,
-    actorModel: "User",
+    actorModel: isCustomer ? "User" : "Barber",
     details: { reason: booking.cancellationReason }
   });
 
+  const barber = await Barber.findById(booking.barberId);
+  const customer = await User.findById(booking.customerId);
+  const customerName = customer?.name || req.user?.name || "Customer";
+  const serviceNames = (booking.serviceIds || []).map(s => s && s.name ? s.name : s).filter(Boolean).join(", ");
   const io = req.app.get("io");
-  if (io) {
-    if (booking.customerId) io.to(`user_${booking.customerId.toString()}`).emit("bookingUpdated", { bookingId: booking._id });
-    const barber = await Barber.findById(booking.barberId);
-    if(barber) {
-        const { enrichBarberSeats } = require("../utils/barberSeats");
-        const enrichedSeats = await enrichBarberSeats(barber);
-        barber.seats = enrichedSeats.map(s => ({
-          index: s.index,
-          label: s.label,
-          isAvailable: s.isAvailable,
-          status: s.status,
-          occupiedUntil: s.occupiedUntil ? new Date(s.occupiedUntil) : null,
-        }));
-        await barber.save();
 
-        io.to(`user_${barber.userId.toString()}`).emit("bookingUpdated", { bookingId: booking._id });
+  if (isCustomer && barber && barber.userId) {
+    const notifTitle = "Booking Cancelled by Customer ❌";
+    const notifBody = `${customerName} cancelled their booking${serviceNames ? ` for: ${serviceNames}` : ""}.`;
+
+    await Notification.create({
+      userId: barber.userId,
+      title: notifTitle,
+      body: notifBody,
+      type: "booking_cancelled",
+      data: {
+        bookingId: booking._id,
+        type: "booking_cancelled",
+        status: "cancelled",
+        customerName,
+        serviceNames,
+        shopName: barber.shopName,
+      }
+    }).catch(err => console.error("Notification create error:", err));
+
+    if (io) {
+      const partnerPayload = {
+        bookingId: booking._id,
+        barberId: barber._id,
+        status: "cancelled",
+        title: notifTitle,
+        message: notifBody,
+        type: "booking_cancelled",
+        customerName,
+        serviceNames,
+        shopName: barber.shopName,
+      };
+      io.to(`user_${barber.userId.toString()}`).emit("bookingUpdated", partnerPayload);
+      io.to(`user_${barber.userId.toString()}`).emit("bookingCancelled", partnerPayload);
+      io.to(`user_${barber.userId.toString()}`).emit("notification", {
+        title: notifTitle,
+        body: notifBody,
+        data: partnerPayload,
+      });
+      io.to(`barber_${barber._id.toString()}`).emit("bookingUpdated", partnerPayload);
+      io.to(`barber_${barber._id.toString()}`).emit("bookingCancelled", partnerPayload);
+    }
+  } else if (!isCustomer && booking.customerId) {
+    const notifTitle = "Booking Cancelled ⚠️";
+    const notifBody = barber ? `Your booking at ${barber.shopName} has been cancelled.` : "Your booking is cancelled.";
+    await Notification.create({
+      userId: booking.customerId,
+      title: notifTitle,
+      body: notifBody,
+      type: "booking_status",
+      data: { bookingId: booking._id, status: "cancelled" }
+    }).catch(e => console.error(e));
+
+    if (io) {
+      io.to(`user_${booking.customerId.toString()}`).emit("bookingUpdated", {
+        bookingId: booking._id,
+        barberId: barber?._id,
+        status: "cancelled",
+        title: notifTitle,
+        message: notifBody,
+      });
+    }
+  }
+
+  if (io && isCustomer && booking.customerId) {
+    io.to(`user_${booking.customerId.toString()}`).emit("bookingUpdated", {
+      bookingId: booking._id,
+      barberId: barber?._id,
+      status: "cancelled",
+      title: "Booking Cancelled",
+      message: "Your booking has been cancelled."
+    });
+  }
+
+  if(barber) {
+      const { enrichBarberSeats } = require("../utils/barberSeats");
+      const enrichedSeats = await enrichBarberSeats(barber);
+      barber.seats = enrichedSeats.map(s => ({
+        index: s.index,
+        label: s.label,
+        isAvailable: s.isAvailable,
+        status: s.status,
+        occupiedUntil: s.occupiedUntil ? new Date(s.occupiedUntil) : null,
+      }));
+      await barber.save();
+
+      if (io) {
         io.to(`barber_${barber._id.toString()}`).emit("queueUpdated");
         io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: enrichedSeats });
         io.emit(`shop_${barber._id.toString()}_seats`, { seats: enrichedSeats });
-    }
+      }
   }
+
+  if (io) {
+    await activateNextBookingInQueue(booking.barberId, io);
+  }
+
   res.json({ message: "Cancelled successfully", booking: formatBooking(booking) });
 }
 
@@ -1312,5 +2010,5 @@ async function slotAlternatives(req, res) {
 }
 
 module.exports = {
-  create, listMine, listForBarber, patch, availableSlots, verifyOtp, generateCompletionOtp, verifyCompletionOtp, lockSlot, walkIn, slotAlternatives, getUnifiedQueue, reschedule, cancel
+  create, listMine, listForBarber, patch, availableSlots, generateCheckinOtp, verifyOtp, generateCompletionOtp, verifyCompletionOtp, lockSlot, walkIn, slotAlternatives, getUnifiedQueue, reschedule, cancel, activateNextBookingInQueue
 };

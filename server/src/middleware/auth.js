@@ -13,6 +13,27 @@ async function authRequired(req, res, next) {
     if (!user) {
       return res.status(401).json({ error: "User not found" });
     }
+    if (user.isBlocked && user.blockedUntil) {
+      if (new Date(user.blockedUntil) > new Date()) {
+        const untilStr = new Date(user.blockedUntil).toLocaleString("en-GB", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit"
+        });
+        return res.status(403).json({
+          error: `Your account is temporarily suspended until ${untilStr}. Reason: ${user.blockReason || 'Platform policy violation'}`,
+          isBlocked: true,
+          blockedUntil: user.blockedUntil
+        });
+      } else {
+        user.isBlocked = false;
+        user.blockedUntil = null;
+        user.blockReason = "";
+        await user.save();
+      }
+    }
     req.user = user;
     next();
   } catch {

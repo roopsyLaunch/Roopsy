@@ -64,6 +64,8 @@ const tailorOrderSchema = new mongoose.Schema(
     // Stitching Phase
     isStitchingStarted: { type: Boolean, default: false },
     stitchingStartedAt: { type: Date },
+    isStitchingCompleted: { type: Boolean, default: false },
+    stitchingCompletedAt: { type: Date },
     
     // Final Delivery OTP Verification (Finished Order Delivery)
     deliveryOtp: { type: String, default: "" },

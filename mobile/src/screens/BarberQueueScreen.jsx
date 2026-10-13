@@ -59,7 +59,18 @@ export function BarberQueueScreen() {
   const [walkInModalVisible, setWalkInModalVisible] = useState(false);
   const [walkInName, setWalkInName] = useState("");
   const [walkInPhone, setWalkInPhone] = useState("");
+  const [walkInSearch, setWalkInSearch] = useState("");
   const [selectedServices, setSelectedServices] = useState([]);
+
+  const selectedServicesData = services.filter((s) => selectedServices.includes(s.id || s._id));
+  const walkInTotalPrice = selectedServicesData.reduce((sum, s) => sum + (Number(s.price) || 0), 0);
+  const walkInTotalDuration = selectedServicesData.reduce((sum, s) => sum + (Number(s.durationMinutes) || 0), 0);
+
+  const filteredServices = services.filter((s) => {
+    if (!walkInSearch.trim()) return true;
+    const q = walkInSearch.trim().toLowerCase();
+    return (s.name || "").toLowerCase().includes(q) || (s.category || "").toLowerCase().includes(q);
+  });
 
   const [confirmHomeModalVisible, setConfirmHomeModalVisible] = useState(false);
   const [confirmETA, setConfirmETA] = useState("");
@@ -71,6 +82,13 @@ export function BarberQueueScreen() {
   const [activeCompletionBookingId, setActiveCompletionBookingId] = useState(null);
   const [verifyingCompletionOtp, setVerifyingCompletionOtp] = useState(false);
 
+  // Check-in OTP state
+  const [otpModalVisible, setOtpModalVisible] = useState(false);
+  const [otpInput, setOtpInput] = useState("");
+  const [activeBookingId, setActiveBookingId] = useState(null);
+  const [verifyingOtp, setVerifyingOtp] = useState(false);
+  const [generatingOtpBookingId, setGeneratingOtpBookingId] = useState(null);
+
   const loadData = useCallback(async () => {
     try {
       const [qRes, sRes] = await Promise.all([
@@ -78,7 +96,7 @@ export function BarberQueueScreen() {
         api.get("/barbers/me")
       ]);
       setQueue(qRes.data.queue || []);
-      setServices(sRes.data.services || []);
+      setServices((sRes.data.services || []).map((s) => ({ ...s, id: s.id || s._id, _id: s._id || s.id })));
     } catch (e) {
       console.error(e);
     }
@@ -158,13 +176,14 @@ export function BarberQueueScreen() {
     try {
       await api.post("/bookings/walk-in", {
         serviceIds: selectedServices,
-        customerName: walkInName,
-        customerPhone: walkInPhone
+        customerName: (walkInName || "").trim(),
       });
       setWalkInModalVisible(false);
       setWalkInName("");
       setWalkInPhone("");
       setSelectedServices([]);
+      setWalkInSearch("");
+      Alert.alert("Chair Booked! 💈", "Walk-in client successfully booked on chair.");
       await loadData();
     } catch (e) {
       Alert.alert("Error", e?.response?.data?.error || e.message);
@@ -225,7 +244,89 @@ export function BarberQueueScreen() {
     }
   };
 
-  const toggleService = (id) => {
+  const promptVerifyOtp = (bookingId) => {
+    setActiveBookingId(bookingId);
+    setOtpInput("");
+    setOtpModalVisible(true);
+  };
+
+  const handleTriggerCheckinOtp = async (item) => {
+    const bookingId = item.id || item._id;
+    if (item.verificationPin) {
+      promptVerifyOtp(bookingId);
+      return;
+    }
+
+    try {
+      setGeneratingOtpBookingId(bookingId);
+      await api.post(`/bookings/${bookingId}/generate-checkin-otp`);
+      Alert.alert(
+        "OTP Sent to Customer! 🔑",
+        `Check-in OTP code has been generated and sent to ${item.customer?.name || item.guestName || "the customer"}. Please ask customer for the 4-digit code.`
+      );
+      promptVerifyOtp(bookingId);
+      await loadData();
+    } catch (e) {
+      const errMsg = e?.response?.data?.error;
+      Alert.alert(
+        "Queue Order Notice ⏳",
+        typeof errMsg === "string" ? errMsg : (errMsg?.message || "Cannot generate OTP at this time. Earlier bookings must be served first.")
+      );
+    } finally {
+      setGeneratingOtpBookingId(null);
+    }
+  };
+
+  const handleResendOtp = async (bookingId) => {
+    if (!bookingId) return;
+    try {
+      setVerifyingOtp(true);
+      await api.post(`/bookings/${bookingId}/generate-checkin-otp`);
+      Alert.alert("OTP Resent! 🔑", "A new Check-in OTP code has been generated and sent to the customer.");
+      await loadData();
+    } catch (e) {
+      const errMsg = e?.response?.data?.error;
+      Alert.alert(
+        "Resend Error",
+        typeof errMsg === "string" ? errMsg : (errMsg?.message || "Failed to resend OTP.")
+      );
+    } finally {
+      setVerifyingOtp(false);
+    }
+  };
+
+  const submitCheckinOtp = async () => {
+    if (!otpInput || otpInput.trim().length !== 4) {
+      Alert.alert("Invalid Input", "Please enter the 4-digit Check-in OTP code.");
+      return;
+    }
+    const targetBooking = queue.find(i => (i.id || i._id) === activeBookingId);
+    if (targetBooking && targetBooking.status === "cancelled") {
+      setOtpModalVisible(false);
+      return Alert.alert("Booking Cancelled", "This booking is cancelled. OTP verification cannot be performed.");
+    }
+    setVerifyingOtp(true);
+    try {
+      await api.post("/bookings/verify-otp", {
+        bookingId: activeBookingId,
+        otp: otpInput.trim()
+      });
+      setOtpModalVisible(false);
+      setOtpInput("");
+      setActiveBookingId(null);
+      Alert.alert("Check-in Verified! ✂️", "Customer OTP verified successfully. Haircut service is now in progress!");
+      await loadData();
+    } catch (e) {
+      const err = e?.response?.data?.error;
+      Alert.alert("Verification Error", typeof err === "string" ? err : "Failed to verify customer OTP. Please check the code and try again.");
+    } finally {
+      setVerifyingOtp(false);
+    }
+  };
+
+  const toggleService = (serviceOrId) => {
+    const id = typeof serviceOrId === "object" ? (serviceOrId.id || serviceOrId._id) : serviceOrId;
+    if (!id) return;
     setSelectedServices(prev => 
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     );
@@ -245,6 +346,16 @@ export function BarberQueueScreen() {
   const renderItem = ({ item }) => {
     const isWalkIn = item.isWalkIn;
     const name = item.customer?.name || item.guestName || "Customer";
+    const customerAddrObj = (typeof item.customer?.address === 'object' && item.customer?.address) || 
+                            (typeof item.customerId?.address === 'object' && item.customerId?.address) || {};
+    const custAddress = item.customerAddress ||
+      item.homeServiceAddress ||
+      item.customer?.formattedAddress ||
+      [customerAddrObj.line1, customerAddrObj.city, customerAddrObj.pincode].filter(Boolean).join(", ") ||
+      (customerAddrObj.line1 ? `${customerAddrObj.line1}, ${customerAddrObj.city || ""}`.trim() : "") ||
+      (item.notes && item.notes.length > 3 ? item.notes : "") ||
+      "";
+    const custLocation = item.customerLocation || item.homeServiceLocation || (customerAddrObj.lat && customerAddrObj.lng ? { lat: customerAddrObj.lat, lng: customerAddrObj.lng } : null);
     
     return (
       <View style={[styles.card, item.status === 'in-progress' && styles.cardActive]}>
@@ -262,9 +373,9 @@ export function BarberQueueScreen() {
                      <Ionicons name="home" size={12} color="#6d28d9" style={{ marginRight: 4 }} />
                      <Text style={{ fontSize: 12, fontWeight: "700", color: "#6d28d9" }}>Home Service Request</Text>
                    </View>
-                   {item.status !== "completed" ? (
+                   {item.status !== "completed" && custAddress ? (
                      <Pressable
-                       onPress={() => openMapForNavigation(item.homeServiceAddress, item.homeServiceLocation, `${name}'s Home`)}
+                       onPress={() => openMapForNavigation(custAddress, custLocation, `${name}'s Home`)}
                        style={({ pressed }) => [
                          { backgroundColor: "#ffffff", padding: 8, borderRadius: 8, borderWidth: 1, borderColor: "#d8b4fe", marginTop: 4 },
                          pressed && { opacity: 0.8 }
@@ -278,14 +389,14 @@ export function BarberQueueScreen() {
                          </View>
                        </View>
                        <Text style={{ fontSize: 11, color: "#3b0764", fontWeight: "600" }}>
-                         {item.homeServiceAddress || "Tap to view location"}
+                         {custAddress}
                        </Text>
                      </Pressable>
                    ) : (
                      <View style={{ backgroundColor: "#ffffff", padding: 8, borderRadius: 8, borderWidth: 1, borderColor: "#e2e8f0", marginTop: 4 }}>
                        <Text style={{ fontSize: 10, color: "#64748b", fontWeight: "800", textTransform: "uppercase", marginBottom: 2 }}>Service Address</Text>
                        <Text style={{ fontSize: 11, color: "#334155", fontWeight: "500" }}>
-                         {item.homeServiceAddress || "—"}
+                         {custAddress || "—"}
                        </Text>
                      </View>
                    )}
@@ -298,27 +409,32 @@ export function BarberQueueScreen() {
                  </View>
                ) : (
                   <View style={{ marginTop: 6 }}>
-                    <View style={{ backgroundColor: "#f0fdf4", padding: 8, borderRadius: 8, borderWidth: 1, borderColor: "#bbf7d0", flexDirection: "row", alignItems: "center", alignSelf: "flex-start" }}>
+                    <View style={{ backgroundColor: "#f0fdf4", paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: "#bbf7d0", flexDirection: "row", alignItems: "center", alignSelf: "flex-start" }}>
                       <Ionicons name="storefront" size={12} color="#16a34a" style={{ marginRight: 4 }} />
                       <Text style={{ fontSize: 12, fontWeight: "700", color: "#16a34a" }}>Shop Service</Text>
                     </View>
-                    {item.homeServiceAddress ? (
-                      <View style={{ marginTop: 4, backgroundColor: "#f8fafc", padding: 6, borderRadius: 6, borderWidth: 1, borderColor: "#e2e8f0" }}>
-                        <Text style={{ fontSize: 11, color: "#334155", fontWeight: "500" }}>
-                          <Text style={{ fontWeight: "700", color: "#64748b" }}>📍 Customer Address: </Text>
-                          {item.homeServiceAddress}
+                    {custAddress ? (
+                      <View style={{ backgroundColor: "#ffffff", padding: 7, borderRadius: 8, borderWidth: 1, borderColor: "#bbf7d0", marginTop: 4 }}>
+                        <Text style={{ fontSize: 10, color: "#15803d", fontWeight: "800", textTransform: "uppercase", marginBottom: 2 }}>📍 Booked From (Customer Area):</Text>
+                        <Text style={{ fontSize: 11, color: "#1e293b", fontWeight: "600" }} numberOfLines={2}>
+                          {custAddress}
                         </Text>
                       </View>
                     ) : null}
                   </View>
-                )}
+               )}
              </View>
            </View>
-             <View style={{alignItems:"flex-end", maxWidth: 100}}>
+           <View style={{alignItems:"flex-end", maxWidth: 100}}>
              {getStatusBadge(item.status)}
              <Text style={styles.timeText}>{formatDateLabel(item.arrivalTime || item.startTime)}</Text>
-             {!item.isHomeService && (item.status === 'pending' || item.status === 'confirmed') && (
+             {!item.isHomeService && item.status === 'confirmed' && (
                <LiveCountdown targetDate={item.arrivalTime || item.startTime} />
+             )}
+             {!item.isHomeService && item.status === 'pending' && (
+               <View style={[styles.countdownBadge, { backgroundColor: "#fef3c7" }]}>
+                 <Text style={[styles.countdownText, { color: "#b45309" }]}>Pending</Text>
+               </View>
              )}
              {item.isHomeService && item.status === 'confirmed' && item.barberArrivalTime && (
                <LiveCountdown targetDate={item.barberArrivalTime} />
@@ -330,19 +446,76 @@ export function BarberQueueScreen() {
 
         <View style={styles.actionRow}>
           {item.status === 'pending' && (
-            <Pressable style={[styles.btn, {backgroundColor:"#0ea5e9"}]} onPress={() => setStatus(item.id, "confirmed", item.startTime, item.isHomeService)}>
+            <Pressable style={[styles.btn, {backgroundColor:"#0ea5e9"}]} onPress={() => setStatus(item.id, "confirmed", item.arrivalTime || item.startTime, item.isHomeService)}>
               <Text style={styles.btnText}>Confirm</Text>
             </Pressable>
           )}
           {item.status === 'confirmed' && (
-            <Pressable style={[styles.btn, {backgroundColor:"#0ea5e9"}]} onPress={() => setStatus(item.id, "arrived")}>
-              <Text style={styles.btnText}>Mark Arrived</Text>
-            </Pressable>
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              {item.isWalkIn ? (
+                <Pressable
+                  style={[styles.btn, { backgroundColor: "#6d28d9", flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 }]}
+                  onPress={() => setStatus(item.id, "in-progress")}
+                >
+                  <Ionicons name="play" size={14} color="#fff" />
+                  <Text style={styles.btnText}>Start Service ✂️</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={[
+                    styles.btn,
+                    { 
+                      backgroundColor: item.verificationPin ? "#0f172a" : "#7c3aed", 
+                      flex: 1, 
+                      flexDirection: "row", 
+                      alignItems: "center", 
+                      justifyContent: "center", 
+                      gap: 6 
+                    },
+                    generatingOtpBookingId === (item.id || item._id) && { opacity: 0.7 }
+                  ]}
+                  onPress={() => handleTriggerCheckinOtp(item)}
+                  disabled={generatingOtpBookingId === (item.id || item._id)}
+                >
+                  {generatingOtpBookingId === (item.id || item._id) ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <>
+                      <Ionicons name="key" size={14} color="#fff" />
+                      <Text style={styles.btnText}>Enter OTP ✂️</Text>
+                    </>
+                  )}
+                </Pressable>
+              )}
+              <Pressable style={[styles.btn, {backgroundColor:"#ef4444", paddingHorizontal: 12}]} onPress={() => setStatus(item.id, "cancelled")}>
+                <Text style={styles.btnText}>Cancel</Text>
+              </Pressable>
+            </View>
           )}
           {item.status === 'arrived' && (
-            <Pressable style={[styles.btn, {backgroundColor:"#10b981"}]} onPress={() => setStatus(item.id, "in-progress")}>
-              <Text style={styles.btnText}>Start Service</Text>
-            </Pressable>
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              <Pressable
+                style={[
+                  styles.btn,
+                  { backgroundColor: item.verificationPin ? "#0f172a" : "#7c3aed", flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+                  generatingOtpBookingId === (item.id || item._id) && { opacity: 0.7 }
+                ]}
+                onPress={() => handleTriggerCheckinOtp(item)}
+                disabled={generatingOtpBookingId === (item.id || item._id)}
+              >
+                {generatingOtpBookingId === (item.id || item._id) ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <>
+                    <Ionicons name="key" size={14} color="#fff" />
+                    <Text style={styles.btnText}>Enter OTP ✂️</Text>
+                  </>
+                )}
+              </Pressable>
+              <Pressable style={[styles.btn, {backgroundColor:"#ef4444", paddingHorizontal: 12}]} onPress={() => setStatus(item.id, "cancelled")}>
+                <Text style={styles.btnText}>Cancel</Text>
+              </Pressable>
+            </View>
           )}
           {item.status === 'in-progress' && (
             <Pressable style={[styles.btn, {backgroundColor:"#16a34a"}]} onPress={() => handleStartCompletion(item)}>
@@ -407,30 +580,133 @@ export function BarberQueueScreen() {
         }
       />
 
-      <Modal visible={walkInModalVisible} animationType="slide" transparent>
+      <Modal visible={walkInModalVisible} animationType="slide" transparent onRequestClose={() => setWalkInModalVisible(false)}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>New Walk-In</Text>
-            <TextInput style={styles.input} placeholder="Guest Name (Optional)" value={walkInName} onChangeText={setWalkInName} />
-            <TextInput style={styles.input} placeholder="Guest Phone (Optional)" value={walkInPhone} onChangeText={setWalkInPhone} keyboardType="phone-pad" />
-            
-            <Text style={styles.subTitle}>Select Services</Text>
-            <ScrollView style={styles.serviceList}>
-              {services.map(s => (
-                <Pressable key={s.id} style={[styles.serviceRow, selectedServices.includes(s.id) && styles.serviceRowActive]} onPress={() => toggleService(s.id)}>
-                  <Text style={[styles.serviceRowText, selectedServices.includes(s.id) && {color:"#fff"}]}>{s.name} ({s.durationMinutes}m)</Text>
-                  <Text style={[styles.serviceRowText, selectedServices.includes(s.id) && {color:"#fff"}]}>₹{s.price}</Text>
-                </Pressable>
-              ))}
+          <View style={[styles.modalContent, { maxHeight: "90%", padding: 20 }]}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: "#ede9fe", justifyContent: "center", alignItems: "center" }}>
+                  <Text style={{ fontSize: 20 }}>💈</Text>
+                </View>
+                <View>
+                  <Text style={styles.modalTitle}>New Walk-In Customer</Text>
+                  <Text style={{ fontSize: 12, color: "#64748b" }}>Select customer service and add to queue</Text>
+                </View>
+              </View>
+              <Pressable onPress={() => setWalkInModalVisible(false)} hitSlop={8}>
+                <Ionicons name="close-circle" size={26} color="#cbd5e1" />
+              </Pressable>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={{ backgroundColor: "#f8fafc", padding: 14, borderRadius: 14, borderWidth: 1, borderColor: "#e2e8f0", marginBottom: 14 }}>
+                <Text style={{ fontSize: 11, fontWeight: "800", color: "#64748b", marginBottom: 8 }}>1. CUSTOMER NAME</Text>
+                <TextInput
+                  style={[styles.input, { backgroundColor: "#fff", marginBottom: 0 }]}
+                  placeholder="Enter Customer Name (e.g. Ramesh)"
+                  value={walkInName}
+                  onChangeText={setWalkInName}
+                  placeholderTextColor="#94a3b8"
+                />
+              </View>
+
+              <View style={{ backgroundColor: "#f8fafc", padding: 14, borderRadius: 14, borderWidth: 1, borderColor: "#e2e8f0" }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: "#64748b" }}>2. SELECT SERVICES</Text>
+                  {selectedServices.length > 0 && (
+                    <View style={{ backgroundColor: "#6d28d9", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 }}>
+                      <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>{selectedServices.length} Selected</Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Search */}
+                <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#fff", borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 10, paddingHorizontal: 10, marginBottom: 10 }}>
+                  <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 6 }} />
+                  <TextInput
+                    style={{ flex: 1, height: 38, fontSize: 13, color: "#0f172a" }}
+                    placeholder="Search services..."
+                    placeholderTextColor="#94a3b8"
+                    value={walkInSearch}
+                    onChangeText={setWalkInSearch}
+                  />
+                  {walkInSearch.length > 0 && (
+                    <Pressable onPress={() => setWalkInSearch("")} hitSlop={6}>
+                      <Ionicons name="close-circle" size={16} color="#94a3b8" />
+                    </Pressable>
+                  )}
+                </View>
+
+                <View style={{ gap: 8 }}>
+                  {filteredServices.length === 0 ? (
+                    <Text style={{ textAlign: "center", color: "#94a3b8", paddingVertical: 14, fontSize: 13 }}>
+                      No services found.
+                    </Text>
+                  ) : (
+                    filteredServices.map(s => {
+                      const sid = s.id || s._id;
+                      const isSelected = selectedServices.includes(sid);
+                      return (
+                        <Pressable
+                          key={sid}
+                          style={[
+                            styles.serviceRow,
+                            isSelected && styles.serviceRowActive,
+                            { paddingVertical: 10, paddingHorizontal: 12, alignItems: "center" }
+                          ]}
+                          onPress={() => toggleService(sid)}
+                        >
+                          <Ionicons
+                            name={isSelected ? "checkmark-circle" : "ellipse-outline"}
+                            size={20}
+                            color={isSelected ? "#fff" : "#94a3b8"}
+                            style={{ marginRight: 8 }}
+                          />
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.serviceRowText, isSelected && { color: "#fff", fontWeight: "700" }]}>
+                              {s.name}
+                            </Text>
+                            <Text style={[{ fontSize: 11, color: "#64748b" }, isSelected && { color: "#ddd6fe" }]}>
+                              ⏱️ {s.durationMinutes || 30}m {s.category ? `• ${s.category}` : ""}
+                            </Text>
+                          </View>
+                          <Text style={[styles.serviceRowText, { fontWeight: "800" }, isSelected && { color: "#fff" }]}>
+                            ₹{s.price || 0}
+                          </Text>
+                        </Pressable>
+                      );
+                    })
+                  )}
+                </View>
+              </View>
             </ScrollView>
-            
-            <View style={styles.modalActions}>
-              <Pressable style={styles.cancelBtn} onPress={() => setWalkInModalVisible(false)}>
-                <Text style={styles.cancelBtnText}>Cancel</Text>
-              </Pressable>
-              <Pressable style={styles.submitBtn} onPress={handleWalkIn}>
-                <Text style={styles.submitBtnText}>Add to Queue</Text>
-              </Pressable>
+
+            {/* Live Pricing Summary */}
+            <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#f1f5f9" }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12, backgroundColor: "#f8fafc", padding: 10, borderRadius: 10 }}>
+                <View>
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#64748b" }}>TOTAL ESTIMATE</Text>
+                  <Text style={{ fontSize: 12, color: "#475569" }}>
+                    {selectedServices.length} services • ~{walkInTotalDuration} mins
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 18, fontWeight: "900", color: "#6d28d9" }}>
+                  ₹{walkInTotalPrice}
+                </Text>
+              </View>
+
+              <View style={styles.modalActions}>
+                <Pressable style={styles.cancelBtn} onPress={() => setWalkInModalVisible(false)}>
+                  <Text style={styles.cancelBtnText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.submitBtn, selectedServices.length === 0 && { backgroundColor: "#cbd5e1" }]}
+                  onPress={handleWalkIn}
+                  disabled={selectedServices.length === 0}
+                >
+                  <Text style={styles.submitBtnText}>Add to Queue</Text>
+                </Pressable>
+              </View>
             </View>
           </View>
         </View>
@@ -464,6 +740,50 @@ export function BarberQueueScreen() {
                 }
               }}>
                 <Text style={styles.submitBtnText}>Confirm Booking</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Check-in OTP Modal */}
+      <Modal visible={otpModalVisible} transparent animationType="fade" onRequestClose={() => setOtpModalVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", padding: 20 }}>
+          <View style={{ backgroundColor: "#fff", borderRadius: 24, padding: 24, width: "100%", maxWidth: 340, alignItems: "center" }}>
+            <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: "#ede9fe", justifyContent: "center", alignItems: "center", marginBottom: 12 }}>
+              <Ionicons name="key" size={28} color="#6d28d9" />
+            </View>
+            <Text style={{ fontSize: 20, fontWeight: "800", color: "#0f172a", marginBottom: 8 }}>Verify Customer OTP</Text>
+            <Text style={{ fontSize: 14, color: "#64748b", textAlign: "center", marginBottom: 16, lineHeight: 20 }}>
+              Enter the 4-digit PIN shown on the customer's app to start the haircut service.
+            </Text>
+
+            <TextInput
+              style={{ width: "100%", backgroundColor: "#f8fafc", borderWidth: 1.5, borderColor: "#a78bfa", borderRadius: 16, padding: 16, fontSize: 26, fontWeight: "800", textAlign: "center", letterSpacing: 8, color: "#4c1d95", marginBottom: 12 }}
+              placeholder="0000"
+              keyboardType="number-pad"
+              maxLength={4}
+              value={otpInput}
+              onChangeText={setOtpInput}
+              editable={!verifyingOtp}
+            />
+
+            <Pressable
+              onPress={() => handleResendOtp(activeBookingId)}
+              disabled={verifyingOtp}
+              style={{ marginBottom: 18 }}
+            >
+              <Text style={{ fontSize: 13, color: "#6d28d9", fontWeight: "600", textAlign: "center" }}>
+                Didn't receive code? Resend OTP
+              </Text>
+            </Pressable>
+
+            <View style={{ flexDirection: "row", width: "100%", gap: 12 }}>
+              <Pressable style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: "#f1f5f9", alignItems: "center" }} onPress={() => setOtpModalVisible(false)} disabled={verifyingOtp}>
+                <Text style={{ fontSize: 15, fontWeight: "700", color: "#64748b" }}>Cancel</Text>
+              </Pressable>
+              <Pressable style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: "#6d28d9", alignItems: "center" }} onPress={submitCheckinOtp} disabled={verifyingOtp}>
+                {verifyingOtp ? <ActivityIndicator color="#fff" /> : <Text style={{ fontSize: 15, fontWeight: "700", color: "#fff" }}>Verify & Start</Text>}
               </Pressable>
             </View>
           </View>

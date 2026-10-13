@@ -10,8 +10,6 @@ function buildSeats(seatCount) {
 function availableSeatSlots(barber, startTimeStr = null) {
   if (barber.seats && barber.seats.length > 0) {
     return barber.seats.filter((s) => {
-      // If it's not available AND has no occupiedUntil, it might be permanently disabled.
-      // Otherwise, it's either fully available or temporarily occupied (which DB overlap logic handles).
       if (!s.isAvailable && !s.occupiedUntil) {
         return false;
       }
@@ -49,17 +47,34 @@ async function enrichBarberSeats(barber) {
     chairBookings[s.index] = [];
   }
 
+  const defaultChairIndex = rawSeats[0]?.index ?? 0;
+
   for (const b of activeBookings) {
     let bStart = new Date(b.startTime);
     let bEnd = new Date(b.endTime);
-    if (b.status === "in-progress" && b.startedAt) {
-      bEnd = new Date(new Date(b.startedAt).getTime() + (b.expectedDuration || 30) * 60000);
+
+    if (b.status === "in-progress") {
+      const sAt = b.startedAt ? new Date(b.startedAt) : bStart;
+      bEnd = new Date(sAt.getTime() + (b.expectedDuration || 30) * 60000);
       if (bEnd < now) bEnd = new Date(now.getTime() + 5 * 60000);
+    } else if (b.isWalkIn || b.status === "confirmed" || b.status === "arrived") {
+      if (bEnd < now) {
+        bEnd = new Date(now.getTime() + (b.expectedDuration || 30) * 60000);
+      }
     }
     const bEndWithBuffer = new Date(bEnd.getTime() + buffer * 60000);
 
-    if (b.seatIndex !== undefined && b.seatIndex !== null && chairBookings[b.seatIndex]) {
-      chairBookings[b.seatIndex].push({
+    let assignedSeatIndex = b.seatIndex;
+    if (assignedSeatIndex === undefined || assignedSeatIndex === null || chairBookings[assignedSeatIndex] === undefined) {
+      assignedSeatIndex = defaultChairIndex;
+      // Auto-heal legacy / unassigned active booking in DB so seatIndex is permanently saved
+      b.seatIndex = assignedSeatIndex;
+      b.seatLabel = rawSeats.find(s => s.index === assignedSeatIndex)?.label || `Chair ${assignedSeatIndex + 1}`;
+      b.save().catch(() => {});
+    }
+
+    if (chairBookings[assignedSeatIndex]) {
+      chairBookings[assignedSeatIndex].push({
         bookingId: b._id,
         start: bStart,
         end: bEnd,
@@ -88,7 +103,6 @@ async function enrichBarberSeats(barber) {
     const activeFuture = bookings.filter((b) => b.endWithBuffer > now);
 
     if (activeFuture.length > 0) {
-      // Find the latest completion time across all queued bookings on this chair
       let latestEnd = now;
       for (const b of activeFuture) {
         if (b.endWithBuffer > latestEnd) {
@@ -135,9 +149,13 @@ async function calculateNextChairFreeTime(barber, seatIndex, requestedStartTime,
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
   const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
+  const seatQuery = (seatIndex === 0 || !barber.seats || barber.seats.length <= 1)
+    ? { $or: [{ seatIndex: seatIndex }, { seatIndex: null }, { seatIndex: { $exists: false } }] }
+    : { seatIndex: seatIndex };
+
   const existingBookings = await Booking.find({
     barberId: barber._id,
-    seatIndex: seatIndex,
+    ...seatQuery,
     status: { $in: ["confirmed", "arrived", "in-progress", "pending"] },
     startTime: { $lt: todayEnd },
     endTime: { $gt: todayStart },
@@ -148,20 +166,19 @@ async function calculateNextChairFreeTime(barber, seatIndex, requestedStartTime,
   for (const b of existingBookings) {
     let bStart = new Date(b.startTime);
     let bEnd = new Date(b.endTime);
-    if (b.status === "in-progress" && b.startedAt) {
-      bEnd = new Date(new Date(b.startedAt).getTime() + (b.expectedDuration || 30) * 60000);
+
+    if (b.status === "in-progress") {
+      const sAt = b.startedAt ? new Date(b.startedAt) : bStart;
+      bEnd = new Date(sAt.getTime() + (b.expectedDuration || 30) * 60000);
       if (bEnd < now) bEnd = new Date(now.getTime() + 5 * 60000);
+    } else {
+      if (bEnd < now) {
+        bEnd = new Date(now.getTime() + (b.expectedDuration || 30) * 60000);
+      }
     }
     const bEndWithBuffer = new Date(bEnd.getTime() + buffer * 60000);
 
     if (candidateStart < bEndWithBuffer) {
-      // Check if candidate fits completely BEFORE this booking starts
-      const candidateEnd = new Date(candidateStart.getTime() + durationMinutes * 60000);
-      if (candidateEnd <= bStart) {
-        // Fits before this booking!
-        break;
-      }
-      // Otherwise candidate must move to after this booking finishes
       candidateStart = new Date(bEndWithBuffer);
     }
   }
@@ -174,4 +191,3 @@ async function calculateNextChairFreeTime(barber, seatIndex, requestedStartTime,
 }
 
 module.exports = { buildSeats, availableSeatSlots, enrichBarberSeats, calculateNextChairFreeTime };
-

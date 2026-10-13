@@ -5,7 +5,6 @@ import { useFocusEffect } from "@react-navigation/native";
 import { api } from "../../api/client";
 import { getCurrentGPSLocation } from "../../services/locationService";
 import { LinearGradient } from "expo-linear-gradient";
-import { NotificationBell } from "../../components/NotificationModal";
 
 const { width } = Dimensions.get("window");
 const FALLBACK_IMAGE = "https://images.unsplash.com/photo-1585747860715-2ba37e788b70?w=500&auto=format&fit=crop&q=80";
@@ -117,7 +116,6 @@ export function BarberListScreen({ navigation }) {
             <Text style={styles.headerSubtitle}>Find & book the best barber near you</Text>
           </View>
         </View>
-        <NotificationBell style={styles.notifBtn} size={24} color="#0f172a" badgeColor="#2563eb" />
       </View>
     </View>
   );

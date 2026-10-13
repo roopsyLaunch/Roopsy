@@ -5,7 +5,6 @@ import { useFocusEffect } from "@react-navigation/native";
 import { api } from "../../api/client";
 import { getSocket } from "../../api/socket";
 import { LinearGradient } from "expo-linear-gradient";
-import { NotificationBell } from "../../components/NotificationModal";
 import { isTailorShopOpen } from "../../services/shopStatusService";
 
 const { width } = Dimensions.get("window");
@@ -146,7 +145,6 @@ export function TailorListScreen({ navigation }) {
             <Text style={styles.headerSubtitle}>Find & book the best tailor near you</Text>
           </View>
         </View>
-        <NotificationBell style={styles.notifBtn} size={24} color="#0f172a" badgeColor="#0d9488" />
       </View>
     </View>
   );

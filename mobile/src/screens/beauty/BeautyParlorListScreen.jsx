@@ -4,7 +4,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { api } from "../../api/client";
 import { LinearGradient } from "expo-linear-gradient";
-import { NotificationBell } from "../../components/NotificationModal";
 
 const { width } = Dimensions.get("window");
 const FALLBACK_IMAGE = "https://images.unsplash.com/photo-1560066984-138dadb4c035?w=500&auto=format&fit=crop&q=80";
@@ -121,7 +120,6 @@ export function BeautyParlorListScreen({ navigation }) {
             <Text style={styles.headerSubtitle}>Find & book the best beauty parlour near you</Text>
           </View>
         </View>
-        <NotificationBell style={styles.notifBtn} size={24} color="#0f172a" badgeColor="#db2777" />
       </View>
     </View>
   );

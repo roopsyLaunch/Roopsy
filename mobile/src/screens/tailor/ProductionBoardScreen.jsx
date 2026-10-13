@@ -77,11 +77,12 @@ export function ProductionBoardScreen({ navigation }) {
       socket.emit("joinUserRoom", user.id);
       socket.on("tailorNewOrder", loadOrders);
       socket.on("bookingUpdated", loadOrders);
+      socket.on("bookingCancelled", loadOrders);
 
       return () => {
-        socket.emit("leaveUserRoom", user.id);
         socket.off("tailorNewOrder", loadOrders);
         socket.off("bookingUpdated", loadOrders);
+        socket.off("bookingCancelled", loadOrders);
       };
     }
   }, [user, loadOrders]);

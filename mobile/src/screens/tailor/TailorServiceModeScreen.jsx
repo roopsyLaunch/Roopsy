@@ -40,7 +40,8 @@ export function TailorServiceModeScreen({ route, navigation }) {
   const homeFee = Math.max(0, Number(currentTailor?.homeServiceFee ?? currentTailor?.visitFee) || 0);
 
   const activeFee = serviceMode === "home" ? homeFee : 0;
-  const servicesTotal = services.reduce((acc, s) => acc + (s.price || 0), 0);
+  const servicesTotal = services.reduce((acc, s) => acc + (s.price || 0) * (s.quantity || 1), 0);
+  const totalPieces = services.reduce((acc, s) => acc + (s.quantity || 1), 0);
   const grandTotal = servicesTotal + activeFee;
 
   const handleFetchGPS = async () => {
@@ -119,7 +120,7 @@ export function TailorServiceModeScreen({ route, navigation }) {
           serviceId: s._id || s.id, 
           name: s.name, 
           price: s.price, 
-          quantity: 1,
+          quantity: s.quantity || 1,
           serviceMode: s.serviceMode || (hasPremiumService ? "premium" : "shop"),
           completionTime: s.completionTime || (hasPremiumService ? premiumCompTime : "")
         })),
@@ -174,6 +175,32 @@ export function TailorServiceModeScreen({ route, navigation }) {
       
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         
+        {/* Selected Services & Stitching Quantity Breakdown */}
+        <View style={{ backgroundColor: "#ffffff", padding: 14, borderRadius: 16, marginBottom: 16, borderWidth: 1, borderColor: "#e2e8f0" }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10, borderBottomWidth: 1, borderBottomColor: "#f1f5f9", paddingBottom: 8 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Ionicons name="receipt-outline" size={16} color="#0d9488" />
+              <Text style={{ fontSize: 13, fontWeight: "800", color: "#0f172a" }}>Selected Stitching Services</Text>
+            </View>
+            <View style={{ backgroundColor: "#ccfbf1", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+              <Text style={{ fontSize: 11, fontWeight: "800", color: "#0f766e" }}>{totalPieces} Pcs Total</Text>
+            </View>
+          </View>
+          {services.map((s, idx) => {
+            const qty = s.quantity || 1;
+            return (
+              <View key={idx} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginVertical: 4 }}>
+                <Text style={{ fontSize: 13, color: "#334155", fontWeight: "600", flex: 1 }} numberOfLines={1}>
+                  • {s.name} <Text style={{ color: "#0d9488", fontWeight: "800" }}>× {qty} pcs</Text>
+                </Text>
+                <Text style={{ fontSize: 13, color: "#0f172a", fontWeight: "700" }}>
+                  ₹{(s.price || 0) * qty}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+
         <Text style={styles.sectionTitle}>Select Booking Option</Text>
 
         {/* Option 1: Shop Service */}
@@ -227,10 +254,13 @@ export function TailorServiceModeScreen({ route, navigation }) {
 
         {/* Address & Auto Address (GPS) Details */}
         <View style={styles.homeDetailsContainer}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <Text style={[styles.label, { marginBottom: 0 }]}>
-              {serviceMode === "home" ? "Full Delivery / Doorstep Address (Required)" : "Your Address / Delivery Location (Optional)"}
-            </Text>
+          <View style={styles.addressHeaderRow}>
+            <View style={styles.addressLabelWrap}>
+              <Ionicons name="location-outline" size={16} color="#0d9488" style={{ marginRight: 5 }} />
+              <Text style={styles.label} numberOfLines={1} ellipsizeMode="tail">
+                {serviceMode === "home" ? "Doorstep Address (Required)" : "Delivery Location (Optional)"}
+              </Text>
+            </View>
             <Pressable 
               style={({ pressed }) => [
                 styles.gpsAutofillBtn,
@@ -242,7 +272,7 @@ export function TailorServiceModeScreen({ route, navigation }) {
               {fetchingGps ? (
                 <ActivityIndicator size="small" color="#0d9488" style={{ marginRight: 4 }} />
               ) : (
-                <Ionicons name="locate" size={14} color="#0d9488" style={{ marginRight: 4 }} />
+                <Ionicons name="locate" size={13} color="#0d9488" style={{ marginRight: 4 }} />
               )}
               <Text style={styles.gpsAutofillText}>
                 {fetchingGps ? "Locating..." : "Auto Address"}
@@ -254,6 +284,7 @@ export function TailorServiceModeScreen({ route, navigation }) {
             multiline 
             numberOfLines={3}
             placeholder={serviceMode === "home" ? "Enter your complete home address with landmark..." : "Enter your address or tap Auto Address..."}
+            placeholderTextColor="#94a3b8"
             value={address}
             onChangeText={setAddress}
           />
@@ -261,9 +292,9 @@ export function TailorServiceModeScreen({ route, navigation }) {
 
       </ScrollView>
 
-      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View style={styles.totalRow}>
-          <View>
+          <View style={{ flex: 1, marginRight: 12 }}>
             <Text style={styles.totalLabel}>Total Payable</Text>
             {activeFee > 0 ? (
               <Text style={{ fontSize: 11, color: "#64748b", fontWeight: "600", marginTop: 2 }}>
@@ -294,59 +325,97 @@ export function TailorServiceModeScreen({ route, navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f8fafc" },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingBottom: 16, backgroundColor: "#f8fafc" },
-  backBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#ffffff", justifyContent: "center", alignItems: "center", shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
-  headerTitle: { fontSize: 13, fontWeight: "700", color: "#0d9488", textAlign: "center", textTransform: "uppercase", letterSpacing: 1 },
-  headerSubtitle: { fontSize: 18, fontWeight: "900", color: "#0f172a", textAlign: "center" },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 14, backgroundColor: "#f8fafc" },
+  backBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#ffffff", justifyContent: "center", alignItems: "center", shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
+  headerTitle: { fontSize: 12, fontWeight: "700", color: "#0d9488", textAlign: "center", textTransform: "uppercase", letterSpacing: 1 },
+  headerSubtitle: { fontSize: 17, fontWeight: "900", color: "#0f172a", textAlign: "center" },
   
-  scrollContent: { padding: 20, paddingBottom: 120 },
-  sectionTitle: { fontSize: 16, fontWeight: "800", color: "#0f172a", marginBottom: 16 },
+  scrollContent: { padding: 16, paddingBottom: 160 },
+  sectionTitle: { fontSize: 15, fontWeight: "800", color: "#0f172a", marginBottom: 14 },
   
-  card: { flexDirection: "row", alignItems: "center", backgroundColor: "#ffffff", padding: 16, borderRadius: 16, marginBottom: 16, borderWidth: 2, borderColor: "#f1f5f9" },
+  card: { flexDirection: "row", alignItems: "center", backgroundColor: "#ffffff", padding: 14, borderRadius: 16, marginBottom: 14, borderWidth: 1.5, borderColor: "#e2e8f0" },
   cardActive: { borderColor: "#0d9488", backgroundColor: "#f0fdf4" },
-  iconBox: { width: 48, height: 48, borderRadius: 12, backgroundColor: "#f1f5f9", justifyContent: "center", alignItems: "center", marginRight: 16 },
-  cardInfo: { flex: 1 },
-  cardTitle: { fontSize: 16, fontWeight: "700", color: "#334155" },
+  iconBox: { width: 44, height: 44, borderRadius: 12, backgroundColor: "#f1f5f9", justifyContent: "center", alignItems: "center", marginRight: 12 },
+  cardInfo: { flex: 1, marginRight: 8 },
+  cardTitle: { fontSize: 15, fontWeight: "700", color: "#334155" },
   cardTitleActive: { color: "#0d9488" },
-  cardDesc: { fontSize: 13, color: "#64748b", marginTop: 4, lineHeight: 18 },
-  feeTextFree: { fontSize: 12, fontWeight: "700", color: "#22c55e", marginTop: 6 },
-  feeText: { fontSize: 12, fontWeight: "700", color: "#f59e0b", marginTop: 6 },
+  cardDesc: { fontSize: 12, color: "#64748b", marginTop: 4, lineHeight: 17 },
+  feeTextFree: { fontSize: 11.5, fontWeight: "700", color: "#22c55e", marginTop: 5 },
+  feeText: { fontSize: 11.5, fontWeight: "700", color: "#f59e0b", marginTop: 5 },
   
   radioCircle: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: "#cbd5e1", justifyContent: "center", alignItems: "center" },
   radioCircleActive: { borderColor: "#0d9488" },
   radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: "#0d9488" },
 
-  homeDetailsContainer: { marginTop: 10, padding: 16, backgroundColor: "#ffffff", borderRadius: 16, borderWidth: 1, borderColor: "#e2e8f0" },
-  label: { fontSize: 13, fontWeight: "700", color: "#475569", marginBottom: 8, marginTop: 4 },
-  textArea: { backgroundColor: "#f8fafc", borderRadius: 12, padding: 12, fontSize: 15, color: "#0f172a", minHeight: 80, textAlignVertical: "top", borderWidth: 1, borderColor: "#e2e8f0", marginBottom: 16 },
+  homeDetailsContainer: { marginTop: 8, padding: 14, backgroundColor: "#ffffff", borderRadius: 16, borderWidth: 1, borderColor: "#e2e8f0" },
+  addressHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+    gap: 8,
+  },
+  addressLabelWrap: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 1,
+    marginRight: 6,
+  },
+  label: { 
+    fontSize: 12.5, 
+    fontWeight: "700", 
+    color: "#334155", 
+    flex: 1,
+    flexShrink: 1,
+  },
+  textArea: { backgroundColor: "#f8fafc", borderRadius: 12, padding: 12, fontSize: 14, color: "#0f172a", minHeight: 75, textAlignVertical: "top", borderWidth: 1, borderColor: "#e2e8f0" },
   gpsAutofillBtn: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#ccfbf1",
-    paddingVertical: 4,
-    paddingHorizontal: 10,
+    paddingVertical: 5,
+    paddingHorizontal: 9,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "#99f6e4",
+    flexShrink: 0,
+    alignSelf: "center",
   },
   gpsAutofillText: {
-    fontSize: 12,
-    fontWeight: "700",
+    fontSize: 11.5,
+    fontWeight: "800",
     color: "#0d9488",
+    marginLeft: 2,
   },
   
   dateSelector: { flexDirection: "row", alignItems: "center", backgroundColor: "#f8fafc", borderRadius: 12, paddingHorizontal: 16, height: 50, borderWidth: 1, borderColor: "#e2e8f0" },
-  dateTextPlaceholder: { fontSize: 15, color: "#94a3b8" },
-  dateTextSelected: { fontSize: 15, color: "#0f172a", fontWeight: "600" },
+  dateTextPlaceholder: { fontSize: 14, color: "#94a3b8" },
+  dateTextSelected: { fontSize: 14, color: "#0f172a", fontWeight: "600" },
 
-  bottomBar: { position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: "#ffffff", paddingHorizontal: 24, paddingTop: 16, borderTopWidth: 1, borderTopColor: "#f1f5f9", shadowColor: "#000", shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.05, shadowRadius: 10, elevation: 10 },
-  totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-  totalLabel: { fontSize: 14, fontWeight: "700", color: "#64748b" },
+  bottomBar: { 
+    position: "absolute", 
+    bottom: 0, 
+    left: 0, 
+    right: 0, 
+    backgroundColor: "#ffffff", 
+    paddingHorizontal: 18, 
+    paddingTop: 14, 
+    borderTopWidth: 1, 
+    borderTopColor: "#e2e8f0", 
+    shadowColor: "#000", 
+    shadowOffset: { width: 0, height: -4 }, 
+    shadowOpacity: 0.08, 
+    shadowRadius: 8, 
+    elevation: 8 
+  },
+  totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
+  totalLabel: { fontSize: 13.5, fontWeight: "700", color: "#64748b" },
   totalValue: { fontSize: 18, fontWeight: "900", color: "#0f172a" },
-  nextBtn: { backgroundColor: "#0d9488", height: 56, borderRadius: 16, flexDirection: "row", justifyContent: "center", alignItems: "center" },
-  nextBtnText: { color: "#ffffff", fontSize: 16, fontWeight: "700", marginRight: 8 },
+  nextBtn: { backgroundColor: "#0d9488", height: 50, borderRadius: 14, flexDirection: "row", justifyContent: "center", alignItems: "center" },
+  nextBtnText: { color: "#ffffff", fontSize: 15, fontWeight: "800", marginRight: 8 },
   cardActivePremium: { borderColor: "#7c3aed", backgroundColor: "#faf5ff" },
   cardTitleActivePremium: { color: "#7c3aed" },
-  feeTextPremium: { fontSize: 12, fontWeight: "700", color: "#7c3aed", marginTop: 6 },
+  feeTextPremium: { fontSize: 11.5, fontWeight: "700", color: "#7c3aed", marginTop: 5 },
   radioCircleActivePremium: { borderColor: "#7c3aed" }
 });

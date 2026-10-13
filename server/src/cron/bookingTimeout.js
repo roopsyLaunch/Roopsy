@@ -44,6 +44,10 @@ function startBookingTimeoutCron(app) {
           if (io) {
             if (b.barberId) {
               io.to(`barber_${(b.barberId._id || b.barberId).toString()}`).emit("queueUpdated");
+              try {
+                const { activateNextBookingInQueue } = require("../controllers/bookingController");
+                activateNextBookingInQueue(b.barberId._id || b.barberId, io).catch(() => {});
+              } catch (_) {}
             }
             if (b.customerId) {
               io.to(`user_${b.customerId.toString()}`).emit("bookingUpdated");

@@ -89,6 +89,7 @@ export function MyBookingsScreen({ navigation, route }) {
   const [otpInput, setOtpInput] = useState("");
   const [activeBookingId, setActiveBookingId] = useState(null);
   const [verifying, setVerifying] = useState(false);
+  const [generatingOtpBookingId, setGeneratingOtpBookingId] = useState(null);
 
   // Completion OTP Modal State (for marking complete & confirming with customer)
   const [completionOtpModalVisible, setCompletionOtpModalVisible] = useState(false);
@@ -99,6 +100,8 @@ export function MyBookingsScreen({ navigation, route }) {
 
   const [searchQuery, setSearchQuery] = useState("");
 
+
+
   // History Modal
   const [historyModalVisible, setHistoryModalVisible] = useState(false);
   const [customerHistory, setCustomerHistory] = useState([]);
@@ -107,9 +110,14 @@ export function MyBookingsScreen({ navigation, route }) {
   // Walk-in Modal
   const [walkInModalVisible, setWalkInModalVisible] = useState(false);
   const [walkInName, setWalkInName] = useState("");
+  const [walkInPhone, setWalkInPhone] = useState("");
+  const [walkInSearch, setWalkInSearch] = useState("");
   const [shopServices, setShopServices] = useState([]);
   const [selectedWalkInServices, setSelectedWalkInServices] = useState([]);
   const [submittingWalkIn, setSubmittingWalkIn] = useState(false);
+  const [loadingShopServices, setLoadingShopServices] = useState(false);
+  const [walkInChairIndex, setWalkInChairIndex] = useState(null);
+  const [shopSeats, setShopSeats] = useState([]);
 
   // Review Modal
   const [reviewModalVisible, setReviewModalVisible] = useState(false);
@@ -217,8 +225,11 @@ export function MyBookingsScreen({ navigation, route }) {
         const barberBookings = (barberRes.data?.bookings || []).map(b => ({ ...b, isTailorOrder: false }));
         const tailorOrders = (tailorRes.data?.orders || []).map(o => ({ ...o, isTailorOrder: true }));
         const combined = [...barberBookings, ...tailorOrders].sort((a, b) => {
-          const dateA = new Date(a.startTime || a.createdAt).getTime();
-          const dateB = new Date(b.startTime || b.createdAt).getTime();
+          const isDoneA = ["completed", "cancelled", "declined", "expired"].includes(a.status);
+          const isDoneB = ["completed", "cancelled", "declined", "expired"].includes(b.status);
+          if (isDoneA !== isDoneB) return isDoneA ? 1 : -1;
+          const dateA = new Date(a.startTime || a.visitDate || a.createdAt).getTime();
+          const dateB = new Date(b.startTime || b.visitDate || b.createdAt).getTime();
           return dateB - dateA;
         });
         setItems(combined);
@@ -261,6 +272,9 @@ export function MyBookingsScreen({ navigation, route }) {
       const handleBookingUpdated = (data) => {
         if (isActive) {
           load();
+          if (data && data.verificationPin && !data.isOtpVerified && data.status === "confirmed") {
+            Alert.alert("It's Your Turn! 🔑", `Your Check-in OTP is: ${data.verificationPin}. Please share this 4-digit code with your barber.`);
+          }
           if (data && (data.isOtpVerified || data.message === "OTP Verified ✅")) {
             Alert.alert("OTP Verified! ✅", "Your OTP was verified by the barber partner. Haircut service is now in progress!");
           }
@@ -296,12 +310,13 @@ export function MyBookingsScreen({ navigation, route }) {
       };
 
       socket.on("bookingUpdated", handleBookingUpdated);
+      socket.on("bookingCancelled", handleBookingUpdated);
       socket.on("tailorOrderCompleted", handleTailorOrderCompleted);
 
       return () => {
         isActive = false;
-        if (user?.id) socket.emit("leaveUserRoom", user.id);
         socket.off("bookingUpdated", handleBookingUpdated);
+        socket.off("bookingCancelled", handleBookingUpdated);
         socket.off("tailorOrderCompleted", handleTailorOrderCompleted);
       };
     }, [load, user?.id])
@@ -355,6 +370,51 @@ export function MyBookingsScreen({ navigation, route }) {
     setOtpModalVisible(true);
   };
 
+  const handleTriggerCheckinOtp = async (item) => {
+    const bookingId = item.id || item._id;
+    if (item.verificationPin) {
+      promptVerifyOtp(bookingId);
+      return;
+    }
+
+    try {
+      setGeneratingOtpBookingId(bookingId);
+      await api.post(`/bookings/${bookingId}/generate-checkin-otp`);
+      Alert.alert(
+        "OTP Sent to Customer! 🔑",
+        `Check-in OTP has been sent to ${item.customer?.name || "the customer"}. Please ask customer for the 4-digit code.`
+      );
+      promptVerifyOtp(bookingId);
+      await load();
+    } catch (e) {
+      const errMsg = e?.response?.data?.error;
+      Alert.alert(
+        "Queue Order Notice ⏳",
+        typeof errMsg === "string" ? errMsg : (errMsg?.message || "Cannot generate OTP at this time. Earlier bookings must be served first.")
+      );
+    } finally {
+      setGeneratingOtpBookingId(null);
+    }
+  };
+
+  const handleResendOtp = async (bookingId) => {
+    if (!bookingId) return;
+    try {
+      setVerifying(true);
+      await api.post(`/bookings/${bookingId}/generate-checkin-otp`);
+      Alert.alert("OTP Resent! 🔑", "A new Check-in OTP code has been generated and sent to the customer.");
+      await load();
+    } catch (e) {
+      const errMsg = e?.response?.data?.error;
+      Alert.alert(
+        "Resend Error",
+        typeof errMsg === "string" ? errMsg : (errMsg?.message || "Failed to resend OTP.")
+      );
+    } finally {
+      setVerifying(false);
+    }
+  };
+
   const submitOtp = async () => {
     if (!otpInput || otpInput.length !== 4) {
       Alert.alert("Invalid Input", "Please enter a valid 4-digit OTP check-in code.");
@@ -374,6 +434,21 @@ export function MyBookingsScreen({ navigation, route }) {
     } catch (e) {
       const err = e?.response?.data?.error;
       Alert.alert("Verification Error", typeof err === "string" ? err : "Failed to verify the customer OTP. Please check the code and try again.");
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleStartService = async (booking) => {
+    const bookingId = booking.id || booking._id;
+    try {
+      setVerifying(true);
+      await api.patch(`/bookings/${bookingId}`, { status: "in-progress" });
+      await load();
+      Alert.alert("Service Started! ✂️", "Haircut / styling service has officially started.");
+    } catch (e) {
+      const err = e?.response?.data?.error;
+      Alert.alert("Error", typeof err === "string" ? err : (err?.message || "Failed to start service."));
     } finally {
       setVerifying(false);
     }
@@ -450,19 +525,43 @@ export function MyBookingsScreen({ navigation, route }) {
     }
   };
 
+  const openWalkInModal = async () => {
+    setWalkInModalVisible(true);
+    setWalkInSearch("");
+    setWalkInChairIndex(0);
+    setLoadingShopServices(true);
+    try {
+      const svcRes = await api.get("/barbers/me");
+      if (svcRes.data?.services && Array.isArray(svcRes.data.services)) {
+        setShopServices(svcRes.data.services);
+      }
+      const seats = svcRes.data?.barber?.seats || svcRes.data?.seats || [];
+      setShopSeats(seats.length > 0 ? seats : [{ index: 0, label: "Chair 1", isAvailable: true }]);
+    } catch (err) {
+      console.error("Failed to load shop services for walk-in", err);
+    } finally {
+      setLoadingShopServices(false);
+    }
+  };
+
   const submitWalkIn = async () => {
-    if (selectedWalkInServices.length === 0) return Alert.alert("Selection Required", "Please select at least one styling service to proceed.");
+    if (selectedWalkInServices.length === 0) {
+      return Alert.alert("Select Services", "Please select at least one styling service to proceed.");
+    }
     setSubmittingWalkIn(true);
     try {
       await api.post("/bookings/walk-in", {
-        customerName: walkInName,
+        customerName: (walkInName || "").trim(),
         serviceIds: selectedWalkInServices,
-        startTime: new Date().toISOString()
+        seatIndex: walkInChairIndex !== null && walkInChairIndex !== undefined ? walkInChairIndex : 0,
       });
       setWalkInModalVisible(false);
       setWalkInName("");
+      setWalkInPhone("");
       setSelectedWalkInServices([]);
-      Alert.alert("Customer Added", "The walk-in customer has been successfully added to the queue.");
+      setWalkInSearch("");
+      setWalkInChairIndex(0);
+      Alert.alert("Chair Booked! 💈", "Walk-in client booked on chair. Live timing updated!");
       await load();
     } catch (e) {
       Alert.alert("Booking Failed", e?.response?.data?.error || "Could not add the walk-in customer. Please try again.");
@@ -470,6 +569,27 @@ export function MyBookingsScreen({ navigation, route }) {
       setSubmittingWalkIn(false);
     }
   };
+
+  const selectedServicesData = React.useMemo(() => {
+    return shopServices.filter(s => {
+      const sid = s.id || s._id;
+      return selectedWalkInServices.includes(sid);
+    });
+  }, [shopServices, selectedWalkInServices]);
+
+  const walkInTotalPrice = React.useMemo(() => {
+    return selectedServicesData.reduce((sum, s) => sum + (Number(s.price) || 0), 0);
+  }, [selectedServicesData]);
+
+  const walkInTotalDuration = React.useMemo(() => {
+    return selectedServicesData.reduce((sum, s) => sum + (Number(s.durationMinutes) || 30), 0);
+  }, [selectedServicesData]);
+
+  const filteredWalkInServices = React.useMemo(() => {
+    if (!walkInSearch.trim()) return shopServices;
+    const q = walkInSearch.toLowerCase().trim();
+    return shopServices.filter(s => (s.name || "").toLowerCase().includes(q) || (s.category || "").toLowerCase().includes(q));
+  }, [shopServices, walkInSearch]);
 
   const submitReview = async () => {
     const ratingNum = Number(rating);
@@ -508,6 +628,10 @@ export function MyBookingsScreen({ navigation, route }) {
         return { bg: "#dcfce7", text: "#15803d", icon: "checkmark-circle" };
       case "in-progress":
         return { bg: "#dbeafe", text: "#1d4ed8", icon: "time" };
+      case "stitching":
+        return { bg: "#f5f3ff", text: "#7c3aed", icon: "cut" };
+      case "ready":
+        return { bg: "#ecfdf5", text: "#059669", icon: "sparkles" };
       case "completed":
         return { bg: "#f3e8ff", text: "#7e22ce", icon: "checkmark-done-circle" };
       case "pending":
@@ -531,17 +655,24 @@ export function MyBookingsScreen({ navigation, route }) {
 
   const getBookingType = useCallback((item) => {
     if (item.isTailorOrder) return "tailor";
-    const cat = (item.barber?.businessCategory || "").toLowerCase();
-    const pref = (item.barber?.genderPreference || "").toLowerCase();
+    const cat = (item.barber?.businessCategory || item.barberId?.businessCategory || "").toLowerCase();
+    const pref = (item.barber?.genderPreference || item.barberId?.genderPreference || "").toLowerCase();
+    const shop = (item.barber?.shopName || item.barberId?.shopName || item.shopName || "").toLowerCase();
     const svcs = (item.services || []).map(s => ((s.category || "") + " " + (s.name || "")).toLowerCase()).join(" ");
 
+    // If partner category or shop name explicitly indicates barber/salon/hair cutting -> BARBER
     if (
-      cat.includes("beauty") || cat.includes("parlor") ||
+      cat.includes("barber") || cat.includes("salon") || cat.includes("hair") || cat.includes("men") ||
+      shop.includes("barber") || shop.includes("salon") || shop.includes("hair") || shop.includes("cutting")
+    ) {
+      return "barber";
+    }
+
+    if (
+      cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour") ||
       pref === "women_only" ||
-      svcs.includes("beauty") || svcs.includes("parlor") ||
-      svcs.includes("facial") || svcs.includes("makeup") ||
-      svcs.includes("waxing") || svcs.includes("thread") ||
-      svcs.includes("manicure") || svcs.includes("pedicure")
+      shop.includes("beauty") || shop.includes("parlor") || shop.includes("parlour") ||
+      svcs.includes("makeup") || svcs.includes("waxing") || svcs.includes("bridal") || svcs.includes("mehndi") || svcs.includes("threading")
     ) {
       return "beauty";
     }
@@ -608,11 +739,29 @@ export function MyBookingsScreen({ navigation, route }) {
       });
     }
 
-    if (viewMode === "Shop Queue" && queueSegment === "Upcoming") {
+    if (viewMode === "Shop Queue") {
       list.sort((a, b) => {
         if (a.status === "in-progress" && b.status !== "in-progress") return -1;
         if (b.status === "in-progress" && a.status !== "in-progress") return 1;
-        return new Date(b.createdAt) - new Date(a.createdAt);
+        const isDoneA = ["completed", "cancelled", "declined", "expired"].includes(a.status);
+        const isDoneB = ["completed", "cancelled", "declined", "expired"].includes(b.status);
+        if (isDoneA !== isDoneB) return isDoneA ? 1 : -1;
+        if (a.queuePosition && b.queuePosition && a.queuePosition !== b.queuePosition) {
+          return a.queuePosition - b.queuePosition;
+        }
+        const timeA = new Date(a.startTime || a.visitDate || a.createdAt).getTime();
+        const timeB = new Date(b.startTime || b.visitDate || b.createdAt).getTime();
+        if (timeA !== timeB) return timeA - timeB;
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      });
+    } else {
+      list.sort((a, b) => {
+        const isDoneA = ["completed", "cancelled", "declined", "expired"].includes(a.status);
+        const isDoneB = ["completed", "cancelled", "declined", "expired"].includes(b.status);
+        if (isDoneA !== isDoneB) return isDoneA ? 1 : -1;
+        const timeA = new Date(a.startTime || a.visitDate || a.createdAt).getTime();
+        const timeB = new Date(b.startTime || b.visitDate || b.createdAt).getTime();
+        return timeB - timeA;
       });
     }
 
@@ -626,404 +775,377 @@ export function MyBookingsScreen({ navigation, route }) {
     return { start, end };
   };
 
-  const renderCustomerCard = (item) => {
+  const renderCustomerCard = (item, index) => {
     const statusStyle = getStatusBadge(item.status);
     const isBeauty = getBookingType(item) === "beauty";
+    const shopName = item.shopName || item.barber?.shopName || item.barberId?.shopName || (isBeauty ? "Beauty Parlor" : "Barber Shop");
     const partnerPhone = item.barber?.phone || item.barber?.mobileNumber || item.barberId?.mobileNumber || item.barberId?.phone || item.barberId?.userId?.phone || "";
+
     return (
       <View style={styles.card}>
+        {/* Header: Avatar + Shop Name + Category ID + Status Badge */}
         <View style={styles.cardHeader}>
           <View style={styles.cardHeaderLeft}>
-            <View style={[styles.avatarCircle, { backgroundColor: isBeauty ? "#fce7f3" : "#e0e7ff", borderColor: isBeauty ? "#fbcfe8" : "#c7d2fe" }]}>
-              <Text style={[styles.avatarText, { color: isBeauty ? "#be185d" : "#4f46e5" }]}>{isBeauty ? "💄" : getInitials(item.barber?.shopName)}</Text>
+            <View style={{ position: "relative" }}>
+              <View style={[styles.avatarCircle, { backgroundColor: isBeauty ? "#fce7f3" : "#e0e7ff", borderColor: isBeauty ? "#fbcfe8" : "#c7d2fe" }]}>
+                <Text style={[styles.avatarText, { color: isBeauty ? "#be185d" : "#4f46e5" }]}>
+                  {isBeauty ? "💄" : (shopName ? getInitials(shopName) : "💈")}
+                </Text>
+              </View>
+              {typeof index === "number" && (
+                <View style={[styles.serialTagOverlay, { backgroundColor: isBeauty ? "#be185d" : "#4f46e5" }]}>
+                  <Text style={styles.serialTagOverlayText}>#{index + 1}</Text>
+                </View>
+              )}
             </View>
             <View style={styles.cardHeaderInfo}>
-              <Text style={styles.shopName} numberOfLines={1}>{item.barber?.shopName || (isBeauty ? "Beauty Parlor" : "Barber Shop")}</Text>
-              <Text style={styles.bookingIdText}>{isBeauty ? "💄 BEAUTY • " : "💈 SALON • "}ID: {item.id.slice(-6).toUpperCase()}</Text>
+              <Text style={styles.shopName} numberOfLines={1}>{shopName}</Text>
+              <Text style={styles.bookingIdText}>
+                {typeof index === "number" ? `TOKEN #${index + 1} • ` : ""}{isBeauty ? "💄 BEAUTY • " : "💈 SALON • "}ID: {(item.id || "").slice(-6).toUpperCase()}
+              </Text>
             </View>
           </View>
-          <View style={[styles.badge, { backgroundColor: statusStyle.bg }]}>
-            <Ionicons name={statusStyle.icon} size={12} color={statusStyle.text} style={{ marginRight: 4 }} />
-            <Text style={[styles.badgeText, { color: statusStyle.text }]}>{item.status}</Text>
+          <View style={{ alignItems: "flex-end", gap: 4 }}>
+            {typeof index === "number" && (
+              <View style={[styles.serialTokenBadge, { backgroundColor: isBeauty ? "#fdf2f8" : "#e0e7ff", borderColor: isBeauty ? "#fbcfe8" : "#c7d2fe" }]}>
+                <Ionicons name="time-outline" size={11} color={isBeauty ? "#be185d" : "#4338ca"} style={{ marginRight: 3 }} />
+                <Text style={[styles.serialTokenBadgeText, { color: isBeauty ? "#be185d" : "#4338ca" }]}>Token #{index + 1}</Text>
+              </View>
+            )}
+            <View style={[styles.badge, { backgroundColor: statusStyle.bg }]}>
+              <Ionicons name={statusStyle.icon} size={11} color={statusStyle.text} style={{ marginRight: 3 }} />
+              <Text style={[styles.badgeText, { color: statusStyle.text }]}>{item.status}</Text>
+            </View>
           </View>
         </View>
 
         <View style={styles.cardDivider} />
 
-        {/* Shop Partner Contact Card when Confirmed (Beauty Parlor & Salon) */}
+        {/* Compact Partner Contact Bar (Shows Shop Name instead of generic title) */}
         {Boolean(partnerPhone) && !["pending", "cancelled", "declined", "expired"].includes(item.status) && (
-          <View style={{
-            backgroundColor: isBeauty ? "#fdf2f8" : "#eef2ff",
-            padding: 12,
-            borderRadius: 12,
-            marginBottom: 14,
-            borderWidth: 1,
-            borderColor: isBeauty ? "#fbcfe8" : "#c7d2fe",
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between"
-          }}>
+          <Pressable
+            onPress={() => Linking.openURL(`tel:${partnerPhone}`)}
+            style={({ pressed }) => [
+              styles.compactContactBar,
+              { backgroundColor: isBeauty ? "#fdf2f8" : "#f0f4ff", borderColor: isBeauty ? "#fbcfe8" : "#dbeafe" },
+              pressed && { opacity: 0.85 }
+            ]}
+          >
             <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 }}>
-              <View style={{
-                width: 38,
-                height: 38,
-                borderRadius: 19,
-                backgroundColor: isBeauty ? "#fce7f3" : "#e0e7ff",
-                alignItems: "center",
-                justifyContent: "center",
-                marginRight: 10
-              }}>
-                <Ionicons name="call" size={18} color={isBeauty ? "#be185d" : "#4f46e5"} />
+              <View style={[styles.compactContactIconCircle, { backgroundColor: isBeauty ? "#fce7f3" : "#dbeafe" }]}>
+                <Ionicons name="call" size={13} color={isBeauty ? "#be185d" : "#2563eb"} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={{
-                  fontSize: 11,
-                  fontWeight: "700",
-                  color: isBeauty ? "#be185d" : "#4f46e5",
-                  textTransform: "uppercase",
-                  letterSpacing: 0.5
-                }}>
-                  {isBeauty ? "Beauty Parlor Contact" : "Salon Partner Contact"}
+                <Text style={[styles.compactContactShopTitle, { color: isBeauty ? "#be185d" : "#1e40af" }]} numberOfLines={1}>
+                  {shopName} Contact
                 </Text>
-                <Text style={{ fontSize: 14, fontWeight: "800", color: "#0f172a", marginTop: 2 }}>
-                  {partnerPhone}
-                </Text>
+                <Text style={styles.compactContactPhoneText}>{partnerPhone}</Text>
               </View>
             </View>
-            <Pressable
-              style={{
-                backgroundColor: isBeauty ? "#be185d" : "#4f46e5",
-                flexDirection: "row",
-                alignItems: "center",
-                paddingHorizontal: 14,
-                paddingVertical: 8,
-                borderRadius: 20,
-                gap: 6,
-                shadowColor: isBeauty ? "#be185d" : "#4f46e5",
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.2,
-                shadowRadius: 3,
-                elevation: 2
-              }}
-              onPress={() => Linking.openURL(`tel:${partnerPhone}`)}
-            >
-              <Ionicons name="call" size={14} color="#ffffff" />
-              <Text style={{ color: "#ffffff", fontWeight: "700", fontSize: 12 }}>Call Partner</Text>
-            </Pressable>
-          </View>
+
+            <View style={[styles.compactCallPill, { backgroundColor: isBeauty ? "#be185d" : "#2563eb" }]}>
+              <Ionicons name="call" size={11} color="#ffffff" style={{ marginRight: 4 }} />
+              <Text style={styles.compactCallPillText}>Call Partner</Text>
+            </View>
+          </Pressable>
         )}
 
-        {/* Live Queue Position & Delay */}
+        {/* Live Queue Position & Delay Notice */}
         {["pending", "confirmed", "arrived"].includes(item.status) && item.queuePosition > 0 && (
-          <View style={{ backgroundColor: "#ffedd5", padding: 12, borderRadius: 12, marginBottom: 16, flexDirection: "row", alignItems: "center" }}>
-            <Ionicons name="people" size={20} color="#ea580c" style={{ marginRight: 8 }} />
-            <View>
-              <Text style={{ color: "#c2410c", fontWeight: "700", fontSize: 14 }}>Queue Position: #{item.queuePosition}</Text>
-              <Text style={{ color: "#ea580c", fontSize: 12 }}>Customers ahead of you: {item.queuePosition - 1}</Text>
-            </View>
+          <View style={{ backgroundColor: "#ffedd5", paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, marginBottom: 8, flexDirection: "row", alignItems: "center" }}>
+            <Ionicons name="people" size={16} color="#ea580c" style={{ marginRight: 6 }} />
+            <Text style={{ color: "#c2410c", fontWeight: "700", fontSize: 12, flex: 1 }}>
+              Queue Position #{item.queuePosition} • ({item.queuePosition - 1} ahead)
+            </Text>
           </View>
         )}
 
         {item.delayMinutes > 0 && (
-          <View style={{ backgroundColor: "#fee2e2", padding: 12, borderRadius: 12, marginBottom: 16, flexDirection: "row", alignItems: "center" }}>
-            <Ionicons name="warning" size={20} color="#ef4444" style={{ marginRight: 8 }} />
-            <View>
-              <Text style={{ color: "#b91c1c", fontWeight: "700", fontSize: 14 }}>Service Delayed</Text>
-              <Text style={{ color: "#ef4444", fontSize: 12 }}>Estimated delay: {item.delayMinutes} mins</Text>
-            </View>
+          <View style={{ backgroundColor: "#fee2e2", paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, marginBottom: 8, flexDirection: "row", alignItems: "center" }}>
+            <Ionicons name="warning" size={16} color="#ef4444" style={{ marginRight: 6 }} />
+            <Text style={{ color: "#b91c1c", fontWeight: "700", fontSize: 12, flex: 1 }}>
+              Service Delayed by ~{item.delayMinutes} mins
+            </Text>
           </View>
         )}
 
-        <View style={styles.detailsGrid}>
-          <View style={styles.detailBlock}>
-            <Text style={styles.detailLabel}>Date</Text>
-            <Text style={styles.detailValue}>{formatDateOnly(item.arrivalTime || item.startTime)}</Text>
-          </View>
-          <View style={styles.detailBlock}>
-            <Text style={styles.detailLabel}>Time</Text>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Text style={styles.detailValue}>{formatTime(item.arrivalTime || item.startTime)}</Text>
-              {!item.isHomeService && (item.status === 'pending' || item.status === 'confirmed') && (
+        {/* Unified Schedule & Chair Row (Compact) */}
+        <View style={styles.compactScheduleRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.compactScheduleLabel}>APPOINTMENT</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
+              <Text style={styles.compactScheduleValue}>
+                {formatDateOnly(item.arrivalTime || item.startTime)}, {formatTime(item.arrivalTime || item.startTime)}
+              </Text>
+              {!item.isHomeService && item.status === 'confirmed' && (
                 <LiveCountdown targetDate={item.arrivalTime || item.startTime} />
+              )}
+              {!item.isHomeService && item.status === 'pending' && (
+                <View style={[styles.countdownBadge, { backgroundColor: "#fef3c7", borderColor: "#fde047", borderWidth: 1 }]}>
+                  <Text style={[styles.countdownText, { color: "#b45309" }]}>Pending Confirmation</Text>
+                </View>
+              )}
+              {item.isHomeService && item.status === 'confirmed' && item.barberArrivalTime && (
+                <LiveCountdown targetDate={item.barberArrivalTime} />
               )}
             </View>
           </View>
-          {item.isHomeService && item.status === 'confirmed' && item.barberArrivalTime && (
-            <View style={styles.detailBlock}>
-              <Text style={styles.detailLabel}>Barber Arrival</Text>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={styles.detailValue}>{formatTime(item.barberArrivalTime)}</Text>
-                <LiveCountdown targetDate={item.barberArrivalTime} />
-              </View>
+
+          {item.seatLabel ? (
+            <View style={styles.compactChairBadge}>
+              <Ionicons name="person" size={11} color="#854d0e" style={{ marginRight: 3 }} />
+              <Text style={styles.compactChairText}>{item.seatLabel}</Text>
             </View>
-          )}
+          ) : item.isHomeService ? (
+            <View style={styles.compactHomeBadge}>
+              <Ionicons name="home" size={11} color="#6d28d9" style={{ marginRight: 3 }} />
+              <Text style={styles.compactHomeText}>Home Service</Text>
+            </View>
+          ) : null}
         </View>
 
-        {item.seatLabel && (
-          <View style={styles.seatHighlightBox}>
-            <Ionicons name="person" size={16} color="#854d0e" />
-            <Text style={styles.seatHighlightLabel}>Assigned Chair:</Text>
-            <Text style={styles.seatHighlightValue}>{item.seatLabel}</Text>
-          </View>
-        )}
-
+        {/* Services & Price Breakdown (Compact Strip) */}
         {item.services?.length ? (
-          <View style={styles.svcContainer}>
-            <Text style={styles.svcTitle}>Services Requested:</Text>
-            <View style={styles.svcTags}>
+          <View style={styles.compactSvcContainer}>
+            <View style={{ flex: 1, flexDirection: "row", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
+              <Text style={styles.compactSvcHeader}>Services:</Text>
               {item.services.map((s, i) => (
-                <View key={i} style={styles.svcTag}>
-                  <Text style={styles.svcTagText}>{s.name} - ₹{s.price || 0}</Text>
+                <View key={i} style={styles.compactSvcTag}>
+                  <Text style={styles.compactSvcTagText}>
+                    {s.name} - ₹{s.price || 0}
+                  </Text>
                 </View>
               ))}
             </View>
-            <Text style={{ fontSize: 13, fontWeight: "700", color: "#334155", marginTop: 8 }}>Total: ₹{item.services.reduce((sum, s) => sum + (s.price || 0), 0)}</Text>
+            <View style={{ alignItems: "flex-end", marginLeft: 8 }}>
+              <Text style={styles.compactTotalLabel}>Total</Text>
+              <Text style={styles.compactTotalValue}>
+                ₹{item.services.reduce((sum, s) => sum + (s.price || 0), 0)}
+              </Text>
+            </View>
           </View>
         ) : null}
 
-        {item.isHomeService && (
-          <View style={[styles.homeServiceBadge, { flexDirection: "row", justifyContent: "space-between", alignItems: "center", width: "100%" }]}>
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Ionicons name="home" size={14} color="#6d28d9" style={{ marginRight: 6 }} />
-              <Text style={styles.homeServiceBadgeText}>Home Service</Text>
-            </View>
-            {item.barber?.phone && (
-              <Pressable style={{ flexDirection: 'row', alignItems: 'center' }} onPress={() => Linking.openURL(`tel:${item.barber.phone}`)}>
-                <Ionicons name="call" size={12} color="#6d28d9" style={{ marginRight: 4 }} />
-                <Text style={{ fontSize: 12, color: "#6d28d9", textDecorationLine: 'underline', fontWeight: 'bold' }}>{item.barber.phone}</Text>
-              </Pressable>
-            )}
-          </View>
-        )}
-
-        {item.homeServiceAddress ? (
-          item.isHomeService && item.status !== "completed" ? (
+        {/* Location & Directions Row */}
+        {item.isHomeService ? (
+          item.homeServiceAddress ? (
             <Pressable
               onPress={() => openMapForNavigation(item.homeServiceAddress, item.homeServiceLocation, "Service Address")}
               style={({ pressed }) => [
-                { backgroundColor: "#f8fafc", padding: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: "#e2e8f0", flexDirection: "row", alignItems: "flex-start" },
-                pressed && { opacity: 0.8 }
+                styles.shopAddressBar,
+                pressed && { opacity: 0.85 }
               ]}
             >
-              <Ionicons name="location-sharp" size={14} color="#6d28d9" style={{ marginRight: 6, marginTop: 2 }} />
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#64748b" }}>
-                    Service Address:
-                  </Text>
-                  <Text style={{ fontSize: 10, fontWeight: "700", color: "#6d28d9" }}>View on Map 🗺️</Text>
-                </View>
-                <Text style={{ fontSize: 12, color: "#1e293b", fontWeight: "500", marginTop: 2 }}>
+              <View style={[styles.shopAddressIconCircle, { backgroundColor: "#f5f3ff" }]}>
+                <Ionicons name="home" size={16} color="#7c3aed" />
+              </View>
+              <View style={{ flex: 1, marginRight: 8 }}>
+                <Text style={[styles.shopAddressBarLabel, { color: "#6d28d9" }]}>Service Address (Home):</Text>
+                <Text style={styles.shopAddressBarValue} numberOfLines={2}>
                   {item.homeServiceAddress}
                 </Text>
+              </View>
+              <View style={[styles.shopAddressMapIconBtn, { backgroundColor: "#7c3aed" }]}>
+                <Ionicons name="navigate" size={12} color="#ffffff" style={{ marginRight: 3 }} />
+                <Text style={styles.shopAddressMapBtnText}>Map 🗺️</Text>
               </View>
             </Pressable>
-          ) : (
-            <View
-              style={{ backgroundColor: "#f8fafc", padding: 10, borderRadius: 10, marginBottom: 12, borderWidth: 1, borderColor: "#e2e8f0", flexDirection: "row", alignItems: "flex-start" }}
-            >
-              <Ionicons name="location-sharp" size={14} color="#64748b" style={{ marginRight: 6, marginTop: 2 }} />
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 11, fontWeight: "700", color: "#64748b" }}>
-                  {item.isHomeService ? "Service Address:" : "Booking Address:"}
-                </Text>
-                <Text style={{ fontSize: 12, color: "#1e293b", fontWeight: "500", marginTop: 2 }}>
-                  {item.homeServiceAddress}
-                </Text>
-              </View>
-            </View>
-          )
-        ) : null}
+          ) : null
+        ) : (
+          (() => {
+            const addrObj = (typeof item.barber?.address === 'object' && item.barber?.address) || 
+                            (typeof item.barberId?.address === 'object' && item.barberId?.address) || {};
+            const shopAddr = item.shopAddress ||
+              item.barber?.formattedAddress ||
+              [addrObj.line1, addrObj.line2, addrObj.city, addrObj.state, addrObj.pincode].filter(Boolean).join(", ") ||
+              (addrObj.line1 ? `${addrObj.line1}, ${addrObj.city || ""}`.trim() : "") ||
+              (typeof item.barber?.address === 'string' ? item.barber.address : "") ||
+              (item.notes ? item.notes : "") ||
+              "Salon Address";
+            const shopLoc = item.shopLocation || item.barber?.location || item.barberId?.location || null;
 
-        {/* OTP Verified / Service In Progress Banner for Barber Booking */}
+            return (
+              <Pressable
+                onPress={() => openMapForNavigation(shopAddr, shopLoc, shopName)}
+                style={({ pressed }) => [
+                  styles.shopAddressBar,
+                  pressed && { opacity: 0.85, transform: [{ scale: 0.99 }] }
+                ]}
+              >
+                <View style={[styles.shopAddressIconCircle, { backgroundColor: isBeauty ? "#fce7f3" : "#eef2ff" }]}>
+                  <Ionicons name="location-sharp" size={16} color={isBeauty ? "#be185d" : "#4f46e5"} />
+                </View>
+
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={[styles.shopAddressBarLabel, { color: isBeauty ? "#be185d" : "#4f46e5" }]}>
+                    {shopName} (Shop Visit)
+                  </Text>
+                  <Text style={styles.shopAddressBarValue} numberOfLines={2}>
+                    {shopAddr}
+                  </Text>
+                </View>
+
+                <View style={[styles.shopAddressMapIconBtn, { backgroundColor: isBeauty ? "#be185d" : "#4f46e5" }]}>
+                  <Ionicons name="navigate" size={12} color="#ffffff" style={{ marginRight: 3 }} />
+                  <Text style={styles.shopAddressMapBtnText}>Map 🗺️</Text>
+                </View>
+              </Pressable>
+            );
+          })()
+        )}
+
+        {/* OTP Verified / Service In Progress Banner */}
         {item.status !== "cancelled" && item.status !== "declined" && (item.status === "in-progress" || item.isOtpVerified) && (
-          <View style={{ backgroundColor: "#ecfdf5", padding: 14, borderRadius: 14, marginBottom: 14, borderWidth: 1, borderColor: "#a7f3d0" }}>
+          <View style={{ backgroundColor: "#ecfdf5", padding: 10, borderRadius: 10, marginBottom: 8, borderWidth: 1, borderColor: "#a7f3d0" }}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
               <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-                <Ionicons name="checkmark-circle" size={24} color="#059669" style={{ marginRight: 10 }} />
+                <Ionicons name="checkmark-circle" size={20} color="#059669" style={{ marginRight: 8 }} />
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 11, fontWeight: "800", color: "#065f46", textTransform: "uppercase", letterSpacing: 0.5 }}>
-                    Identity Verified ✅
-                  </Text>
-                  <Text style={{ fontSize: 15, fontWeight: "900", color: "#047857", marginTop: 2 }}>
-                    OTP Verified • Service In Progress ✂️
+                  <Text style={{ fontSize: 13, fontWeight: "900", color: "#047857" }}>
+                    OTP Verified • In Chair ✂️
                   </Text>
                 </View>
               </View>
-              <View style={{ backgroundColor: "#d1fae5", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
-                <Text style={{ fontSize: 11, fontWeight: "800", color: "#047857" }}>Verified ✅</Text>
+              <View style={{ backgroundColor: "#d1fae5", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
+                <Text style={{ fontSize: 10.5, fontWeight: "800", color: "#047857" }}>Verified ✅</Text>
               </View>
             </View>
-            <Text style={{ fontSize: 11, color: "#047857", marginTop: 6, fontWeight: "600" }}>
-              Barber partner has verified your 4-digit OTP. You are currently in the chair!
-            </Text>
           </View>
         )}
 
-        {/* Completion OTP Card for Customer (Service Complete Verification) */}
+        {/* Completion OTP Card for Customer */}
         {item.status !== "cancelled" && item.status !== "declined" && item.completionPin && !item.isCompletionOtpVerified && (
-          <View style={{ backgroundColor: "#fdf4ff", padding: 16, borderRadius: 16, marginBottom: 14, borderWidth: 1.5, borderColor: "#d946ef", shadowColor: "#d946ef", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, shadowRadius: 6, elevation: 4 }}>
+          <View style={{ backgroundColor: "#fdf4ff", padding: 12, borderRadius: 12, marginBottom: 8, borderWidth: 1.5, borderColor: "#d946ef" }}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
               <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-                <Ionicons name="sparkles" size={24} color="#c026d3" style={{ marginRight: 10 }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 11, fontWeight: "800", color: "#a21caf", textTransform: "uppercase", letterSpacing: 0.5 }}>
-                    Service Finished 🎉
-                  </Text>
-                  <Text style={{ fontSize: 13, fontWeight: "700", color: "#701a75", marginTop: 1 }}>
-                    Completion Confirmation OTP
-                  </Text>
-                </View>
-              </View>
-              <View style={{ backgroundColor: "#fae8ff", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: "#f0abfc" }}>
-                <Text style={{ fontSize: 11, fontWeight: "800", color: "#a21caf" }}>Share with Stylist</Text>
+                <Ionicons name="sparkles" size={18} color="#c026d3" style={{ marginRight: 6 }} />
+                <Text style={{ fontSize: 12, fontWeight: "800", color: "#701a75" }}>
+                  Completion OTP: Share with Partner 🎉
+                </Text>
               </View>
             </View>
-
-            <View style={{ alignItems: "center", marginVertical: 12, backgroundColor: "#ffffff", paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: "#f5d0fe" }}>
-              <Text style={{ fontSize: 32, fontWeight: "900", color: "#86198f", letterSpacing: 8 }}>
+            <View style={{ alignItems: "center", marginVertical: 6, backgroundColor: "#ffffff", paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: "#f5d0fe" }}>
+              <Text style={{ fontSize: 24, fontWeight: "900", color: "#86198f", letterSpacing: 6 }}>
                 {item.completionPin}
               </Text>
             </View>
-
-            <Text style={{ fontSize: 12, color: "#86198f", textAlign: "center", fontWeight: "600" }}>
-              🔒 Share this 4-digit code with your partner to confirm your service is completed and satisfactory!
-            </Text>
           </View>
         )}
 
         {/* Completion Verified Banner */}
         {item.isCompletionOtpVerified && (
-          <View style={{ backgroundColor: "#f0fdf4", padding: 12, borderRadius: 12, marginBottom: 14, borderWidth: 1, borderColor: "#bbf7d0", flexDirection: "row", alignItems: "center" }}>
-            <Ionicons name="checkmark-done-circle" size={22} color="#16a34a" style={{ marginRight: 10 }} />
+          <View style={{ backgroundColor: "#f0fdf4", padding: 10, borderRadius: 10, marginBottom: 8, borderWidth: 1, borderColor: "#bbf7d0", flexDirection: "row", alignItems: "center" }}>
+            <Ionicons name="checkmark-done-circle" size={18} color="#16a34a" style={{ marginRight: 8 }} />
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 12, fontWeight: "800", color: "#15803d" }}>Service Completed & Confirmed ✅</Text>
-              <Text style={{ fontSize: 11, color: "#166534", marginTop: 1 }}>Completion OTP verified by partner. Hope you loved your new look!</Text>
             </View>
           </View>
         )}
 
         {/* Pending Confirmation Banner */}
         {item.status === "pending" && (
-          <View style={{ backgroundColor: "#fffbeb", padding: 12, borderRadius: 12, marginBottom: 14, borderWidth: 1, borderColor: "#fef08a", flexDirection: "row", alignItems: "center" }}>
-            <Ionicons name="time" size={20} color="#d97706" style={{ marginRight: 10 }} />
+          <View style={{ backgroundColor: "#fffbeb", padding: 10, borderRadius: 10, marginBottom: 8, borderWidth: 1, borderColor: "#fef08a", flexDirection: "row", alignItems: "center" }}>
+            <Ionicons name="time" size={18} color="#d97706" style={{ marginRight: 8 }} />
             <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 13, fontWeight: "800", color: "#b45309" }}>Pending Confirmation</Text>
-              <Text style={{ fontSize: 12, color: "#d97706", marginTop: 2 }}>
-                Waiting for barber partner to confirm. OTP will be generated immediately once confirmed.
+              <Text style={{ fontSize: 12, fontWeight: "800", color: "#b45309" }}>Pending Confirmation</Text>
+              <Text style={{ fontSize: 11, color: "#d97706", marginTop: 1 }}>
+                Waiting for partner to confirm. OTP will be ready once confirmed.
               </Text>
             </View>
           </View>
         )}
 
-        {/* Check-in OTP Box with 12-Hour Expiration */}
-        {item.status === "confirmed" && !item.isOtpVerified && item.verificationPin && (
-          <View style={{
-            backgroundColor: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#fef2f2" : "#fef3c7",
-            padding: 14,
-            borderRadius: 14,
-            marginBottom: 14,
-            borderWidth: 1,
-            borderColor: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#fca5a5" : "#fde68a"
-          }}>
+        {/* Check-in OTP Box (Compact) or In Queue Waiting Banner */}
+        {item.status === "confirmed" && !item.isOtpVerified && item.verificationPin ? (
+          <View style={[
+            styles.compactOtpCard,
+            (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) && { backgroundColor: "#fef2f2", borderColor: "#fca5a5" }
+          ]}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-              <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
                 <Ionicons
                   name={(item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "alert-circle" : "key"}
-                  size={24}
+                  size={16}
                   color={(item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#dc2626" : "#d97706"}
-                  style={{ marginRight: 10 }}
+                  style={{ marginRight: 6 }}
                 />
-                <View style={{ flex: 1 }}>
-                  <Text style={{
-                    fontSize: 11,
-                    fontWeight: "800",
-                    color: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#991b1b" : "#92400e",
-                    textTransform: "uppercase",
-                    letterSpacing: 0.5
-                  }}>
-                    {(item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "OTP Expired ❌" : "Share OTP with Barber Partner 💈"}
-                  </Text>
-                  <Text style={{
-                    fontSize: 26,
-                    fontWeight: "900",
-                    color: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#dc2626" : "#b45309",
-                    letterSpacing: 4,
-                    marginTop: 2,
-                    textDecorationLine: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "line-through" : "none"
-                  }}>
-                    {item.verificationPin}
-                  </Text>
-                </View>
+                <Text style={[
+                  styles.compactOtpHeader,
+                  (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) && { color: "#dc2626" }
+                ]}>
+                  {(item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "OTP Expired ❌" : "Check-in OTP 🔑"}
+                </Text>
               </View>
-              <View style={{
-                backgroundColor: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#fee2e2" : "#fef08a",
-                paddingHorizontal: 10,
-                paddingVertical: 6,
-                borderRadius: 8
-              }}>
-                <Text style={{
-                  fontSize: 11,
-                  fontWeight: "800",
-                  color: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#dc2626" : "#92400e"
-                }}>
+              <View style={[
+                styles.compactOtpBadge,
+                (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) && { backgroundColor: "#fee2e2" }
+              ]}>
+                <Text style={[
+                  styles.compactOtpBadgeText,
+                  (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) && { color: "#dc2626" }
+                ]}>
                   {(item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "Expired" : "Show Barber"}
                 </Text>
               </View>
             </View>
 
-            <View style={{ marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#fecaca" : "#fde68a" }}>
-              <Text style={{
-                fontSize: 11,
-                fontWeight: "700",
-                color: (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) ? "#dc2626" : "#b45309"
-              }}>
-                {(item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt))
-                  ? "⚠️ OTP Expired (Valid for 12 hours after booking confirmation)"
-                  : item.otpExpiresAt
-                    ? `🔒 Valid for 12 hours (Expires at ${new Date(item.otpExpiresAt).toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit', hour12: true })})`
-                    : "🔒 Valid for 12 hours after confirmation. Barber partner will verify this code to start service."
-                }
+            <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", marginTop: 4 }}>
+              <Text style={[
+                styles.compactOtpPin,
+                (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) && { color: "#dc2626", textDecorationLine: "line-through" }
+              ]}>
+                {item.verificationPin}
+              </Text>
+              <Text style={[
+                styles.compactOtpHours,
+                (item.otpExpiresAt && new Date() > new Date(item.otpExpiresAt)) && { color: "#dc2626" }
+              ]}>
+                {item.otpExpiresAt
+                  ? `Expires: ${new Date(item.otpExpiresAt).toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit', hour12: true })}`
+                  : "Valid 12h"}
               </Text>
             </View>
           </View>
-        )}
+        ) : item.status === "confirmed" && !item.isOtpVerified && !item.verificationPin ? (
+          <View style={{
+            backgroundColor: "#f5f3ff",
+            borderWidth: 1,
+            borderColor: "#ddd6fe",
+            borderRadius: 12,
+            padding: 12,
+            marginTop: 6,
+            flexDirection: "row",
+            alignItems: "center"
+          }}>
+            <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: "#ede9fe", justifyContent: "center", alignItems: "center", marginRight: 10 }}>
+              <Ionicons name="hourglass-outline" size={20} color="#7c3aed" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <Text style={{ fontSize: 13, fontWeight: "800", color: "#6d28d9" }}>
+                  Booking Confirmed • Waiting for Turn ⏳
+                </Text>
+                <View style={{ backgroundColor: "#e0e7ff", paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
+                  <Text style={{ fontSize: 10, fontWeight: "700", color: "#4338ca" }}>Waiting</Text>
+                </View>
+              </View>
+              <Text style={{ fontSize: 11.5, color: "#5b21b6", marginTop: 3, lineHeight: 16 }}>
+                Your appointment is confirmed! The barber/shopkeeper will generate your Check-in OTP when your turn arrives at the shop.
+              </Text>
+            </View>
+          </View>
+        ) : null}
 
         {item.status !== "cancelled" && item.status !== "completed" && item.status !== "in-progress" && item.status !== "expired" && (
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-            <Pressable style={[styles.cancelBtn, { flex: 1, marginTop: 0 }]} onPress={() => setStatus(item.id, "cancelled")}>
-              <Text style={styles.cancelText}>Cancel</Text>
-            </Pressable>
-            <Pressable style={[styles.cancelBtn, { flex: 1, marginTop: 0, backgroundColor: "#f3e8ff" }]} onPress={() => {
-              Alert.alert(
-                "Reschedule Appointment",
-                "Do you want to cancel this booking and book a new one?",
-                [
-                  { text: "No", style: "cancel" },
-                  {
-                    text: "Yes, Reschedule", onPress: async () => {
-                      try {
-                        await api.patch(`/bookings/${item.id}`, { status: "cancelled" });
-                        const bObj = item.barber || item.barberId || {};
-                        const cat = (bObj.businessCategory || "").toLowerCase();
-                        const bId = bObj.id || bObj._id || item.barberId;
-                        const sName = bObj.shopName || "";
-                        if (cat.includes("tailor") || cat.includes("stitching") || cat.includes("center")) {
-                          navigation.navigate("TailorDetail", { tailorId: bId, shopName: sName });
-                        } else if (cat.includes("beauty") || cat.includes("parlor") || cat.includes("parlour")) {
-                          navigation.navigate("BeautyParlorDetail", { barberId: bId, shopName: sName });
-                        } else {
-                          navigation.navigate("BarberDetail", { barberId: bId, shopName: sName });
-                        }
-                      } catch (e) {
-                        Alert.alert("Error", e?.response?.data?.error || e.message);
-                      }
-                    }
-                  }
-                ]
-              );
-            }}>
-              <Text style={[styles.cancelText, { color: "#7e22ce" }]}>Reschedule</Text>
+          <View style={{ marginTop: 14 }}>
+            <Pressable
+              style={[
+                styles.cancelBtn,
+                { marginTop: 0, backgroundColor: "#fef2f2", borderColor: "#fca5a5", borderWidth: 1 }
+              ]}
+              onPress={() => setStatus(item.id, "cancelled")}
+            >
+              <Text style={[styles.cancelText, { color: "#dc2626" }]}>Cancel Booking</Text>
             </Pressable>
           </View>
         )}
@@ -1078,7 +1200,7 @@ export function MyBookingsScreen({ navigation, route }) {
     );
   };
 
-  const renderTailorCard = (item) => {
+  const renderTailorCard = (item, index) => {
     const statusStyle = getStatusBadge(item.status);
     const shopName = item.tailorId?.shopName || "Tailor Shop";
     const tailorPhone = item.tailorId?.mobileNumber || item.tailorId?.phone || item.tailorId?.userId?.phone || item.tailorPhone || "";
@@ -1138,26 +1260,41 @@ export function MyBookingsScreen({ navigation, route }) {
         {/* Clean Header: Shop Info, Order ID, Call Button & Status */}
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
           <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 }}>
-            <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: "#f3e8ff", alignItems: "center", justifyContent: "center", marginRight: 10, borderWidth: 1, borderColor: "#e9d5ff" }}>
-              <Text style={{ fontSize: 17 }}>✂️</Text>
+            <View style={{ position: "relative" }}>
+              <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: "#f3e8ff", alignItems: "center", justifyContent: "center", marginRight: 10, borderWidth: 1, borderColor: "#e9d5ff" }}>
+                <Text style={{ fontSize: 17 }}>✂️</Text>
+              </View>
+              {typeof index === "number" && (
+                <View style={[styles.serialTagOverlay, { backgroundColor: "#7e22ce" }]}>
+                  <Text style={styles.serialTagOverlayText}>#{index + 1}</Text>
+                </View>
+              )}
             </View>
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 15, fontWeight: "800", color: "#0f172a" }} numberOfLines={1}>{shopName}</Text>
               <Text style={{ fontSize: 11, color: "#64748b", fontWeight: "600", marginTop: 1 }}>
-                #{item._id.slice(-6).toUpperCase()} • {formatDateOnly(item.createdAt)}
+                {typeof index === "number" ? `ORDER #${index + 1} • ` : ""}#{item._id.slice(-6).toUpperCase()} • {formatDateOnly(item.createdAt)}
               </Text>
             </View>
           </View>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            {Boolean(tailorPhone) && !["pending", "cancelled", "declined"].includes(item.status) && (
-              <Pressable
-                onPress={() => Linking.openURL(`tel:${tailorPhone}`)}
-                style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#7c3aed", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, gap: 4 }}
-              >
-                <Ionicons name="call" size={12} color="#ffffff" />
-                <Text style={{ fontSize: 11, fontWeight: "700", color: "#ffffff" }}>Call</Text>
-              </Pressable>
-            )}
+          <View style={{ alignItems: "flex-end", gap: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              {typeof index === "number" && (
+                <View style={[styles.serialTokenBadge, { backgroundColor: "#f3e8ff", borderColor: "#d8b4fe" }]}>
+                  <Ionicons name="time-outline" size={11} color="#7e22ce" style={{ marginRight: 3 }} />
+                  <Text style={[styles.serialTokenBadgeText, { color: "#7e22ce" }]}>Queue #{index + 1}</Text>
+                </View>
+              )}
+              {Boolean(tailorPhone) && !["pending", "cancelled", "declined"].includes(item.status) && (
+                <Pressable
+                  onPress={() => Linking.openURL(`tel:${tailorPhone}`)}
+                  style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#7c3aed", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, gap: 4 }}
+                >
+                  <Ionicons name="call" size={12} color="#ffffff" />
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#ffffff" }}>Call</Text>
+                </Pressable>
+              )}
+            </View>
             <View style={[styles.badge, { backgroundColor: statusStyle.bg, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }]}>
               <Ionicons name={statusStyle.icon} size={11} color={statusStyle.text} style={{ marginRight: 3 }} />
               <Text style={[styles.badgeText, { color: statusStyle.text, fontSize: 10.5, fontWeight: "800" }]}>
@@ -1426,12 +1563,32 @@ export function MyBookingsScreen({ navigation, route }) {
             )}
 
             {/* Stitching In Progress */}
-            {(item.isStitchingStarted || item.status === "stitching") && !item.deliveryOtp && (
-              <View style={{ backgroundColor: "#f5f3ff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderColor: "#ddd6fe" }}>
-                <Ionicons name="cut" size={14} color="#7c3aed" />
-                <Text style={{ fontSize: 11, fontWeight: "700", color: "#6d28d9" }}>
-                  🪡 Stitching In Progress (सिलाई चल रही है) • Delivery OTP will generate when ready
-                </Text>
+            {item.status === "stitching" && !item.deliveryOtp && (
+              <View style={{ backgroundColor: "#f5f3ff", paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderColor: "#ddd6fe" }}>
+                <Ionicons name="cut" size={15} color="#7c3aed" />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11.5, fontWeight: "800", color: "#6d28d9" }}>
+                    Stitching in Progress 🪡
+                  </Text>
+                  <Text style={{ fontSize: 10.5, color: "#7c3aed", marginTop: 1 }}>
+                    Tailor is stitching your outfit. You will be notified once it is ready!
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Stitching Completed / Ready to Receive */}
+            {item.status === "ready" && !item.deliveryOtp && (
+              <View style={{ backgroundColor: "#ecfdf5", paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderColor: "#a7f3d0" }}>
+                <Ionicons name="sparkles" size={16} color="#059669" />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12, fontWeight: "800", color: "#065f46" }}>
+                    Order Stitching Completed! 🎉
+                  </Text>
+                  <Text style={{ fontSize: 10.5, color: "#047857", marginTop: 2 }}>
+                    Your outfit is ready to receive or pick up. Tailor will provide Delivery OTP upon handover.
+                  </Text>
+                </View>
               </View>
             )}
 
@@ -1506,241 +1663,284 @@ export function MyBookingsScreen({ navigation, route }) {
     );
   };
 
-  const renderBarberCard = (item) => {
+  const renderBarberCard = (item, index) => {
     const statusStyle = getStatusBadge(item.status);
+    const customerName = item.customer?.name || item.guestName || "Customer";
+    const customerPhone = item.customer?.phone || item.guestPhone || "";
+
+    const customerAddrObj = (typeof item.customer?.address === 'object' && item.customer?.address) || 
+                            (typeof item.customerId?.address === 'object' && item.customerId?.address) || {};
+    const effectiveCustAddress = item.customerAddress ||
+      item.homeServiceAddress ||
+      item.customer?.formattedAddress ||
+      [customerAddrObj.line1, customerAddrObj.city, customerAddrObj.pincode].filter(Boolean).join(", ") ||
+      (customerAddrObj.line1 ? `${customerAddrObj.line1}, ${customerAddrObj.city || ""}`.trim() : "") ||
+      (item.notes && item.notes.length > 3 ? item.notes : "") ||
+      "";
+    const effectiveCustLocation = item.customerLocation || item.homeServiceLocation || (customerAddrObj.lat && customerAddrObj.lng ? { lat: customerAddrObj.lat, lng: customerAddrObj.lng } : null);
+
     return (
       <View style={styles.card}>
+        {/* Header: Customer Avatar + Name + Phone + Status + History */}
         <View style={styles.cardHeader}>
           <View style={styles.cardHeaderLeft}>
-            <View style={[styles.avatarCircle, { backgroundColor: "#fef08a", borderColor: "#fde047" }]}>
-              <Text style={[styles.avatarText, { color: "#854d0e" }]}>{getInitials(item.customer?.name)}</Text>
+            <View style={{ position: "relative" }}>
+              <View style={[styles.avatarCircle, { backgroundColor: "#fef08a", borderColor: "#fde047" }]}>
+                <Text style={[styles.avatarText, { color: "#854d0e" }]}>{getInitials(customerName)}</Text>
+              </View>
+              {typeof index === "number" && (
+                <View style={[styles.serialTagOverlay, { backgroundColor: "#d97706" }]}>
+                  <Text style={styles.serialTagOverlayText}>#{item.queuePosition || (index + 1)}</Text>
+                </View>
+              )}
             </View>
             <View style={styles.cardHeaderInfo}>
-              <Text style={styles.shopName} numberOfLines={1}>{item.customer?.name || "Customer"}</Text>
-              {item.customer?.phone ? (
-                <Text style={styles.bookingIdText}>{item.customer.phone}</Text>
+              <Text style={styles.shopName} numberOfLines={1}>{customerName}</Text>
+              {customerPhone ? (
+                <Pressable onPress={() => Linking.openURL(`tel:${customerPhone}`)} style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
+                  <Ionicons name="call" size={11} color="#6d28d9" style={{ marginRight: 3 }} />
+                  <Text style={[styles.bookingIdText, { color: "#6d28d9", fontWeight: "700" }]}>{customerPhone}</Text>
+                </Pressable>
               ) : null}
             </View>
           </View>
+
           <View style={{ alignItems: "flex-end" }}>
-            <View style={[styles.badge, { backgroundColor: statusStyle.bg, marginBottom: 8 }]}>
-              <Ionicons name={statusStyle.icon} size={12} color={statusStyle.text} style={{ marginRight: 4 }} />
-              <Text style={[styles.badgeText, { color: statusStyle.text }]}>{item.status}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 4 }}>
+              {typeof index === "number" && (
+                <View style={[styles.serialTokenBadge, { backgroundColor: "#fef3c7", borderColor: "#fcd34d" }]}>
+                  <Ionicons name="time-outline" size={11} color="#b45309" style={{ marginRight: 3 }} />
+                  <Text style={[styles.serialTokenBadgeText, { color: "#b45309" }]}>Queue #{item.queuePosition || (index + 1)}</Text>
+                </View>
+              )}
+              <View style={[styles.badge, { backgroundColor: statusStyle.bg }]}>
+                <Ionicons name={statusStyle.icon} size={11} color={statusStyle.text} style={{ marginRight: 3 }} />
+                <Text style={[styles.badgeText, { color: statusStyle.text }]}>{item.status}</Text>
+              </View>
             </View>
-            <Pressable onPress={() => openHistory(item.customer?.phone)}>
-              <Text style={{ fontSize: 11, color: "#6d28d9", fontWeight: "700" }}>View History</Text>
-            </Pressable>
+            {customerPhone ? (
+              <Pressable onPress={() => openHistory(customerPhone)}>
+                <Text style={{ fontSize: 11, color: "#6d28d9", fontWeight: "700" }}>History 📋</Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
 
         <View style={styles.cardDivider} />
 
-        <View style={styles.detailsGrid}>
-          <View style={styles.detailBlock}>
-            <Text style={styles.detailLabel}>Date & Time</Text>
-            <Text style={styles.detailValue}>{formatDateLabel(item.arrivalTime || item.startTime)}</Text>
-          </View>
-          {(item.status === 'pending' || item.status === 'confirmed') && !item.isHomeService && (
-            <View style={styles.detailBlock}>
-              <Text style={styles.detailLabel}>Customer Arrival</Text>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={styles.detailValue}>{formatTime(item.arrivalTime || item.startTime)}</Text>
+        {/* Schedule & Chair Row (Compact) */}
+        <View style={styles.compactScheduleRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.compactScheduleLabel}>
+              {item.isHomeService ? "APPOINTMENT" : "CUSTOMER ARRIVAL TIME"}
+            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
+              <Text style={styles.compactScheduleValue}>
+                {formatDateLabel(item.arrivalTime || item.startTime)}
+              </Text>
+              {item.customerETA ? (
+                <View style={{ backgroundColor: "#e0f2fe", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                  <Text style={{ fontSize: 10.5, fontWeight: "700", color: "#0369a1" }}>ETA: ~{item.customerETA}m</Text>
+                </View>
+              ) : null}
+              {item.status === 'confirmed' && !item.isHomeService && (
                 <LiveCountdown targetDate={item.arrivalTime || item.startTime} />
-              </View>
-            </View>
-          )}
-          {item.isHomeService && item.status === 'confirmed' && item.barberArrivalTime && (
-            <View style={styles.detailBlock}>
-              <Text style={styles.detailLabel}>Barber Arrival</Text>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={styles.detailValue}>{formatTime(item.barberArrivalTime)}</Text>
+              )}
+              {item.status === 'pending' && !item.isHomeService && (
+                <View style={[styles.countdownBadge, { backgroundColor: "#fef3c7", borderColor: "#fde047", borderWidth: 1 }]}>
+                  <Text style={[styles.countdownText, { color: "#b45309" }]}>Starts after confirmation</Text>
+                </View>
+              )}
+              {item.isHomeService && item.status === 'confirmed' && item.barberArrivalTime && (
                 <LiveCountdown targetDate={item.barberArrivalTime} />
-              </View>
+              )}
             </View>
-          )}
+          </View>
+
+          {item.seatLabel ? (
+            <View style={styles.compactChairBadge}>
+              <Ionicons name="person" size={11} color="#854d0e" style={{ marginRight: 3 }} />
+              <Text style={styles.compactChairText}>{item.seatLabel}</Text>
+            </View>
+          ) : item.isHomeService ? (
+            <View style={styles.compactHomeBadge}>
+              <Ionicons name="home" size={11} color="#6d28d9" style={{ marginRight: 3 }} />
+              <Text style={styles.compactHomeText}>Home Service</Text>
+            </View>
+          ) : null}
         </View>
 
-        {item.seatLabel && (
-          <View style={styles.seatHighlightBox}>
-            <Ionicons name="person" size={16} color="#854d0e" />
-            <Text style={styles.seatHighlightLabel}>Assigned Chair:</Text>
-            <Text style={styles.seatHighlightValue}>{item.seatLabel}</Text>
-          </View>
-        )}
-
+        {/* Services & Earnings Strip */}
         {item.services?.length ? (
-          <View style={styles.svcContainer}>
-            <Text style={styles.svcTitle}>Requested Services:</Text>
-            <View style={styles.svcTags}>
+          <View style={styles.compactSvcContainer}>
+            <View style={{ flex: 1, flexDirection: "row", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
+              <Text style={styles.compactSvcHeader}>Services:</Text>
               {item.services.map((s, i) => (
-                <View key={i} style={styles.svcTag}>
-                  <Text style={styles.svcTagText}>{s.name} - ₹{s.price || 0}</Text>
+                <View key={i} style={styles.compactSvcTag}>
+                  <Text style={styles.compactSvcTagText}>{s.name} - ₹{s.price || 0}</Text>
                 </View>
               ))}
             </View>
-            <Text style={{ fontSize: 13, fontWeight: "700", color: "#334155", marginTop: 8 }}>Total: ₹{item.services.reduce((sum, s) => sum + (s.price || 0), 0)}</Text>
+            <View style={{ alignItems: "flex-end", marginLeft: 8 }}>
+              <Text style={styles.compactTotalLabel}>Total</Text>
+              <Text style={styles.compactTotalValue}>
+                ₹{item.services.reduce((sum, s) => sum + (s.price || 0), 0)}
+              </Text>
+            </View>
           </View>
         ) : null}
 
+        {/* Service Type & Address / Map Navigation */}
         {item.isHomeService ? (
-          <View style={[styles.homeServiceBadge, { flexDirection: "column", alignItems: "flex-start", paddingVertical: 12, paddingHorizontal: 14, width: "100%", borderRadius: 14, backgroundColor: "#fcfaff", borderWidth: 1.5, borderColor: "#ddd6fe" }]}>
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
+          <View style={{ backgroundColor: "#faf5ff", borderRadius: 10, padding: 8, marginBottom: 8, borderWidth: 1, borderColor: "#e9d5ff" }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: effectiveCustAddress ? 6 : 0 }}>
               <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Ionicons name="home" size={16} color="#7c3aed" style={{ marginRight: 6 }} />
-                <Text style={[styles.homeServiceBadgeText, { color: "#6d28d9", fontWeight: "800", fontSize: 13 }]}>Home Service Booking</Text>
+                <Ionicons name="home" size={14} color="#7c3aed" style={{ marginRight: 4 }} />
+                <Text style={{ fontSize: 11.5, fontWeight: "800", color: "#6d28d9", textTransform: "uppercase" }}>
+                  Customer Home Service
+                </Text>
               </View>
-              {item.customer?.phone && (
+
+              {customerPhone ? (
                 <Pressable
-                  style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: "#ede9fe", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20 }}
-                  onPress={() => Linking.openURL(`tel:${item.customer.phone}`)}
+                  onPress={() => Linking.openURL(`tel:${customerPhone}`)}
+                  style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#ede9fe", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}
                 >
-                  <Ionicons name="call" size={12} color="#6d28d9" style={{ marginRight: 4 }} />
-                  <Text style={{ fontSize: 12, color: "#6d28d9", fontWeight: '700' }}>{item.customer.phone}</Text>
+                  <Ionicons name="call" size={11} color="#6d28d9" style={{ marginRight: 3 }} />
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#6d28d9" }}>Call Customer</Text>
                 </Pressable>
-              )}
+              ) : null}
             </View>
 
-            {/* Customer Address Card */}
-            {item.status !== "completed" ? (
+            {effectiveCustAddress ? (
               <Pressable
-                style={({ pressed }) => [
-                  {
-                    marginTop: 10,
-                    backgroundColor: "#ffffff",
-                    padding: 12,
-                    borderRadius: 12,
-                    borderWidth: 1.5,
-                    borderColor: item.status === "confirmed" ? "#8b5cf6" : "#c4b5fd",
-                    width: "100%",
-                    shadowColor: "#7c3aed",
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.08,
-                    shadowRadius: 5,
-                    elevation: 2,
-                  },
-                  pressed && { opacity: 0.88, transform: [{ scale: 0.99 }] }
-                ]}
                 onPress={() => {
-                  const targetAddress = item.homeServiceAddress || (item.customer?.address?.line1 ? `${item.customer.address.line1}, ${item.customer.address.city || ""}` : "");
-                  openMapForNavigation(targetAddress, item.homeServiceLocation, `${item.customer?.name || "Customer"}'s Home`);
+                  openMapForNavigation(effectiveCustAddress, effectiveCustLocation, `${customerName}'s Home`);
                 }}
+                style={({ pressed }) => [
+                  styles.shopAddressBar,
+                  { marginBottom: 0, marginTop: 4, backgroundColor: "#ffffff" },
+                  pressed && { opacity: 0.85 }
+                ]}
               >
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-                    <Ionicons name="location-sharp" size={16} color="#7c3aed" style={{ marginRight: 5 }} />
-                    <Text style={{ fontSize: 12, fontWeight: "800", color: "#6d28d9", textTransform: "uppercase", letterSpacing: 0.5 }}>
-                      Customer Address
-                    </Text>
-                  </View>
-                  <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#7c3aed", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
-                    <Ionicons name="navigate" size={12} color="#ffffff" style={{ marginRight: 4 }} />
-                    <Text style={{ fontSize: 11, fontWeight: "800", color: "#ffffff" }}>Open Map</Text>
-                  </View>
+                <View style={[styles.shopAddressIconCircle, { backgroundColor: "#f3e8ff" }]}>
+                  <Ionicons name="location-sharp" size={15} color="#7c3aed" />
                 </View>
-
-                <Text style={{ fontSize: 13, color: "#1e1b4b", fontWeight: "600", lineHeight: 19 }}>
-                  {item.homeServiceAddress || (item.customer?.address?.line1 ? `${item.customer.address.line1}, ${item.customer.address.city || ""}` : "Tap to open navigation coords")}
-                </Text>
-
-                {item.status === "confirmed" && (
-                  <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#f5f3ff", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, marginTop: 8 }}>
-                    <Ionicons name="checkmark-circle" size={13} color="#7c3aed" style={{ marginRight: 4 }} />
-                    <Text style={{ fontSize: 11, color: "#6d28d9", fontWeight: "700" }}>Confirmed - Tap address to navigate to customer</Text>
-                  </View>
-                )}
-
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: "#f3e8ff" }}>
-                  <Text style={{ fontSize: 11, color: "#7c3aed", fontWeight: "600" }}>
-                    📍 Tap to start Google Maps directions
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={[styles.shopAddressBarLabel, { color: "#6d28d9" }]}>Customer Address:</Text>
+                  <Text style={styles.shopAddressBarValue} numberOfLines={2}>
+                    {effectiveCustAddress}
                   </Text>
-                  <View style={{ flexDirection: "row", alignItems: "center" }}>
-                    <Text style={{ fontSize: 11, color: "#4c1d95", fontWeight: "800", marginRight: 3 }}>Navigate</Text>
-                    <Ionicons name="arrow-forward" size={12} color="#4c1d95" />
-                  </View>
+                </View>
+                <View style={[styles.shopAddressMapIconBtn, { backgroundColor: "#7c3aed" }]}>
+                  <Ionicons name="navigate" size={12} color="#ffffff" style={{ marginRight: 3 }} />
+                  <Text style={styles.shopAddressMapBtnText}>Map 🗺️</Text>
                 </View>
               </Pressable>
-            ) : (
-              <View
-                style={{
-                  marginTop: 10,
-                  backgroundColor: "#f8fafc",
-                  padding: 12,
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: "#e2e8f0",
-                  width: "100%",
-                }}
-              >
-                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
-                  <Ionicons name="location-sharp" size={15} color="#64748b" style={{ marginRight: 5 }} />
-                  <Text style={{ fontSize: 12, fontWeight: "700", color: "#64748b", textTransform: "uppercase" }}>
-                    Customer Address
-                  </Text>
-                </View>
-                <Text style={{ fontSize: 12.5, color: "#334155", fontWeight: "500", lineHeight: 18 }}>
-                  {item.homeServiceAddress || (item.customer?.address?.line1 ? `${item.customer.address.line1}, ${item.customer.address.city || ""}` : "No address provided")}
-                </Text>
-              </View>
-            )}
+            ) : null}
           </View>
         ) : (
-          <View style={{ width: "100%", marginTop: 4 }}>
-            <View style={[styles.homeServiceBadge, { backgroundColor: "#f0fdf4", borderColor: "#bbf7d0", paddingVertical: 8, paddingHorizontal: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+          <View style={{ backgroundColor: "#f0fdf4", borderRadius: 10, padding: 8, marginBottom: 8, borderWidth: 1, borderColor: "#bbf7d0" }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: effectiveCustAddress ? 6 : 0 }}>
               <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Ionicons name="storefront" size={14} color="#16a34a" style={{ marginRight: 6 }} />
-                <Text style={[styles.homeServiceBadgeText, { color: "#16a34a" }]}>Shop Service</Text>
+                <Ionicons name="storefront" size={13} color="#16a34a" style={{ marginRight: 4 }} />
+                <Text style={{ fontSize: 11.5, fontWeight: "800", color: "#16a34a", textTransform: "uppercase" }}>Shop Visit Service</Text>
               </View>
-              {item.customer?.phone && (
-                <Pressable style={{ flexDirection: 'row', alignItems: 'center' }} onPress={() => Linking.openURL(`tel:${item.customer.phone}`)}>
-                  <Ionicons name="call" size={12} color="#16a34a" style={{ marginRight: 4 }} />
-                  <Text style={{ fontSize: 12, color: "#16a34a", textDecorationLine: 'underline', fontWeight: 'bold' }}>{item.customer.phone}</Text>
+              {customerPhone ? (
+                <Pressable onPress={() => Linking.openURL(`tel:${customerPhone}`)} style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#dcfce7", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
+                  <Ionicons name="call" size={11} color="#16a34a" style={{ marginRight: 3 }} />
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#16a34a" }}>{customerPhone}</Text>
                 </Pressable>
-              )}
+              ) : null}
             </View>
-            {item.homeServiceAddress ? (
+
+            {effectiveCustAddress ? (
               <View
-                style={{ backgroundColor: "#f8fafc", padding: 10, borderRadius: 10, marginTop: 6, borderWidth: 1, borderColor: "#e2e8f0" }}
+                style={[
+                  styles.shopAddressBar,
+                  { marginBottom: 0, marginTop: 4, backgroundColor: "#ffffff", borderColor: "#bbf7d0" }
+                ]}
               >
-                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 2 }}>
-                  <Ionicons name="location-sharp" size={13} color="#64748b" style={{ marginRight: 4 }} />
-                  <Text style={{ fontSize: 12, fontWeight: "700", color: "#64748b" }}>Customer Address:</Text>
+                <View style={[styles.shopAddressIconCircle, { backgroundColor: "#dcfce7" }]}>
+                  <Ionicons name="location-sharp" size={15} color="#16a34a" />
                 </View>
-                <Text style={{ fontSize: 12, color: "#334155", fontWeight: "500" }}>
-                  {item.homeServiceAddress}
-                </Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.shopAddressBarLabel, { color: "#15803d" }]}>Booked From (Customer Area):</Text>
+                  <Text style={[styles.shopAddressBarValue, { color: "#1e293b" }]} numberOfLines={2}>
+                    {effectiveCustAddress}
+                  </Text>
+                </View>
               </View>
             ) : null}
           </View>
         )}
 
-        {/* Barber actions */}
+        {/* Barber Actions (Pending, Confirmed, In Progress) */}
         {item.status?.toLowerCase() === "pending" ? (
           <View style={styles.actionGrid}>
-            <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#f1f5f9" }]} onPress={() => setStatus(item.id, "cancelled")}>
+            <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#fef2f2" }]} onPress={() => setStatus(item.id, "cancelled")}>
               <Text style={[styles.actionBtnTextSolid, { color: "#ef4444" }]}>Decline</Text>
             </Pressable>
 
-            <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#6d28d9" }]} onPress={() => setStatus(item.id, "confirmed", item.startTime, item.isHomeService)}>
+            <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#6d28d9" }]} onPress={() => setStatus(item.id, "confirmed", item.arrivalTime || item.startTime, item.isHomeService)}>
               <Text style={[styles.actionBtnTextSolid, { color: "#ffffff" }]}>Confirm Booking</Text>
             </Pressable>
           </View>
         ) : (item.status === "confirmed") ? (
-          <View style={styles.verifyBox}>
-            <Text style={styles.verifyLabel}>Verify Customer OTP</Text>
-            <View style={{ flexDirection: "row", gap: 10 }}>
+          <View style={{ marginTop: 6, flexDirection: "row", gap: 8 }}>
+            {item.isWalkIn ? (
               <Pressable
-                style={styles.verifyBtn}
-                onPress={() => promptVerifyOtp(item.id)}
+                style={[
+                  styles.actionBtnSolid,
+                  { backgroundColor: "#6d28d9", flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, height: 44, borderRadius: 10 }
+                ]}
+                onPress={() => handleStartService(item)}
               >
-                <Text style={styles.verifyBtnText}>Enter OTP & Start Haircut</Text>
+                <Ionicons name="play" size={16} color="#ffffff" />
+                <Text style={[styles.actionBtnTextSolid, { color: "#ffffff", fontWeight: "800" }]}>Start Service ✂️</Text>
               </Pressable>
-            </View>
+            ) : (
+              <Pressable
+                style={[
+                  styles.verifyBtn,
+                  { flexDirection: "row", justifyContent: "center", paddingVertical: 11, backgroundColor: item.verificationPin ? "#0f172a" : "#6d28d9", flex: 1 },
+                  generatingOtpBookingId === (item.id || item._id) && { opacity: 0.7 }
+                ]}
+                onPress={() => handleTriggerCheckinOtp(item)}
+                disabled={generatingOtpBookingId === (item.id || item._id)}
+              >
+                {generatingOtpBookingId === (item.id || item._id) ? (
+                  <ActivityIndicator color="#ffffff" size="small" style={{ marginRight: 6 }} />
+                ) : (
+                  <Ionicons name="key" size={15} color="#ffffff" style={{ marginRight: 6 }} />
+                )}
+                <Text style={styles.verifyBtnText}>Enter OTP ✂️</Text>
+              </Pressable>
+            )}
+
+            <Pressable
+              style={{
+                backgroundColor: "#fef2f2",
+                borderWidth: 1,
+                borderColor: "#fca5a5",
+                borderRadius: 10,
+                paddingHorizontal: 14,
+                paddingVertical: 11,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center"
+              }}
+              onPress={() => setStatus(item.id, "cancelled")}
+            >
+              <Ionicons name="close-circle" size={15} color="#dc2626" style={{ marginRight: 4 }} />
+              <Text style={{ color: "#dc2626", fontWeight: "700", fontSize: 13 }}>Cancel</Text>
+            </Pressable>
           </View>
         ) : item.status === "in-progress" ? (
-          <View style={styles.actionGrid}>
+          <View style={{ marginTop: 4 }}>
             <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#16a34a" }]} onPress={() => handleStartCompletion(item)}>
               <Text style={[styles.actionBtnTextSolid, { color: "#ffffff" }]}>
-                Complete Service ✂️
+                Complete Service 🎉
               </Text>
             </Pressable>
           </View>
@@ -1862,7 +2062,7 @@ export function MyBookingsScreen({ navigation, route }) {
         <View style={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 6, alignItems: "flex-end" }}>
           <Pressable
             style={[styles.walkInBtn, { width: "auto", paddingHorizontal: 14, height: 38, borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 6 }]}
-            onPress={() => setWalkInModalVisible(true)}
+            onPress={openWalkInModal}
           >
             <Ionicons name="person-add" size={16} color="#fff" />
             <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>+ Walk-in Client</Text>
@@ -1875,7 +2075,7 @@ export function MyBookingsScreen({ navigation, route }) {
         keyExtractor={(item) => item.id || item._id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6d28d9" />}
         contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => viewMode === "Shop Queue" ? renderBarberCard(item) : item.isTailorOrder ? renderTailorCard(item) : renderCustomerCard(item)}
+        renderItem={({ item, index }) => viewMode === "Shop Queue" ? renderBarberCard(item, index) : item.isTailorOrder ? renderTailorCard(item, index) : renderCustomerCard(item, index)}
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <View style={styles.emptyIconCircle}>
@@ -1909,6 +2109,16 @@ export function MyBookingsScreen({ navigation, route }) {
               onChangeText={setOtpInput}
               editable={!verifying}
             />
+
+            <Pressable
+              onPress={() => handleResendOtp(activeBookingId)}
+              disabled={verifying}
+              style={{ marginTop: 6, marginBottom: 16 }}
+            >
+              <Text style={{ fontSize: 13, color: "#6d28d9", fontWeight: "600", textAlign: "center" }}>
+                Didn't receive code? Resend OTP
+              </Text>
+            </Pressable>
 
             <View style={styles.modalActions}>
               <Pressable style={styles.modalCancelBtn} onPress={() => setOtpModalVisible(false)} disabled={verifying}>
@@ -1954,43 +2164,304 @@ export function MyBookingsScreen({ navigation, route }) {
         </View>
       </Modal>
 
-      {/* Walk-in Modal */}
+      {/* Walk-in Client Modal */}
       <Modal visible={walkInModalVisible} transparent animationType="slide" onRequestClose={() => setWalkInModalVisible(false)}>
-        <View style={styles.modalBg}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Add Walk-In Customer</Text>
-            <TextInput
-              style={[styles.otpInputBox, { fontSize: 16, textAlign: "left", letterSpacing: 0, padding: 12, marginBottom: 12 }]}
-              placeholder="Customer Name (Optional)"
-              value={walkInName}
-              onChangeText={setWalkInName}
-              placeholderTextColor="#94a3b8"
-            />
-            <Text style={{ alignSelf: 'flex-start', marginBottom: 8, fontWeight: '600' }}>Select Services</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
-              {shopServices.map(svc => {
-                const isSelected = selectedWalkInServices.includes(svc.id);
-                return (
-                  <Pressable
-                    key={svc.id}
-                    style={{ padding: 8, borderRadius: 8, borderWidth: 1, borderColor: isSelected ? '#6d28d9' : '#e2e8f0', backgroundColor: isSelected ? '#6d28d9' : '#fff' }}
-                    onPress={() => {
-                      if (isSelected) setSelectedWalkInServices(prev => prev.filter(id => id !== svc.id));
-                      else setSelectedWalkInServices(prev => [...prev, svc.id]);
-                    }}
-                  >
-                    <Text style={{ color: isSelected ? '#fff' : '#475569', fontSize: 12 }}>{svc.name}</Text>
-                  </Pressable>
-                )
-              })}
+        <View style={styles.walkInModalBg}>
+          <View style={styles.walkInModalCard}>
+            {/* Modal Header */}
+            <View style={styles.walkInHeaderRow}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
+                <View style={styles.walkInHeaderIconCircle}>
+                  <Text style={{ fontSize: 20 }}>💈</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.walkInModalTitle}>New Walk-In Client</Text>
+                  <Text style={styles.walkInModalSub}>Quick in-shop booking & queue entry</Text>
+                </View>
+              </View>
+              <Pressable
+                onPress={() => setWalkInModalVisible(false)}
+                style={styles.walkInCloseBtn}
+                hitSlop={8}
+              >
+                <Ionicons name="close" size={20} color="#64748b" />
+              </Pressable>
             </View>
-            <View style={styles.modalActions}>
-              <Pressable style={styles.modalCancelBtn} onPress={() => setWalkInModalVisible(false)}>
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable style={styles.modalSubmitBtn} onPress={submitWalkIn} disabled={submittingWalkIn}>
-                {submittingWalkIn ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalSubmitText}>Add to Queue</Text>}
-              </Pressable>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+              {/* Client Info Section */}
+              <View style={styles.walkInSectionCard}>
+                <Text style={styles.walkInFieldLabel}>1. CUSTOMER NAME</Text>
+                
+                <View style={styles.walkInInputContainer}>
+                  <Ionicons name="person-outline" size={18} color="#6d28d9" style={{ marginRight: 10 }} />
+                  <TextInput
+                    style={styles.walkInInputField}
+                    placeholder="Enter Customer Name (e.g. Rahul)"
+                    placeholderTextColor="#94a3b8"
+                    value={walkInName}
+                    onChangeText={setWalkInName}
+                  />
+                </View>
+              </View>
+
+              {/* Chair Assignment Section (Only Chair 1 / Available Chairs, No Auto) */}
+              <View style={[styles.walkInSectionCard, { marginTop: 12 }]}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                  <Text style={styles.walkInFieldLabel}>ASSIGN TO CHAIR</Text>
+                  <Text style={{ fontSize: 11, color: "#64748b", fontWeight: "700" }}>
+                    Styling Chair
+                  </Text>
+                </View>
+
+                {(() => {
+                  const displaySeats = shopSeats.length > 0 ? shopSeats : [{ index: 0, label: "Chair 1", isAvailable: true }];
+                  const activeChairIndex = walkInChairIndex !== null && walkInChairIndex !== undefined ? walkInChairIndex : 0;
+                  const currentSeat = displaySeats.find(s => s.index === activeChairIndex) || displaySeats[0];
+                  
+                  // Calculate active bookings on this chair from live bookings list
+                  const activeChairBookings = items.filter(b => 
+                    ["in-progress", "confirmed", "arrived", "pending"].includes((b.status || "").toLowerCase()) &&
+                    (b.seatIndex === activeChairIndex || b.seatIndex === null || b.seatIndex === undefined)
+                  );
+                  const isBusy = activeChairBookings.length > 0;
+                  const nextQueueNumber = activeChairBookings.length + 1;
+
+                  // Free time calculation
+                  let freeInMins = 0;
+                  let freeTimeStr = "";
+                  if (isBusy) {
+                    if (currentSeat?.nextAvailableAt) {
+                      freeInMins = Math.max(1, Math.ceil((new Date(currentSeat.nextAvailableAt).getTime() - Date.now()) / 60000));
+                      freeTimeStr = new Date(currentSeat.nextAvailableAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+                    } else if (currentSeat?.freeInMinutes) {
+                      freeInMins = currentSeat.freeInMinutes;
+                    } else {
+                      const latestEnd = activeChairBookings.reduce((max, b) => {
+                        const t = new Date(b.endTime || b.startTime).getTime();
+                        return t > max ? t : max;
+                      }, Date.now());
+                      freeInMins = Math.max(1, Math.ceil((latestEnd - Date.now()) / 60000));
+                      freeTimeStr = new Date(latestEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+                    }
+                  }
+
+                  return (
+                    <View>
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+                        {displaySeats.map((seat) => {
+                          const isChosen = activeChairIndex === seat.index;
+                          const seatActiveBookings = items.filter(b => 
+                            ["in-progress", "confirmed", "arrived", "pending"].includes((b.status || "").toLowerCase()) &&
+                            (b.seatIndex === seat.index || b.seatIndex === null || b.seatIndex === undefined)
+                          );
+                          const seatIsBusy = seatActiveBookings.length > 0;
+                          return (
+                            <Pressable
+                              key={seat.index}
+                              style={[
+                                styles.chairSelectChip,
+                                isChosen && styles.chairSelectChipActive,
+                                !isChosen && seatIsBusy && { borderColor: "#fdba74", backgroundColor: "#fff7ed" }
+                              ]}
+                              onPress={() => setWalkInChairIndex(seat.index)}
+                            >
+                              <Text style={{ fontSize: 14 }}>{seatIsBusy ? "⏳" : "💺"}</Text>
+                              <Text style={[styles.chairSelectChipText, isChosen && { color: "#fff" }]}>
+                                {seat.label || `Chair ${seat.index + 1}`}
+                              </Text>
+                              {seatIsBusy && (
+                                <View style={{ backgroundColor: isChosen ? "rgba(255,255,255,0.25)" : "#ffedd5", paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, marginLeft: 2 }}>
+                                  <Text style={{ fontSize: 9.5, fontWeight: "800", color: isChosen ? "#fff" : "#ea580c" }}>Busy</Text>
+                                </View>
+                              )}
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+
+                      {/* Live Chair Status Box */}
+                      {isBusy ? (
+                        <View style={{ backgroundColor: "#fff7ed", padding: 12, borderRadius: 12, borderWidth: 1.5, borderColor: "#fdba74", marginTop: 10 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                              <Ionicons name="time" size={17} color="#ea580c" />
+                              <Text style={{ fontSize: 13, fontWeight: "900", color: "#c2410c" }}>
+                                {currentSeat?.label || "Chair 1"} Abhi Busy Hai ⏳
+                              </Text>
+                            </View>
+                            <View style={{ backgroundColor: "#fed7aa", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                              <Text style={{ fontSize: 11, fontWeight: "800", color: "#9a3412" }}>Aapka No: Queue #{nextQueueNumber}</Text>
+                            </View>
+                          </View>
+                          <Text style={{ fontSize: 12, color: "#9a3412", lineHeight: 18, marginTop: 3 }}>
+                            ⏳ Chair lagbhag <Text style={{ fontWeight: "900", color: "#c2410c" }}>{freeInMins} minute</Text> me khali hogi {freeTimeStr ? `(~${freeTimeStr})` : ""}. Is walk-in client ka number <Text style={{ fontWeight: "900", color: "#c2410c" }}>Queue #{nextQueueNumber}</Text> par aayega.
+                          </Text>
+                          <Text style={{ fontSize: 11, color: "#ea580c", fontWeight: "700", marginTop: 4 }}>
+                            💡 Booking confirm karte hi yeh client queue me add ho jayega aur service turns sequentially book honge.
+                          </Text>
+                        </View>
+                      ) : (
+                        <View style={{ backgroundColor: "#f0fdf4", padding: 12, borderRadius: 12, borderWidth: 1.5, borderColor: "#86efac", marginTop: 10 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                              <Ionicons name="checkmark-circle" size={17} color="#16a34a" />
+                              <Text style={{ fontSize: 13, fontWeight: "900", color: "#15803d" }}>
+                                {currentSeat?.label || "Chair 1"} Abhi Khali Hai ✂️
+                              </Text>
+                            </View>
+                            <View style={{ backgroundColor: "#bbf7d0", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                              <Text style={{ fontSize: 11, fontWeight: "800", color: "#166534" }}>Queue #1 (Next Turn)</Text>
+                            </View>
+                          </View>
+                          <Text style={{ fontSize: 12, color: "#166534", marginTop: 3 }}>
+                            Chair abhi bilkul khali hai. Booking karte hi client ka service session Queue #1 par start kiya ja sakta hai.
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  );
+                })()}
+              </View>
+
+              {/* Service Selection Section */}
+              <View style={[styles.walkInSectionCard, { marginTop: 14 }]}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <Text style={styles.walkInFieldLabel}>2. SELECT SERVICES</Text>
+                  {selectedWalkInServices.length > 0 && (
+                    <View style={styles.walkInCountBadge}>
+                      <Text style={styles.walkInCountBadgeText}>{selectedWalkInServices.length} Selected</Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Service Search Input */}
+                <View style={styles.walkInSearchBox}>
+                  <Ionicons name="search" size={16} color="#94a3b8" style={{ marginRight: 8 }} />
+                  <TextInput
+                    style={{ flex: 1, fontSize: 13, color: "#0f172a", paddingVertical: 6 }}
+                    placeholder="Search services by name..."
+                    placeholderTextColor="#94a3b8"
+                    value={walkInSearch}
+                    onChangeText={setWalkInSearch}
+                  />
+                  {walkInSearch.length > 0 && (
+                    <Pressable onPress={() => setWalkInSearch("")} hitSlop={6}>
+                      <Ionicons name="close-circle" size={16} color="#94a3b8" />
+                    </Pressable>
+                  )}
+                </View>
+
+                {/* Services List */}
+                {loadingShopServices ? (
+                  <View style={{ paddingVertical: 30, alignItems: "center" }}>
+                    <ActivityIndicator size="small" color="#6d28d9" />
+                    <Text style={{ marginTop: 8, fontSize: 13, color: "#64748b" }}>Loading shop services...</Text>
+                  </View>
+                ) : filteredWalkInServices.length === 0 ? (
+                  <View style={{ paddingVertical: 24, alignItems: "center" }}>
+                    <Ionicons name="cut-outline" size={36} color="#cbd5e1" />
+                    <Text style={{ fontSize: 13, fontWeight: "600", color: "#64748b", marginTop: 6 }}>
+                      {shopServices.length === 0 ? "No services registered for this shop." : "No matching services found."}
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={{ gap: 8, marginTop: 10 }}>
+                    {filteredWalkInServices.map((svc) => {
+                      const sid = svc.id || svc._id;
+                      const isSelected = selectedWalkInServices.includes(sid);
+                      return (
+                        <Pressable
+                          key={sid}
+                          style={[
+                            styles.walkInServiceCard,
+                            isSelected && styles.walkInServiceCardActive
+                          ]}
+                          onPress={() => {
+                            if (isSelected) {
+                              setSelectedWalkInServices(prev => prev.filter(id => id !== sid));
+                            } else {
+                              setSelectedWalkInServices(prev => [...prev, sid]);
+                            }
+                          }}
+                        >
+                          <Ionicons
+                            name={isSelected ? "checkmark-circle" : "ellipse-outline"}
+                            size={22}
+                            color={isSelected ? "#6d28d9" : "#94a3b8"}
+                            style={{ marginRight: 10 }}
+                          />
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.walkInServiceName, isSelected && { color: "#5b21b6" }]} numberOfLines={1}>
+                              {svc.name}
+                            </Text>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 2 }}>
+                              <View style={styles.walkInDurationTag}>
+                                <Ionicons name="time-outline" size={11} color="#64748b" style={{ marginRight: 2 }} />
+                                <Text style={styles.walkInDurationTagText}>{svc.durationMinutes || 30}m</Text>
+                              </View>
+                              {svc.category ? (
+                                <Text style={{ fontSize: 11, color: "#94a3b8" }}>• {svc.category}</Text>
+                              ) : null}
+                            </View>
+                          </View>
+                          <View style={[styles.walkInPriceBadge, isSelected && { backgroundColor: "#ede9fe" }]}>
+                            <Text style={[styles.walkInPriceBadgeText, isSelected && { color: "#6d28d9" }]}>
+                              ₹{svc.price || 0}
+                            </Text>
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            </ScrollView>
+
+            {/* Bottom Summary & Confirmation Bar */}
+            <View style={styles.walkInFooter}>
+              {selectedWalkInServices.length > 0 ? (
+                <View style={styles.walkInSummaryRow}>
+                  <View>
+                    <Text style={{ fontSize: 11, fontWeight: "600", color: "#64748b" }}>TOTAL ESTIMATE</Text>
+                    <Text style={{ fontSize: 18, fontWeight: "900", color: "#0f172a" }}>₹{walkInTotalPrice}</Text>
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#f3e8ff", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}>
+                    <Ionicons name="time" size={13} color="#6d28d9" />
+                    <Text style={{ fontSize: 12, fontWeight: "700", color: "#6d28d9" }}>{walkInTotalDuration} mins</Text>
+                  </View>
+                </View>
+              ) : null}
+
+              <View style={styles.walkInActionBtns}>
+                <Pressable
+                  style={styles.walkInCancelBtn}
+                  onPress={() => setWalkInModalVisible(false)}
+                  disabled={submittingWalkIn}
+                >
+                  <Text style={styles.walkInCancelBtnText}>Cancel</Text>
+                </Pressable>
+
+                <Pressable
+                  style={[
+                    styles.walkInConfirmBtn,
+                    selectedWalkInServices.length === 0 && { backgroundColor: "#cbd5e1" }
+                  ]}
+                  onPress={submitWalkIn}
+                  disabled={submittingWalkIn || selectedWalkInServices.length === 0}
+                >
+                  {submittingWalkIn ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <Ionicons name="checkmark-done" size={18} color="#fff" />
+                      <Text style={styles.walkInConfirmBtnText}>
+                        {selectedWalkInServices.length === 0 ? "Select Services" : `Confirm Booking • ₹${walkInTotalPrice}`}
+                      </Text>
+                    </View>
+                  )}
+                </Pressable>
+              </View>
             </View>
           </View>
         </View>
@@ -2163,6 +2634,8 @@ export function MyBookingsScreen({ navigation, route }) {
         </View>
       </Modal>
 
+
+
     </SafeAreaView>
   );
 }
@@ -2294,7 +2767,7 @@ const styles = StyleSheet.create({
   cardDivider: {
     height: 1,
     backgroundColor: "#f1f5f9",
-    marginVertical: 16,
+    marginVertical: 10,
   },
 
   detailsGrid: {
@@ -2461,4 +2934,533 @@ const styles = StyleSheet.create({
   searchInputWrapper: { flex: 1, flexDirection: "row", alignItems: "center", backgroundColor: "#ffffff", paddingHorizontal: 12, height: 44, borderRadius: 12, borderWidth: 1, borderColor: "#e2e8f0" },
   searchInput: { flex: 1, marginLeft: 8, fontSize: 14, color: "#0f172a" },
   walkInBtn: { width: 44, height: 44, backgroundColor: "#0f172a", borderRadius: 12, justifyContent: "center", alignItems: "center" },
+
+  shopLocationCard: {
+    backgroundColor: "#f8fafc",
+    padding: 14,
+    borderRadius: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  shopLocationCardConfirmed: {
+    backgroundColor: "#f0fdf4",
+    borderColor: "#bbf7d0",
+  },
+  shopLocationCardBeauty: {
+    backgroundColor: "#fdf2f8",
+    borderColor: "#fbcfe8",
+  },
+  shopLocationHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  shopLocationIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  shopLocationTag: {
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  shopLocationName: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0f172a",
+    marginTop: 2,
+  },
+  readyBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#dcfce7",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#bbf7d0",
+  },
+  readyBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#16a34a",
+  },
+  /* Compact & Modern Styles for Customer & Barber cards */
+  compactContactBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+  },
+  compactContactIconCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 8,
+  },
+  compactContactShopTitle: {
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  compactContactPhoneText: {
+    fontSize: 12.5,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  compactCallPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 14,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  compactCallPillText: {
+    color: "#ffffff",
+    fontWeight: "800",
+    fontSize: 11,
+  },
+
+  compactScheduleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#f8fafc",
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  compactScheduleLabel: {
+    fontSize: 9.5,
+    fontWeight: "800",
+    color: "#64748b",
+    letterSpacing: 0.4,
+  },
+  compactScheduleValue: {
+    fontSize: 12.5,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  compactChairBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fef08a",
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: "#fde047",
+  },
+  compactChairText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#854d0e",
+  },
+  compactHomeBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f3e8ff",
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: "#ddd6fe",
+  },
+  compactHomeText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#6d28d9",
+  },
+
+  compactSvcContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#ffffff",
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#f1f5f9",
+  },
+  compactSvcHeader: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#64748b",
+    marginRight: 4,
+  },
+  compactSvcTag: {
+    backgroundColor: "#f8fafc",
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  compactSvcTagText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#334155",
+  },
+  compactTotalLabel: {
+    fontSize: 9.5,
+    fontWeight: "600",
+    color: "#94a3b8",
+    textTransform: "uppercase",
+  },
+  compactTotalValue: {
+    fontSize: 13.5,
+    fontWeight: "900",
+    color: "#0f172a",
+  },
+
+  compactOtpCard: {
+    backgroundColor: "#fefce8",
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#fef08a",
+  },
+  compactOtpHeader: {
+    fontSize: 10.5,
+    fontWeight: "800",
+    color: "#92400e",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  compactOtpBadge: {
+    backgroundColor: "#fef08a",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  compactOtpBadgeText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#854d0e",
+  },
+  compactOtpPin: {
+    fontSize: 19,
+    fontWeight: "900",
+    color: "#b45309",
+    letterSpacing: 3,
+  },
+  compactOtpHours: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#b45309",
+  },
+
+  shopAddressBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f8fafc",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  shopAddressIconCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 8,
+  },
+  shopAddressBarLabel: {
+    fontSize: 10.5,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+    marginBottom: 2,
+  },
+  shopAddressBarValue: {
+    fontSize: 11.5,
+    color: "#1e293b",
+    fontWeight: "600",
+    lineHeight: 15,
+  },
+  shopAddressMapIconBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    borderRadius: 7,
+    shadowColor: "#4f46e5",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  shopAddressMapBtnText: {
+    color: "#ffffff",
+    fontSize: 10.5,
+    fontWeight: "800",
+  },
+  serialTokenBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#e0e7ff",
+    borderColor: "#c7d2fe",
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  serialTokenBadgeText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#4338ca",
+    letterSpacing: 0.3,
+  },
+  serialTagOverlay: {
+    position: "absolute",
+    bottom: -3,
+    right: -3,
+    backgroundColor: "#4f46e5",
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderWidth: 1.5,
+    borderColor: "#ffffff",
+  },
+  serialTagOverlayText: {
+    color: "#ffffff",
+    fontSize: 9,
+    fontWeight: "900",
+  },
+  walkInModalBg: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.65)",
+    justifyContent: "flex-end",
+  },
+  walkInModalCard: {
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 18,
+    paddingHorizontal: 16,
+    maxHeight: "88%",
+  },
+  walkInHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f5f9",
+  },
+  walkInHeaderIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "#f3e8ff",
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#e9d5ff",
+  },
+  walkInModalTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  walkInModalSub: {
+    fontSize: 12,
+    color: "#64748b",
+    marginTop: 1,
+  },
+  walkInCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#f1f5f9",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  walkInSectionCard: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  walkInFieldLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#64748b",
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  walkInInputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    paddingHorizontal: 12,
+    height: 44,
+  },
+  walkInInputField: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#0f172a",
+  },
+  walkInCountBadge: {
+    backgroundColor: "#6d28d9",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  walkInCountBadgeText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  walkInSearchBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    paddingHorizontal: 10,
+    height: 38,
+  },
+  walkInServiceCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1.5,
+    borderColor: "#e2e8f0",
+  },
+  walkInServiceCardActive: {
+    backgroundColor: "#faf5ff",
+    borderColor: "#7c3aed",
+  },
+  walkInServiceName: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  walkInDurationTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f1f5f9",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  walkInDurationTagText: {
+    fontSize: 11,
+    color: "#475569",
+    fontWeight: "600",
+  },
+  walkInPriceBadge: {
+    backgroundColor: "#f1f5f9",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  walkInPriceBadgeText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
+  walkInFooter: {
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#f1f5f9",
+    backgroundColor: "#ffffff",
+  },
+  walkInSummaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#f8fafc",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  walkInActionBtns: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  walkInCancelBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 12,
+    backgroundColor: "#f1f5f9",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  walkInCancelBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#64748b",
+  },
+  walkInConfirmBtn: {
+    flex: 2,
+    height: 46,
+    borderRadius: 12,
+    backgroundColor: "#6d28d9",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  walkInConfirmBtnText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#ffffff",
+  },
+  chairSelectChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  chairSelectChipActive: {
+    backgroundColor: "#6d28d9",
+    borderColor: "#6d28d9",
+  },
+  chairSelectChipText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#334155",
+  },
 });

@@ -2,7 +2,7 @@ import { Platform } from "react-native";
 import Constants from "expo-constants";
 
 const extra = Constants.expoConfig?.extra;
-const LIVE_PRODUCTION_URL = "https://roopsy.onrender.com";
+const LIVE_PRODUCTION_URL = "http://76.13.246.224:4000";
 
 function getHostIp() {
   const hostUri =

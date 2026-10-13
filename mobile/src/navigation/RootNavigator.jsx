@@ -1,6 +1,6 @@
 import React, { useEffect } from "react";
 import { ActivityIndicator, Alert, StyleSheet, Text, View } from "react-native";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, getFocusedRouteNameFromRoute } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
@@ -67,6 +67,64 @@ import { PartnerHoursScreen } from "../screens/partner/PartnerHoursScreen";
 import { PartnerGalleryScreen } from "../screens/partner/PartnerGalleryScreen";
 import { PartnerReviewScreen } from "../screens/partner/PartnerReviewScreen";
 import { PartnerSubmittedScreen } from "../screens/partner/PartnerSubmittedScreen";
+
+const HIDE_TAB_BAR_SCREENS = [
+  "TailorServiceMode",
+  "TailorOrder",
+  "TailorDetail",
+  "BarberDetail",
+  "BeautyParlorDetail",
+  "BarberList",
+  "TailorList",
+  "BeautyParlorList",
+  "TailorFabric",
+  "TailorDesign",
+  "TailorMeasurementSelect",
+  "MeasurementList",
+  "MeasurementForm",
+  "TailorWorkspace",
+  "AdminWorkspace",
+  "Favorites",
+  "ComingSoon",
+  "UserGuide",
+  "PartnerOrderDetail",
+  "ProductionBoard",
+  "TailorCRM",
+  "TailorCRMDetail",
+  "TailorInventory",
+  "TailorStaff",
+  "TailorFinance",
+  "TailorShopEdit",
+  "BarberProfileEdit",
+  "PartnerEntry",
+  "PartnerCategory",
+  "PartnerBasicInfo",
+  "PartnerServices",
+  "PartnerHours",
+  "PartnerGallery",
+  "PartnerReview",
+  "PartnerSubmitted",
+];
+
+const getTabBarVisibility = (route) => {
+  const routeName = getFocusedRouteNameFromRoute(route);
+  if (routeName && HIDE_TAB_BAR_SCREENS.includes(routeName)) {
+    return { display: "none" };
+  }
+  return { 
+    backgroundColor: "#ffffff", 
+    minHeight: 70, 
+    paddingBottom: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#f1f5f9",
+    elevation: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+  };
+};
 
 const AuthStack = createNativeStackNavigator();
 const HomeStack = createNativeStackNavigator();
@@ -310,6 +368,20 @@ function MainTabs() {
     if (!user) return;
     const socket = getSocket();
     if (socket) {
+      const uId = (user._id || user.id)?.toString();
+      const bId = (barber?._id || barber?.id)?.toString();
+      if (uId) {
+        socket.emit("joinUserRoom", uId);
+      }
+      if (bId) {
+        socket.emit("joinBarberRoom", bId);
+      }
+      const onConnect = () => {
+        if (uId) socket.emit("joinUserRoom", uId);
+        if (bId) socket.emit("joinBarberRoom", bId);
+      };
+      socket.on("connect", onConnect);
+
       const handleNewBooking = (data) => {
         if (isPartner) {
           Alert.alert(
@@ -328,11 +400,9 @@ function MainTabs() {
         }
       };
 
-      const handleBookingUpdated = (data) => {
-        const isCancelled = data.status === "cancelled" || data.status === "declined";
-        const isConfirmed = data.status === "confirmed";
-        const title = isConfirmed ? "Booking Confirmed! ✅" : isCancelled ? "Booking Cancelled ⚠️" : "Booking Updated 📋";
-        const msg = data.message || (isConfirmed ? "Your booking has been confirmed by the shop." : isCancelled ? "A booking was cancelled." : "Your booking status has been updated.");
+      const handleBookingCancelled = (data) => {
+        const title = data?.title || "Booking Cancelled by Customer ❌";
+        const msg = data?.message || "A customer has cancelled their booking.";
 
         Alert.alert(
           title,
@@ -342,7 +412,7 @@ function MainTabs() {
             {
               text: isPartner ? "View Bookings" : "View Appointment",
               onPress: () => {
-                const detectedType = data?.type || (data?.orderId || user?.role === "tailor" ? "tailor_order_update" : "booking_update");
+                const detectedType = data?.type || (data?.orderId || user?.role === "tailor" ? "tailor_order_cancelled" : "booking_cancelled");
                 navigateByNotification(navigation, { data: { ...data, type: detectedType }, title, body: msg }, user);
               },
             },
@@ -384,20 +454,21 @@ function MainTabs() {
       };
 
       socket.on("newBooking", handleNewBooking);
-      socket.on("bookingUpdated", handleBookingUpdated);
+      socket.on("bookingCancelled", handleBookingCancelled);
       socket.on("turnUpcoming", handleTurnUpcoming);
       socket.on("notification", handleGeneralNotification);
       socket.on("notificationReceived", handleGeneralNotification);
 
       return () => {
+        socket.off("connect", onConnect);
         socket.off("newBooking", handleNewBooking);
-        socket.off("bookingUpdated", handleBookingUpdated);
+        socket.off("bookingCancelled", handleBookingCancelled);
         socket.off("turnUpcoming", handleTurnUpcoming);
         socket.off("notification", handleGeneralNotification);
         socket.off("notificationReceived", handleGeneralNotification);
       };
     }
-  }, [user, isPartner, navigation]);
+  }, [user, barber, isPartner, navigation]);
 
   // Pending barber should be able to configure their shop
   // We'll show a warning banner in their Dashboard instead of blocking them completely.
@@ -413,19 +484,7 @@ function MainTabs() {
         screenOptions={({ route }) => ({
           headerShown: false,
           tabBarShowLabel: true,
-          tabBarStyle: { 
-            backgroundColor: "#ffffff", 
-            minHeight: 70, 
-            paddingBottom: 10,
-            paddingTop: 8,
-            borderTopWidth: 1,
-            borderTopColor: "#f1f5f9",
-            elevation: 10,
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: -4 },
-            shadowOpacity: 0.05,
-            shadowRadius: 10,
-          },
+          tabBarStyle: getTabBarVisibility(route),
           tabBarActiveTintColor: "#6d28d9",
           tabBarInactiveTintColor: "#94a3b8",
           tabBarLabelStyle: { fontSize: 10, fontWeight: "600", marginTop: 4 },

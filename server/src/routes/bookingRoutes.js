@@ -12,6 +12,8 @@ router.get("/me", authRequired, bookingController.listMine);
 router.get("/barber", authRequired, requireRole("barber", "admin"), bookingController.listForBarber);
 router.get("/queue", authRequired, requireRole("barber", "admin"), bookingController.getUnifiedQueue);
 router.post("/walk-in", authRequired, requireRole("barber"), bookingController.walkIn);
+router.post("/:id/generate-checkin-otp", authRequired, requireRole("barber", "admin"), bookingController.generateCheckinOtp);
+router.post("/generate-checkin-otp", authRequired, requireRole("barber", "admin"), bookingController.generateCheckinOtp);
 router.post("/verify-otp", authRequired, requireRole("barber", "admin"), bookingController.verifyOtp);
 router.post("/:id/generate-completion-otp", authRequired, requireRole("barber", "admin"), bookingController.generateCompletionOtp);
 router.post("/verify-completion-otp", authRequired, requireRole("barber", "admin"), bookingController.verifyCompletionOtp);

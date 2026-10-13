@@ -315,8 +315,12 @@ async function getMine(req, res) {
     }
   }
   const services = await Service.find({ barberId: barber._id }).sort({ category: 1, name: 1 });
+  const { enrichBarberSeats } = require("../utils/barberSeats");
+  const enrichedSeats = await enrichBarberSeats(barber);
+  const detail = ownerBarberDetail(barber);
+  detail.seats = enrichedSeats;
   res.json({
-    barber: ownerBarberDetail(barber),
+    barber: detail,
     services: services.map((s) => ({
       id: s._id,
       name: s.name,

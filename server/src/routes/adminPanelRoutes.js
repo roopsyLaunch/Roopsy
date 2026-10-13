@@ -19,7 +19,16 @@ router.get("/reviews",         authRequired, requireRole("admin"), ctrl.getAllRe
 router.delete("/reviews/:id",  authRequired, requireRole("admin"), ctrl.deleteReview);
 router.get("/users",           authRequired, requireRole("admin"), ctrl.getAllUsers);
 router.patch("/users/:id/role",authRequired, requireRole("admin"), ctrl.updateUserRole);
+router.patch("/users/:id/block",authRequired, requireRole("admin"), ctrl.blockUser);
+router.patch("/users/:id/unblock",authRequired, requireRole("admin"), ctrl.unblockUser);
 router.delete("/users/:id",    authRequired, requireRole("admin"), ctrl.deleteUser);
 router.get("/partners/:id/details", authRequired, requireRole("admin"), ctrl.getPartnerDetails);
+
+// Additional Shop & Notification features
+router.get("/recent-activity", authRequired, requireRole("admin"), ctrl.getRecentActivity);
+router.get("/notifications",   authRequired, requireRole("admin"), ctrl.getAllNotifications);
+router.post("/notifications",  authRequired, requireRole("admin"), ctrl.sendNotification);
+router.post("/shops",          authRequired, requireRole("admin"), ctrl.createShop);
+router.delete("/shops/:type/:id", authRequired, requireRole("admin"), ctrl.deleteShop);
 
 module.exports = router;

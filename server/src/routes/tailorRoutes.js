@@ -24,7 +24,8 @@ const {
   rateTailorOrder,
   uploadClothProof,
   uploadDeliveryProof,
-  startStitching
+  startStitching,
+  completeOrder
 } = require("../controllers/tailorController");
 
 // Public routes
@@ -50,6 +51,7 @@ router.patch("/orders/:id/status", authRequired, requireRole("tailor"), updateOr
 router.patch("/orders/:id/delivery-proof", authRequired, requireRole("tailor"), uploadDeliveryProof);
 router.post("/orders/:id/verify-otp", authRequired, requireRole("tailor"), verifyOrderOtp);
 router.post("/orders/:id/start-stitching", authRequired, requireRole("tailor"), startStitching);
+router.post("/orders/:id/complete-order", authRequired, requireRole("tailor"), completeOrder);
 router.post("/orders/:id/generate-delivery-otp", authRequired, requireRole("tailor"), generateDeliveryOtp);
 router.post("/orders/:id/verify-delivery-otp", authRequired, requireRole("tailor"), verifyDeliveryOtp);
 router.post("/services", authRequired, requireRole("tailor"), createTailorService);

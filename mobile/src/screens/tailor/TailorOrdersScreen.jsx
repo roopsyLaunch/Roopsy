@@ -184,9 +184,15 @@ export function TailorOrdersScreen({ navigation, route }) {
       const barberBookings = (barberRes.data?.bookings || []).map(b => ({ ...b, isTailorOrder: false }));
       const tailorOrdersList = (tailorRes.data?.orders || []).map(o => ({ ...o, isTailorOrder: true }));
       const combined = [...barberBookings, ...tailorOrdersList].sort((a, b) => {
-        const dateA = new Date(a.startTime || a.createdAt).getTime();
-        const dateB = new Date(b.startTime || b.createdAt).getTime();
-        return dateB - dateA;
+        const isDoneA = ["completed", "cancelled", "declined", "expired"].includes(a.status);
+        const isDoneB = ["completed", "cancelled", "declined", "expired"].includes(b.status);
+        if (isDoneA !== isDoneB) return isDoneA ? 1 : -1;
+        const timeA = new Date(a.startTime || a.visitDate || a.createdAt).getTime();
+        const timeB = new Date(b.startTime || b.visitDate || b.createdAt).getTime();
+        if (!isDoneA) {
+          return timeB - timeA; // Newest booking on top (above earlier booking)
+        }
+        return timeB - timeA;
       });
       setCustomerAppointments(combined);
     } catch (err) {
@@ -230,12 +236,13 @@ export function TailorOrdersScreen({ navigation, route }) {
 
       socket.on("tailorNewOrder", handleNewOrder);
       socket.on("bookingUpdated", handleOrderUpdated);
+      socket.on("bookingCancelled", handleOrderUpdated);
       socket.on("tailorOrderCompleted", handleTailorCompleted);
 
       return () => {
-        if (user?.id) socket.emit("leaveUserRoom", user.id);
         socket.off("tailorNewOrder", handleNewOrder);
         socket.off("bookingUpdated", handleOrderUpdated);
+        socket.off("bookingCancelled", handleOrderUpdated);
         socket.off("tailorOrderCompleted", handleTailorCompleted);
       };
     }, [loadOrders, loadCustomerAppointments, user?.id])
@@ -306,16 +313,65 @@ export function TailorOrdersScreen({ navigation, route }) {
     if (curOrder && !curOrder.isOtpVerified) {
       return Alert.alert("Handover Required 🔒", "Please verify customer cloth handover OTP first before starting stitching.");
     }
-    setStartingStitchingOrderId(orderId);
+    const cleanId = typeof orderId === "object" ? (orderId?._id || orderId?.id) : orderId;
+    setStartingStitchingOrderId(cleanId);
     try {
-      const res = await api.post(`/tailors/orders/${orderId}/start-stitching`);
-      Alert.alert("Stitching Started! 🪡", res.data?.message || "Order moved to Stitching in Progress. Customer has been notified!");
+      let res;
+      try {
+        res = await api.post(`/tailors/orders/${cleanId}/start-stitching`);
+      } catch (postErr) {
+        if (postErr?.response?.status === 404 || postErr?.response?.status === 501) {
+          res = await api.patch(`/tailors/orders/${cleanId}/status`, {
+            status: "stitching",
+            note: "Stitching started by tailor partner 🪡"
+          });
+        } else {
+          throw postErr;
+        }
+      }
+      Alert.alert("Stitching Started! 🪡", res?.data?.message || "Order moved to Stitching in Progress. Customer has been notified!");
       await loadOrders();
     } catch (err) {
       console.error(err);
-      Alert.alert("Error", err?.response?.data?.error || "Could not start stitching.");
+      Alert.alert("Error", err?.response?.data?.error || err?.message || "Could not start stitching.");
     } finally {
       setStartingStitchingOrderId(null);
+    }
+  };
+
+  const [completingOrderId, setCompletingOrderId] = useState(null);
+
+  const handleCompleteOrder = async (orderId) => {
+    const cleanId = typeof orderId === "object" ? (orderId?._id || orderId?.id) : orderId;
+    const curOrder = orders.find(o => (o._id || o.id) === cleanId);
+    if (curOrder && (curOrder.status === "cancelled" || curOrder.status === "declined")) {
+      return Alert.alert("Order Cancelled", "Cannot complete a cancelled order.");
+    }
+    setCompletingOrderId(cleanId);
+    try {
+      let res;
+      try {
+        res = await api.post(`/tailors/orders/${cleanId}/complete-order`);
+      } catch (postErr) {
+        if (postErr?.response?.status === 404 || postErr?.response?.status === 501) {
+          res = await api.patch(`/tailors/orders/${cleanId}/status`, {
+            status: "ready",
+            note: "Stitching completed by tailor partner. Outfit is ready ✅"
+          });
+        } else {
+          throw postErr;
+        }
+      }
+      Alert.alert(
+        "Order Completed & Ready! 🎉",
+        res?.data?.message || "Order marked as completed and ready for pickup/delivery. Customer has been notified!"
+      );
+      await loadOrders();
+    } catch (err) {
+      console.error(err);
+      Alert.alert("Error", err?.response?.data?.error || err?.message || "Could not complete order.");
+    } finally {
+      setCompletingOrderId(null);
     }
   };
 
@@ -587,6 +643,15 @@ export function TailorOrdersScreen({ navigation, route }) {
     if (filterTab === "active") return ["accepted", "stitching", "ready", "measuring", "trial"].includes(o.status);
     if (filterTab === "completed") return o.status === "completed" || o.status === "cancelled" || o.status === "declined";
     return true;
+  }).sort((a, b) => {
+    if (filterTab !== "completed") {
+      const timeA = new Date(a.visitDate || a.createdAt).getTime();
+      const timeB = new Date(b.visitDate || b.createdAt).getTime();
+      return timeB - timeA; // Newest order on top (above earlier order)
+    }
+    const timeA = new Date(a.updatedAt || a.createdAt).getTime();
+    const timeB = new Date(b.updatedAt || b.createdAt).getTime();
+    return timeB - timeA;
   });
 
   // ----------------- Customer Appointments Handlers & Modals -----------------
@@ -705,6 +770,16 @@ export function TailorOrdersScreen({ navigation, route }) {
       return shopName.toLowerCase().includes(q) || services.toLowerCase().includes(q) || idStr.toLowerCase().includes(q);
     }
     return true;
+  }).sort((a, b) => {
+    const isDoneA = ["completed", "cancelled", "declined", "rejected", "expired"].includes(a.status);
+    const isDoneB = ["completed", "cancelled", "declined", "rejected", "expired"].includes(b.status);
+    if (isDoneA !== isDoneB) return isDoneA ? 1 : -1;
+    const timeA = new Date(a.startTime || a.visitDate || a.createdAt).getTime();
+    const timeB = new Date(b.startTime || b.visitDate || b.createdAt).getTime();
+    if (!isDoneA) {
+      return timeB - timeA; // Newest booking on top (above earlier booking)
+    }
+    return timeB - timeA;
   });
 
   const activeOtpBooking = customerAppointments.find(item =>
@@ -717,7 +792,7 @@ export function TailorOrdersScreen({ navigation, route }) {
   );
 
   // ----------------- Render Items -----------------
-  const renderItem = ({ item }) => {
+  const renderItem = ({ item, index }) => {
     const isHome = item.isHomeService;
     const isPremium = Boolean(
       item.isPremiumService ||
@@ -764,9 +839,18 @@ export function TailorOrdersScreen({ navigation, route }) {
         )}
 
         <View style={styles.headerRow}>
-          <View style={styles.customerInfo}>
-            <Text style={styles.customerName}>{item.customerId?.name || "Customer"}</Text>
-            <Text style={styles.date}>{new Date(item.createdAt).toLocaleDateString()}</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 }}>
+            {typeof index === "number" && (
+              <View style={styles.serialQueueBadge}>
+                <Text style={styles.serialQueueBadgeText}>#{index + 1}</Text>
+              </View>
+            )}
+            <View style={styles.customerInfo}>
+              <Text style={styles.customerName}>{item.customerId?.name || "Customer"}</Text>
+              <Text style={styles.date}>
+                {typeof index === "number" ? `Queue #${index + 1} • ` : ""}{new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}, {new Date(item.createdAt).toLocaleDateString()}
+              </Text>
+            </View>
           </View>
           <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) + "20" }]}>
             <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}>{item.status.toUpperCase()}</Text>
@@ -957,31 +1041,33 @@ export function TailorOrdersScreen({ navigation, route }) {
           </View>
         )}
 
-        {/* Delivery OTP Card for Ready / Active Orders - ONLY AFTER stitching started */}
-        {item.isOtpVerified && item.status !== "completed" && item.status !== "cancelled" && item.status !== "declined" && (item.isStitchingStarted || item.status === "stitching" || ["trial", "alteration", "ironing", "quality_check", "packing", "ready", "dispatched"].includes(item.status)) && (
-          <View style={{ backgroundColor: item.isDeliveryOtpVerified ? "#ecfdf5" : item.deliveryOtp ? "#e0f2fe" : "#f0fdf4", paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8, marginBottom: 8, borderWidth: 1, borderColor: item.isDeliveryOtpVerified ? "#a7f3d0" : item.deliveryOtp ? "#bae6fd" : "#bbf7d0" }}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8, gap: 5 }}>
-                <Ionicons name={item.isDeliveryOtpVerified ? "checkmark-done-circle" : "cube"} size={16} color={item.isDeliveryOtpVerified ? "#059669" : item.deliveryOtp ? "#0284c7" : "#16a34a"} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 11.5, fontWeight: "800", color: item.isDeliveryOtpVerified ? "#047857" : item.deliveryOtp ? "#0369a1" : "#15803d" }}>
-                    {item.isDeliveryOtpVerified ? "Delivery OTP Verified ✅" : item.deliveryOtp ? "Delivery OTP Sent 📦" : "Ready for Delivery"}
-                  </Text>
-                </View>
+        {/* Stitching In Progress - Status Banner */}
+        {item.isOtpVerified && item.status !== "completed" && item.status !== "cancelled" && item.status !== "declined" && (item.status === "stitching" || (item.isStitchingStarted && !item.isStitchingCompleted && item.status !== "ready" && !item.deliveryOtp)) && (
+          <View style={{ backgroundColor: "#f5f3ff", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, marginBottom: 8, borderWidth: 1.5, borderColor: "#ddd6fe" }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Ionicons name="cut" size={17} color="#7c3aed" />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, fontWeight: "800", color: "#6d28d9" }}>
+                  Stitching in Progress 🪡
+                </Text>
+                <Text style={{ fontSize: 10.5, color: "#7c3aed", marginTop: 1 }}>
+                  Outfit is being stitched. Tap 'Complete Order' below when ready to notify customer!
+                </Text>
               </View>
-              {!item.isDeliveryOtpVerified && (
-                <Pressable
-                  style={{ backgroundColor: item.deliveryOtp ? "#0284c7" : "#16a34a", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6 }}
-                  onPress={() => item.deliveryOtp ? handleOpenDeliveryOtpModal(item._id) : handleGenerateDeliveryOtp(item._id)}
-                  disabled={generatingDeliveryOtp}
-                >
-                  {generatingDeliveryOtp ? <ActivityIndicator color="#fff" size="small" /> : (
-                    <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 11 }}>
-                      {item.deliveryOtp ? "Verify Delivery OTP" : "Deliver Order 📦"}
-                    </Text>
-                  )}
-                </Pressable>
-              )}
+            </View>
+          </View>
+        )}
+
+        {/* Delivery Status Card for Ready Orders - ONLY AFTER Stitching is Completed */}
+        {item.isOtpVerified && item.status !== "completed" && item.status !== "cancelled" && item.status !== "declined" && (item.status === "ready" || item.isStitchingCompleted || item.deliveryOtp || ["dispatched"].includes(item.status)) && (
+          <View style={{ backgroundColor: item.isDeliveryOtpVerified ? "#ecfdf5" : item.deliveryOtp ? "#e0f2fe" : "#f0fdf4", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, marginBottom: 8, borderWidth: 1, borderColor: item.isDeliveryOtpVerified ? "#a7f3d0" : item.deliveryOtp ? "#bae6fd" : "#bbf7d0" }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
+              <Ionicons name={item.isDeliveryOtpVerified ? "checkmark-done-circle" : "cube"} size={16} color={item.isDeliveryOtpVerified ? "#059669" : item.deliveryOtp ? "#0284c7" : "#16a34a"} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11.5, fontWeight: "800", color: item.isDeliveryOtpVerified ? "#047857" : item.deliveryOtp ? "#0369a1" : "#15803d" }}>
+                  {item.isDeliveryOtpVerified ? "Delivery OTP Verified ✅" : item.deliveryOtp ? "Delivery OTP Sent 📦 (Verify with customer below)" : "Ready for Delivery 📦"}
+                </Text>
+              </View>
             </View>
 
             {/* Delivery Photo Proof action row */}
@@ -1022,16 +1108,33 @@ export function TailorOrdersScreen({ navigation, route }) {
         )}
 
         <View style={styles.servicesBox}>
+          {(() => {
+            const totalPcs = (item.services || []).reduce((acc, s) => acc + (s.quantity || 1), 0);
+            return (
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6, paddingBottom: 4, borderBottomWidth: 1, borderBottomColor: "#f1f5f9" }}>
+                <Text style={{ fontSize: 11.5, fontWeight: "700", color: "#64748b" }}>Booked Stitching Items:</Text>
+                <View style={{ backgroundColor: "#f3e8ff", paddingHorizontal: 7, paddingVertical: 1.5, borderRadius: 4 }}>
+                  <Text style={{ fontSize: 10.5, fontWeight: "800", color: "#7c3aed" }}>{totalPcs} Pieces Total</Text>
+                </View>
+              </View>
+            );
+          })()}
           {item.services.map((s, i) => {
             const isSvcVip = isPremium || s.serviceMode === "premium" || (s.name && /premium|vip/i.test(s.name));
+            const qty = s.quantity || 1;
             return (
               <View key={i} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginVertical: 2 }}>
-                <Text style={styles.serviceText}>• {s.name} (x{s.quantity})</Text>
-                {isSvcVip && (
-                  <View style={styles.serviceVipTag}>
-                    <Text style={styles.serviceVipTagText}>👑 VIP</Text>
-                  </View>
-                )}
+                <Text style={styles.serviceText}>
+                  • {s.name} <Text style={{ fontWeight: "800", color: "#6d28d9" }}>(× {qty} pcs)</Text>
+                </Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: "#0f172a" }}>₹{(s.price || 0) * qty}</Text>
+                  {isSvcVip && (
+                    <View style={styles.serviceVipTag}>
+                      <Text style={styles.serviceVipTagText}>👑 VIP</Text>
+                    </View>
+                  )}
+                </View>
               </View>
             );
           })}
@@ -1085,13 +1188,29 @@ export function TailorOrdersScreen({ navigation, route }) {
                   </Pressable>
                 )}
                 {item.status === "stitching" && (
-                  <Pressable style={[styles.nextBtn, { backgroundColor: "#0284c7" }]} onPress={() => handleGenerateDeliveryOtp(item._id)}>
-                    <Text style={styles.nextBtnText}>Deliver Order 📦</Text>
+                  <Pressable
+                    style={[styles.nextBtn, { backgroundColor: "#059669" }]}
+                    onPress={() => handleCompleteOrder(item._id)}
+                    disabled={completingOrderId === item._id}
+                  >
+                    {completingOrderId === item._id ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.nextBtnText}>Complete Order ✅</Text>
+                    )}
                   </Pressable>
                 )}
-                {item.status === "ready" && (
-                  <Pressable style={[styles.nextBtn, { backgroundColor: "#16a34a" }]} onPress={() => item.deliveryOtp ? handleOpenDeliveryOtpModal(item._id) : handleGenerateDeliveryOtp(item._id)}>
-                    <Text style={styles.nextBtnText}>{item.deliveryOtp ? "Verify Delivery OTP" : "Deliver Order 📦"}</Text>
+                {(item.status === "ready" || item.deliveryOtp) && (
+                  <Pressable
+                    style={[styles.nextBtn, { backgroundColor: item.deliveryOtp ? "#0284c7" : "#16a34a" }]}
+                    onPress={() => item.deliveryOtp ? handleOpenDeliveryOtpModal(item._id) : handleGenerateDeliveryOtp(item._id)}
+                    disabled={generatingDeliveryOtp}
+                  >
+                    {generatingDeliveryOtp ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.nextBtnText}>{item.deliveryOtp ? "Verify Delivery OTP" : "Deliver Order 📦"}</Text>
+                    )}
                   </Pressable>
                 )}
               </View>
@@ -1102,24 +1221,41 @@ export function TailorOrdersScreen({ navigation, route }) {
     );
   };
 
-  const renderCustomerCard = (item) => {
+  const renderCustomerCard = (item, index) => {
     const statusStyle = getStatusBadge(item.status);
     const isBeauty = getBookingType(item) === "beauty";
     return (
       <View style={styles.customerCard}>
         <View style={styles.cardHeader}>
           <View style={styles.cardHeaderLeft}>
-            <View style={[styles.avatarCircle, { backgroundColor: isBeauty ? "#fce7f3" : "#e0e7ff", borderColor: isBeauty ? "#fbcfe8" : "#c7d2fe" }]}>
-              <Text style={[styles.avatarText, { color: isBeauty ? "#be185d" : "#4f46e5" }]}>{isBeauty ? "💄" : getInitials(item.barber?.shopName)}</Text>
+            <View style={{ position: "relative" }}>
+              <View style={[styles.avatarCircle, { backgroundColor: isBeauty ? "#fce7f3" : "#e0e7ff", borderColor: isBeauty ? "#fbcfe8" : "#c7d2fe" }]}>
+                <Text style={[styles.avatarText, { color: isBeauty ? "#be185d" : "#4f46e5" }]}>{isBeauty ? "💄" : getInitials(item.barber?.shopName)}</Text>
+              </View>
+              {typeof index === "number" && (
+                <View style={[styles.serialTagOverlay, { backgroundColor: isBeauty ? "#be185d" : "#4f46e5" }]}>
+                  <Text style={styles.serialTagOverlayText}>#{index + 1}</Text>
+                </View>
+              )}
             </View>
             <View style={styles.cardHeaderInfo}>
               <Text style={styles.shopName} numberOfLines={1}>{item.barber?.shopName || (isBeauty ? "Beauty Parlor" : "Barber Shop")}</Text>
-              <Text style={styles.bookingIdText}>{isBeauty ? "💄 BEAUTY • " : "💈 SALON • "}ID: {(item.id || item._id || "").slice(-6).toUpperCase()}</Text>
+              <Text style={styles.bookingIdText}>
+                {typeof index === "number" ? `TOKEN #${index + 1} • ` : ""}{isBeauty ? "💄 BEAUTY • " : "💈 SALON • "}ID: {(item.id || item._id || "").slice(-6).toUpperCase()}
+              </Text>
             </View>
           </View>
-          <View style={[styles.badge, { backgroundColor: statusStyle.bg }]}>
-            <Ionicons name={statusStyle.icon} size={12} color={statusStyle.text} style={{ marginRight: 4 }} />
-            <Text style={[styles.badgeText, { color: statusStyle.text }]}>{item.status}</Text>
+          <View style={{ alignItems: "flex-end", gap: 4 }}>
+            {typeof index === "number" && (
+              <View style={[styles.serialTokenBadge, { backgroundColor: isBeauty ? "#fdf2f8" : "#e0e7ff", borderColor: isBeauty ? "#fbcfe8" : "#c7d2fe" }]}>
+                <Ionicons name="time-outline" size={11} color={isBeauty ? "#be185d" : "#4338ca"} style={{ marginRight: 3 }} />
+                <Text style={[styles.serialTokenBadgeText, { color: isBeauty ? "#be185d" : "#4338ca" }]}>Token #{index + 1}</Text>
+              </View>
+            )}
+            <View style={[styles.badge, { backgroundColor: statusStyle.bg }]}>
+              <Ionicons name={statusStyle.icon} size={12} color={statusStyle.text} style={{ marginRight: 4 }} />
+              <Text style={[styles.badgeText, { color: statusStyle.text }]}>{item.status}</Text>
+            </View>
           </View>
         </View>
 
@@ -1268,7 +1404,7 @@ export function TailorOrdersScreen({ navigation, route }) {
     );
   };
 
-  const renderTailorCard = (item) => {
+  const renderTailorCard = (item, index) => {
     const statusStyle = getStatusBadge(item.status);
     const shopName = item.tailorId?.shopName || "Tailor Shop";
     const isTailorVip = Boolean(
@@ -1309,26 +1445,41 @@ export function TailorOrdersScreen({ navigation, route }) {
         {/* Clean Header */}
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
           <View style={{ flexDirection: "row", alignItems: "center", flex: 1, marginRight: 8 }}>
-            <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: "#f3e8ff", alignItems: "center", justifyContent: "center", marginRight: 10, borderWidth: 1, borderColor: "#e9d5ff" }}>
-              <Text style={{ fontSize: 17 }}>✂️</Text>
+            <View style={{ position: "relative" }}>
+              <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: "#f3e8ff", alignItems: "center", justifyContent: "center", marginRight: 10, borderWidth: 1, borderColor: "#e9d5ff" }}>
+                <Text style={{ fontSize: 17 }}>✂️</Text>
+              </View>
+              {typeof index === "number" && (
+                <View style={[styles.serialTagOverlay, { backgroundColor: "#7e22ce" }]}>
+                  <Text style={styles.serialTagOverlayText}>#{index + 1}</Text>
+                </View>
+              )}
             </View>
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 15, fontWeight: "800", color: "#0f172a" }} numberOfLines={1}>{shopName}</Text>
               <Text style={{ fontSize: 11, color: "#64748b", fontWeight: "600", marginTop: 1 }}>
-                #{item._id.slice(-6).toUpperCase()} • {item.createdAt ? new Date(item.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""}
+                {typeof index === "number" ? `ORDER #${index + 1} • ` : ""}#{item._id.slice(-6).toUpperCase()} • {item.createdAt ? new Date(item.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""}
               </Text>
             </View>
           </View>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            {Boolean(tailorPhone) && !["pending", "cancelled", "declined"].includes(item.status) && (
-              <Pressable
-                onPress={() => Linking.openURL(`tel:${tailorPhone}`)}
-                style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#7c3aed", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, gap: 4 }}
-              >
-                <Ionicons name="call" size={12} color="#ffffff" />
-                <Text style={{ fontSize: 11, fontWeight: "700", color: "#ffffff" }}>Call</Text>
-              </Pressable>
-            )}
+          <View style={{ alignItems: "flex-end", gap: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              {typeof index === "number" && (
+                <View style={[styles.serialTokenBadge, { backgroundColor: "#f3e8ff", borderColor: "#d8b4fe" }]}>
+                  <Ionicons name="time-outline" size={11} color="#7e22ce" style={{ marginRight: 3 }} />
+                  <Text style={[styles.serialTokenBadgeText, { color: "#7e22ce" }]}>Queue #{index + 1}</Text>
+                </View>
+              )}
+              {Boolean(tailorPhone) && !["pending", "cancelled", "declined"].includes(item.status) && (
+                <Pressable
+                  onPress={() => Linking.openURL(`tel:${tailorPhone}`)}
+                  style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#7c3aed", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, gap: 4 }}
+                >
+                  <Ionicons name="call" size={12} color="#ffffff" />
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#ffffff" }}>Call</Text>
+                </Pressable>
+              )}
+            </View>
             <View style={[styles.badge, { backgroundColor: statusStyle.bg, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }]}>
               <Ionicons name={statusStyle.icon} size={11} color={statusStyle.text} style={{ marginRight: 3 }} />
               <Text style={[styles.badgeText, { color: statusStyle.text, fontSize: 10.5, fontWeight: "800" }]}>
@@ -1494,12 +1645,32 @@ export function TailorOrdersScreen({ navigation, route }) {
             )}
 
             {/* Stitching In Progress */}
-            {(item.isStitchingStarted || item.status === "stitching") && !item.deliveryOtp && (
-              <View style={{ backgroundColor: "#f5f3ff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderColor: "#ddd6fe" }}>
-                <Ionicons name="cut" size={14} color="#7c3aed" />
-                <Text style={{ fontSize: 11, fontWeight: "700", color: "#6d28d9" }}>
-                  🪡 Stitching In Progress (सिलाई चल रही है) • Delivery OTP will generate when ready
-                </Text>
+            {item.status === "stitching" && !item.deliveryOtp && (
+              <View style={{ backgroundColor: "#f5f3ff", paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderColor: "#ddd6fe" }}>
+                <Ionicons name="cut" size={15} color="#7c3aed" />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11.5, fontWeight: "800", color: "#6d28d9" }}>
+                    Stitching in Progress 🪡
+                  </Text>
+                  <Text style={{ fontSize: 10.5, color: "#7c3aed", marginTop: 1 }}>
+                    Tailor is stitching your outfit. You will be notified once it is ready!
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Stitching Completed / Ready to Receive */}
+            {item.status === "ready" && !item.deliveryOtp && (
+              <View style={{ backgroundColor: "#ecfdf5", paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderColor: "#a7f3d0" }}>
+                <Ionicons name="sparkles" size={16} color="#059669" />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12, fontWeight: "800", color: "#065f46" }}>
+                    Order Stitching Completed! 🎉
+                  </Text>
+                  <Text style={{ fontSize: 10.5, color: "#047857", marginTop: 2 }}>
+                    Your outfit is ready to receive or pick up. Tailor will provide Delivery OTP upon handover.
+                  </Text>
+                </View>
               </View>
             )}
 
@@ -1694,7 +1865,7 @@ export function TailorOrdersScreen({ navigation, route }) {
             keyExtractor={item => item.id || item._id}
             contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6d28d9" />}
-            renderItem={({ item }) => item.isTailorOrder ? renderTailorCard(item) : renderCustomerCard(item)}
+            renderItem={({ item, index }) => item.isTailorOrder ? renderTailorCard(item, index) : renderCustomerCard(item, index)}
             ListEmptyComponent={
               <View style={styles.empty}>
                 <Ionicons name="calendar-outline" size={48} color="#cbd5e1" />
@@ -1719,9 +1890,34 @@ export function TailorOrdersScreen({ navigation, route }) {
               </Pressable>
             </View>
 
-            <Text style={{ fontSize: 14, color: "#475569", marginBottom: 16 }}>
+            <Text style={{ fontSize: 14, color: "#475569", marginBottom: 12 }}>
               Set estimated completion time for customer order:
             </Text>
+
+            {/* Booked Items & Quantity Breakdown for Tailor Partner */}
+            {selectedOrder?.services && selectedOrder.services.length > 0 && (
+              <View style={{ backgroundColor: "#f8fafc", borderRadius: 12, padding: 12, borderWidth: 1, borderColor: "#e2e8f0", marginBottom: 14 }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8, borderBottomWidth: 1, borderBottomColor: "#f1f5f9", paddingBottom: 6 }}>
+                  <Text style={{ fontSize: 12, fontWeight: "800", color: "#0f172a" }}>Booked Items to Stitch:</Text>
+                  <View style={{ backgroundColor: "#ede9fe", paddingHorizontal: 7, paddingVertical: 2, borderRadius: 4 }}>
+                    <Text style={{ fontSize: 11, fontWeight: "800", color: "#6d28d9" }}>
+                      {(selectedOrder.services || []).reduce((acc, s) => acc + (s.quantity || 1), 0)} Pieces Total
+                    </Text>
+                  </View>
+                </View>
+                {selectedOrder.services.map((s, idx) => {
+                  const qty = s.quantity || 1;
+                  return (
+                    <View key={idx} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginVertical: 3 }}>
+                      <Text style={{ fontSize: 12.5, color: "#334155", fontWeight: "600", flex: 1 }}>
+                        • {s.name} <Text style={{ color: "#6d28d9", fontWeight: "800" }}>(× {qty} pcs)</Text>
+                      </Text>
+                      <Text style={{ fontSize: 12.5, color: "#0f172a", fontWeight: "700" }}>₹{(s.price || 0) * qty}</Text>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
 
             <View style={styles.inputRow}>
               <Text style={styles.inputLabel}>Estimated Days:</Text>
@@ -2256,5 +2452,51 @@ const styles = StyleSheet.create({
   cancelBtn: { flex: 1, padding: 14, borderRadius: 12, backgroundColor: "#f1f5f9", alignItems: "center" },
   cancelBtnText: { fontSize: 15, fontWeight: "700", color: "#475569" },
   confirmBtn: { flex: 2, padding: 14, borderRadius: 12, backgroundColor: "#6d28d9", alignItems: "center" },
-  confirmBtnText: { fontSize: 15, fontWeight: "800", color: "#ffffff" }
+  confirmBtnText: { fontSize: 15, fontWeight: "800", color: "#ffffff" },
+  serialQueueBadge: {
+    backgroundColor: "#7e22ce",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    marginRight: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  serialQueueBadgeText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  serialTokenBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#e0e7ff",
+    borderColor: "#c7d2fe",
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  serialTokenBadgeText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#4338ca",
+    letterSpacing: 0.3,
+  },
+  serialTagOverlay: {
+    position: "absolute",
+    bottom: -3,
+    right: -3,
+    backgroundColor: "#7e22ce",
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderWidth: 1.5,
+    borderColor: "#ffffff",
+  },
+  serialTagOverlayText: {
+    color: "#ffffff",
+    fontSize: 9,
+    fontWeight: "900",
+  },
 });

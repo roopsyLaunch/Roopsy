@@ -30,6 +30,7 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
+      "usesCleartextTraffic": true,
       "predictiveBackGestureEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
@@ -69,7 +70,7 @@
       ]
     ],
     "extra": {
-      "apiUrl": "https://roopsy.onrender.com",
+      "apiUrl": "http://76.13.246.224:4000",
       "eas": {
         "projectId": "dce6a0bf-12bf-48a2-b1ce-81c71fb1ce4a"
       }

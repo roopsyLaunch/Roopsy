@@ -138,15 +138,23 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
   const isFollowing = (favorites || []).includes(barberId);
   const rawServices = detail?.services || [];
   const services = useMemo(() => {
-    return rawServices.map((s) => ({
-      ...s,
-      originalPrice: s.originalPrice || s.price || 0,
-      discountAmount: s.discountAmount || 0,
-    }));
+    return rawServices.map((s) => {
+      const sId = s.id || s._id;
+      return {
+        ...s,
+        id: sId,
+        _id: sId,
+        originalPrice: s.originalPrice || s.price || 0,
+        discountAmount: s.discountAmount || 0,
+      };
+    });
   }, [rawServices]);
 
   const selectedServices = useMemo(
-    () => services.filter((s) => selectedServiceIds.includes(s.id)),
+    () => services.filter((s) => {
+      const sid = s.id || s._id;
+      return selectedServiceIds.includes(sid) || (s.id && selectedServiceIds.includes(s.id)) || (s._id && selectedServiceIds.includes(s._id));
+    }),
     [services, selectedServiceIds]
   );
   const totalDuration = selectedServices.reduce((sum, s) => sum + (s.durationMinutes || 0), 0);
@@ -409,9 +417,15 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
   }
 
   function toggleService(service) {
+    if (!service) return;
+    const sid = service.id || service._id;
+    if (!sid) return;
     setSelectedServiceIds((prev) => {
-      if (prev.includes(service.id)) return prev.filter((sid) => sid !== service.id);
-      return [...prev, service.id];
+      const isAlreadySelected = prev.some((id) => id === sid || (service.id && id === service.id) || (service._id && id === service._id));
+      if (isAlreadySelected) {
+        return prev.filter((id) => id !== sid && id !== service.id && id !== service._id);
+      }
+      return [...prev, sid];
     });
   }
 
@@ -477,15 +491,19 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
     setBookingBusy(true);
 
     try {
+      const defaultCustAddr = user?.address?.line1 ? [user.address.line1, user.address.city, user.address.pincode].filter(Boolean).join(", ") : "";
+      const effectiveCustAddress = (homeAddress || defaultCustAddr || "").trim();
+      const effectiveCustLocation = homeLocation || (user?.address?.lat && user?.address?.lng ? { lat: user.address.lat, lng: user.address.lng } : undefined);
+
       const bookingPayload = {
         barberId,
         serviceIds: selectedServiceIds,
         staffId: selectedStaffId,
         startTime: startTimeIso,
-        notes: "",
+        notes: effectiveCustAddress || "",
         isHomeService: isHomeServiceSelected,
-        homeServiceAddress: (homeAddress || "").trim() || undefined,
-        homeServiceLocation: homeLocation || undefined,
+        homeServiceAddress: effectiveCustAddress || undefined,
+        homeServiceLocation: effectiveCustLocation,
         customerETA: !isHomeServiceSelected && !isChairOccupied && selectedETA !== null ? selectedETA : undefined,
         seatIndex: !isHomeServiceSelected && selectedChairIndex !== null ? selectedChairIndex : undefined,
       };
@@ -899,13 +917,14 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
             contentContainerStyle={styles.horizontalServicesScroll}
           >
             {currentDisplayServices.map((service, idx) => {
-              const isSelected = selectedServiceIds.includes(service.id);
+              const sid = service.id || service._id;
+              const isSelected = selectedServiceIds.includes(sid) || (service.id && selectedServiceIds.includes(service.id)) || (service._id && selectedServiceIds.includes(service._id));
               const badgeLabel = idx === 0 ? "🔥 Popular" : idx === 1 ? "⭐ Trending" : "✨ Recommended";
               const badgeColor = idx === 0 ? "#db2777" : idx === 1 ? "#7c3aed" : "#0284c7";
 
               return (
                 <Pressable
-                  key={service.id}
+                  key={sid}
                   style={[styles.serviceItemCard, isSelected && styles.serviceItemCardSelected]}
                   onPress={() => toggleService(service)}
                   activeOpacity={0.9}
@@ -1351,8 +1370,8 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
 
               {/* Customer Address Input & Auto Address (GPS) Option */}
               <View style={{ marginBottom: 16 }}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                  <Text style={styles.modalSectionLabel}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 8 }}>
+                  <Text style={[styles.modalSectionLabel, { flex: 1, flexShrink: 1, marginBottom: 0 }]} numberOfLines={1} ellipsizeMode="tail">
                     {isHomeServiceSelected ? "Service Address (Required)" : "Your Address / Location (Optional)"}
                   </Text>
                   <Pressable
@@ -1367,6 +1386,7 @@ export function BeautyParlorDetailScreen({ route, navigation }) {
                         borderRadius: 8,
                         borderWidth: 1,
                         borderColor: "#fbcfe8",
+                        flexShrink: 0,
                       },
                       pressed && { opacity: 0.7 }
                     ]}
