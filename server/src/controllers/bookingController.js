@@ -409,11 +409,11 @@ async function create(req, res) {
     startTime: finalStartTime,
     endTime: finalEndTime,
     expectedDuration: totalMinutes,
-    status: "confirmed", // Automatically confirmed upon customer booking!
+    status: "pending", // Customer booking starts as pending shop partner confirmation!
     notes: notes || "",
     seatIndex: finalSeatIndex,
     seatLabel: finalSeatLabel,
-    verificationPin: "", // No OTP generated on booking creation; generated only when dukandaar clicks "Generate OTP"
+    verificationPin: "", // No OTP generated until confirmed & requested
     otpExpiresAt: null,
     isOtpVerified: false,
     isHomeService: isHomeService || false,
@@ -428,7 +428,7 @@ async function create(req, res) {
 
   // Audit Log
   await AuditLog.create({
-    actionType: "Booking Created (Confirmed)",
+    actionType: "Booking Created (Pending Confirmation)",
     entityId: booking._id,
     entityModel: "Booking",
     actorId: req.user._id,
@@ -445,8 +445,8 @@ async function create(req, res) {
       const serviceNames = (services || []).map(s => s.name).join(", ");
       const addr = (homeServiceAddress || "").trim();
 
-      const notifTitle = isHomeService ? `New Home Booking: ${customerName} (Confirmed) 🏠` : `New Booking: ${customerName} (Confirmed) 💈`;
-      const notifBody = `👤 Customer: ${customerName}\n✂️ Services: ${serviceNames || "Grooming"} (₹${totalAmount})${addr ? `\n📍 Address: ${addr}` : ""}`;
+      const notifTitle = isHomeService ? `New Home Booking Request: ${customerName} 🏠` : `New Booking Request: ${customerName} 💈`;
+      const notifBody = `👤 Customer: ${customerName}\n✂️ Services: ${serviceNames || "Grooming"} (₹${totalAmount})${addr ? `\n📍 Address: ${addr}` : ""}\n⏳ Action Required: Please confirm or decline this booking request.`;
 
       await Notification.create({
         userId: barber.userId,
@@ -456,7 +456,7 @@ async function create(req, res) {
         data: {
           bookingId: booking._id,
           type: "barber_booking",
-          status: "confirmed",
+          status: "pending",
           customerName,
           services: serviceNames,
           totalAmount,
@@ -469,18 +469,18 @@ async function create(req, res) {
     }
   }
 
-  // Send Push Notification to Customer (Confirmed without OTP)
+  // Send Push Notification to Customer (Awaiting Confirmation)
   try {
     const Notification = require("../models/Notification");
     await Notification.create({
       userId: req.user._id,
-      title: "Booking Confirmed! 💈",
-      body: `Your appointment at ${barber.shopName} has been confirmed! The shopkeeper will generate your Check-in OTP when it is your turn. Please wait for your turn.`,
+      title: "Booking Request Sent! ⏳",
+      body: `Your appointment request for ${barber.shopName} has been submitted! Waiting for shop partner confirmation. Check-in OTP will become active once confirmed.`,
       type: "booking_status",
       data: {
         bookingId: booking._id,
         barberId: barber._id,
-        status: "confirmed",
+        status: "pending",
       }
     });
   } catch (e) {
@@ -500,33 +500,43 @@ async function create(req, res) {
 
   const io = req.app.get("io");
   if (io) {
+    const serviceNames = (services || []).map(s => s.name).join(", ");
+    const totalAmount = services.reduce((sum, s) => sum + s.price, 0);
+
+    const bookingRequestPayload = {
+      bookingId: booking._id,
+      status: "pending",
+      customerName: req.user?.name || "Customer",
+      serviceNames,
+      totalAmount,
+      startTime: booking.startTime,
+      message: `New booking request from ${req.user?.name || "Customer"} ⏳`,
+    };
+
     io.to(`barber_${barber._id.toString()}`).emit("slotsUpdated", { seats: enrichedSeats });
     io.emit(`shop_${barber._id.toString()}_seats`, { seats: enrichedSeats });
     io.to(`barber_${barber._id.toString()}`).emit("queueUpdated");
+    io.to(`barber_${barber._id.toString()}`).emit("newBookingRequest", bookingRequestPayload);
     io.to(`barber_${barber._id.toString()}`).emit("bookingUpdated", {
       bookingId: booking._id,
-      status: "confirmed",
+      status: "pending",
       verificationPin: "",
     });
     if (barber.userId) {
-      io.to(`user_${barber.userId.toString()}`).emit("newBooking", {
-        bookingId: booking._id,
-        status: "confirmed",
-        customerName: req.user?.name || "Customer",
-        message: `New confirmed booking from ${req.user?.name || "Customer"} 💈`,
-      });
+      io.to(`user_${barber.userId.toString()}`).emit("newBooking", bookingRequestPayload);
+      io.to(`user_${barber.userId.toString()}`).emit("newBookingRequest", bookingRequestPayload);
       io.to(`user_${barber.userId.toString()}`).emit("bookingUpdated", {
         bookingId: booking._id,
-        status: "confirmed",
+        status: "pending",
       });
     }
     io.to(`user_${req.user._id.toString()}`).emit("bookingUpdated", {
       bookingId: booking._id,
       barberId: barber._id,
-      status: "confirmed",
+      status: "pending",
       verificationPin: "",
       otpExpiresAt: null,
-      message: `Your appointment at ${barber.shopName} is confirmed! 💈`,
+      message: `Your appointment request at ${barber.shopName} is awaiting partner confirmation ⏳`,
     });
   }
 
@@ -639,10 +649,12 @@ async function listForBarber(req, res) {
     .populate("serviceIds")
     .populate("customerId", "name email phone avatarUrl address");
 
-  // Serial-wise sorting by queue sequence: In-progress at top, then queuePosition / time
+  // Priority sorting: In-progress at top, then Pending (action required), then active queue
   bookings.sort((a, b) => {
     if (a.status === "in-progress" && b.status !== "in-progress") return -1;
     if (b.status === "in-progress" && a.status !== "in-progress") return 1;
+    if (a.status === "pending" && b.status !== "pending") return -1;
+    if (b.status === "pending" && a.status !== "pending") return 1;
     const isDoneA = ["completed", "cancelled", "declined"].includes(a.status);
     const isDoneB = ["completed", "cancelled", "declined"].includes(b.status);
     if (isDoneA !== isDoneB) return isDoneA ? 1 : -1;
@@ -888,16 +900,19 @@ async function patch(req, res) {
         });
       }
     } else {
-      // Partner or Admin cancelled -> Notify Customer
-      const notifTitle = "Booking Cancelled ⚠️";
-      const notifBody = barber ? `Your booking at ${barber.shopName} has been cancelled.` : "Your booking is cancelled.";
+      // Partner or Admin cancelled / declined -> Notify Customer
+      const isDeclined = oldStatus === "pending";
+      const notifTitle = isDeclined ? "Booking Request Declined ❌" : "Booking Cancelled ⚠️";
+      const notifBody = isDeclined
+        ? (barber ? `Your appointment request at ${barber.shopName} was declined by the shop partner.` : "Your appointment request was declined.")
+        : (barber ? `Your booking at ${barber.shopName} has been cancelled.` : "Your booking is cancelled.");
       if (booking.customerId) {
         await Notification.create({
           userId: booking.customerId,
           title: notifTitle,
           body: notifBody,
           type: "booking_status",
-          data: { bookingId: booking._id, status: "cancelled" }
+          data: { bookingId: booking._id, status: "cancelled", isDeclined }
         }).catch(e => console.error(e));
 
         if (io) {
@@ -905,6 +920,7 @@ async function patch(req, res) {
             bookingId: booking._id,
             barberId: barber?._id,
             status: "cancelled",
+            isDeclined,
             title: notifTitle,
             message: notifBody,
           });
@@ -967,10 +983,10 @@ async function patch(req, res) {
             }
           }
         } else {
-          title = "Booking Confirmed! In Queue ⏳";
+          title = "Booking Confirmed! ✅";
           body = barber
-            ? `Your appointment at ${barber.shopName} has been confirmed! You are in the queue. Your Check-in OTP will appear as soon as the previous customer's service is completed.`
-            : `Your appointment has been confirmed! You are in the queue. Your Check-in OTP will appear as soon as the previous customer's service is completed.`;
+            ? `Your appointment at ${barber.shopName} has been confirmed by the shopkeeper! 🎉 Please visit at your scheduled time. Your Check-in OTP will unlock upon arrival.`
+            : `Your appointment has been confirmed! Please visit at your scheduled time. Your Check-in OTP will unlock upon arrival.`;
         }
       } else if (parsed.data.status === "in-progress") {
         title = "Haircut Started";
@@ -1279,7 +1295,7 @@ async function generateCheckinOtp(req, res) {
     return res.status(400).json({ error: "Service is already in progress for this booking." });
   }
   if (booking.status === "pending") {
-    booking.status = "confirmed";
+    return res.status(400).json({ error: "Cannot generate Check-in OTP for a pending booking. Shop partner must confirm the booking first." });
   }
 
   const barber = await Barber.findById(booking.barberId);
@@ -1382,6 +1398,10 @@ async function verifyOtp(req, res) {
 
   if (booking.status === "cancelled") {
     return res.status(400).json({ error: "Cannot verify OTP. This booking has been cancelled." });
+  }
+
+  if (booking.status === "pending") {
+    return res.status(400).json({ error: "Cannot verify OTP. This booking is pending and must be confirmed by the shop partner first." });
   }
 
   const barber = await Barber.findOne({ userId: req.user._id });

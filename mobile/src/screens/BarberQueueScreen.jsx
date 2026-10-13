@@ -119,15 +119,31 @@ export function BarberQueueScreen() {
     const socket = getSocket();
     if (socket) {
       socket.emit("joinBarberRoom", barberId);
+      if (barber?.userId) {
+        socket.emit("joinUserRoom", barber.userId);
+      }
+
+      const handleNewBooking = (data) => {
+        loadData();
+        Alert.alert(
+          "New Booking Request! 🔔",
+          `Customer ${data?.customerName || "A client"} has requested an appointment.\n\nPlease Accept or Decline.`
+        );
+      };
+
       socket.on("queueUpdated", loadData);
       socket.on("slotsUpdated", loadData);
       socket.on("bookingUpdated", loadData);
+      socket.on("newBookingRequest", handleNewBooking);
+      socket.on("newBooking", handleNewBooking);
 
       return () => {
         socket.emit("leaveBarberRoom", barberId);
         socket.off("queueUpdated", loadData);
         socket.off("slotsUpdated", loadData);
         socket.off("bookingUpdated", loadData);
+        socket.off("newBookingRequest", handleNewBooking);
+        socket.off("newBooking", handleNewBooking);
       };
     }
   }, [barber, loadData]);
@@ -146,19 +162,43 @@ export function BarberQueueScreen() {
       return;
     }
     
-    if (status === "confirmed" && startTime) {
-      const d = new Date(startTime);
-      const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      Alert.alert("Confirm Booking", `Confirm this booking for arrival at ${timeStr}?`, [
+    if (status === "cancelled") {
+      Alert.alert("Decline Booking", "Are you sure you want to decline this booking request?", [
         { text: "Cancel", style: "cancel" },
-        { text: "Confirm", onPress: async () => {
-          try {
-            await api.patch(`/bookings/${id}`, { status });
-            await loadData();
-          } catch (e) {
-            Alert.alert("Error", e?.response?.data?.error || e.message);
+        {
+          text: "Yes, Decline ❌",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await api.patch(`/bookings/${id}`, { status: "cancelled" });
+              Alert.alert("Declined ❌", "Booking request has been declined. Customer has been notified.");
+              await loadData();
+            } catch (e) {
+              Alert.alert("Error", e?.response?.data?.error || e.message);
+            }
           }
-        }}
+        }
+      ]);
+      return;
+    }
+
+    if (status === "confirmed") {
+      const d = startTime ? new Date(startTime) : null;
+      const timeStr = d ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+      Alert.alert("Confirm Booking", `Accept & confirm this booking${timeStr ? ` for arrival at ${timeStr}` : ""}?`, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Confirm Booking ✅",
+          onPress: async () => {
+            try {
+              await api.patch(`/bookings/${id}`, { status: "confirmed" });
+              Alert.alert("Booking Confirmed! ✅", "Appointment is confirmed. Customer has been notified. Enter OTP will unlock upon arrival.");
+              await loadData();
+            } catch (e) {
+              Alert.alert("Error", e?.response?.data?.error || e.message);
+            }
+          }
+        }
       ]);
       return;
     }
@@ -252,6 +292,12 @@ export function BarberQueueScreen() {
 
   const handleTriggerCheckinOtp = async (item) => {
     const bookingId = item.id || item._id;
+    if (item.status === "pending") {
+      return Alert.alert(
+        "Confirmation Required ⏳",
+        "Please confirm this booking request first before generating or verifying the Check-in OTP."
+      );
+    }
     if (item.verificationPin) {
       promptVerifyOtp(bookingId);
       return;
@@ -304,6 +350,10 @@ export function BarberQueueScreen() {
     if (targetBooking && targetBooking.status === "cancelled") {
       setOtpModalVisible(false);
       return Alert.alert("Booking Cancelled", "This booking is cancelled. OTP verification cannot be performed.");
+    }
+    if (targetBooking && targetBooking.status === "pending") {
+      setOtpModalVisible(false);
+      return Alert.alert("Booking Pending ⏳", "This booking is awaiting partner confirmation. Please confirm the booking first before entering OTP.");
     }
     setVerifyingOtp(true);
     try {
@@ -446,9 +496,14 @@ export function BarberQueueScreen() {
 
         <View style={styles.actionRow}>
           {item.status === 'pending' && (
-            <Pressable style={[styles.btn, {backgroundColor:"#0ea5e9"}]} onPress={() => setStatus(item.id, "confirmed", item.arrivalTime || item.startTime, item.isHomeService)}>
-              <Text style={styles.btnText}>Confirm</Text>
-            </Pressable>
+            <View style={{ flexDirection: "row", gap: 8, flex: 1 }}>
+              <Pressable style={[styles.btn, { backgroundColor: "#fef2f2", borderWidth: 1, borderColor: "#fca5a5", flex: 1 }]} onPress={() => setStatus(item.id, "cancelled")}>
+                <Text style={[styles.btnText, { color: "#dc2626" }]}>Decline ❌</Text>
+              </Pressable>
+              <Pressable style={[styles.btn, { backgroundColor: "#6d28d9", flex: 2 }]} onPress={() => setStatus(item.id, "confirmed", item.arrivalTime || item.startTime, item.isHomeService)}>
+                <Text style={styles.btnText}>Confirm Booking ✅</Text>
+              </Pressable>
+            </View>
           )}
           {item.status === 'confirmed' && (
             <View style={{ flexDirection: "row", gap: 6 }}>

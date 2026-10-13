@@ -104,7 +104,18 @@ export function HomeScreen({ navigation, route }) {
       setNotifications(res.data.notifications || []);
       setUnreadCount(res.data.unreadCount || 0);
     } catch (err) {
-      console.error("fetchNotifications error", err);
+      if (err?.response?.status === 503) {
+        // Render server cold starting/waking up; quietly retry once after a short delay
+        setTimeout(async () => {
+          try {
+            const retryRes = await api.get("/auth/notifications");
+            setNotifications(retryRes.data.notifications || []);
+            setUnreadCount(retryRes.data.unreadCount || 0);
+          } catch (_) {}
+        }, 5000);
+      } else {
+        console.warn("fetchNotifications notice:", err?.message || err);
+      }
     }
   }, [user?._id, user?.id]);
 

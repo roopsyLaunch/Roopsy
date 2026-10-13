@@ -28,7 +28,7 @@ export function BarberListScreen({ navigation }) {
     { label: "Filter", icon: "options-outline" }
   ];
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (isRetry = false) => {
     try {
       const params = { businessContext: "barber" };
       if (gpsCoords) {
@@ -38,17 +38,28 @@ export function BarberListScreen({ navigation }) {
       const res = await api.get("/barbers", { params });
       setItems(res.data.barbers || []);
     } catch (err) {
-      console.error("BarberListScreen load error:", err);
+      if (err?.response?.status === 503 && !isRetry) {
+        // Render server cold starting, auto-retry once after 3 seconds
+        setTimeout(() => {
+          load(true);
+        }, 3000);
+      } else {
+        console.warn("BarberListScreen load:", err?.message || err);
+      }
     }
   }, [gpsCoords]);
 
-  useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
-
   useFocusEffect(
     useCallback(() => {
-      load();
+      let active = true;
+      (async () => {
+        try {
+          await load();
+        } finally {
+          if (active) setLoading(false);
+        }
+      })();
+      return () => { active = false; };
     }, [load])
   );
 

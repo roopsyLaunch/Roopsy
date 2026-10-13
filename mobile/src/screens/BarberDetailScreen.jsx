@@ -616,12 +616,10 @@ export function BarberDetailScreen({ route, navigation }) {
       }
 
       setConfirmModalVisible(false);
-      const turnTimeFormatted = new Date(startTimeIso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+      const targetShopName = b?.shopName || shopName || "the salon";
       Alert.alert(
-        "Booking Confirmed 🎉",
-        isChairOccupied
-          ? `Your appointment for Chair ${selectedChairIndex + 1} has been booked! Your turn will start around ${turnTimeFormatted}.`
-          : "Your grooming appointment has been successfully scheduled! You can review details in the bookings panel.",
+        "Booking Request Sent! ⏳",
+        `Your appointment request has been sent to ${targetShopName}.\n\n⏳ Pending Shop Confirmation: The shop partner will review and confirm your booking. Check-in OTP will become active as soon as they confirm!`,
         [
           {
             text: "View Bookings",

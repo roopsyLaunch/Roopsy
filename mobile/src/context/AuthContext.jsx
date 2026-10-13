@@ -14,6 +14,8 @@ Notifications.setNotificationHandler({
   }),
 });
 
+let hasLoggedExpoGoPushNotice = false;
+
 async function registerForPushNotificationsAsync() {
   let token;
   try {
@@ -22,7 +24,10 @@ async function registerForPushNotificationsAsync() {
       Constants.appOwnership === "expo" ||
       Constants.executionEnvironment === "storeClient";
     if (isExpoGo) {
-      console.log("[PushNotification] Skipped: Remote push notifications are not supported in Expo Go on Android (requires dev build).");
+      if (!hasLoggedExpoGoPushNotice) {
+        console.log("[PushNotification] Remote push notifications require a production/dev build (skipped in Expo Go).");
+        hasLoggedExpoGoPushNotice = true;
+      }
       return null;
     }
 

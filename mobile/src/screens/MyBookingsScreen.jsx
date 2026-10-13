@@ -272,6 +272,19 @@ export function MyBookingsScreen({ navigation, route }) {
       const handleBookingUpdated = (data) => {
         if (isActive) {
           load();
+          // When barber confirms a pending booking (no OTP yet) — show confirmation alert to customer
+          if (data && data.status === "confirmed" && !data.verificationPin && !data.isOtpVerified) {
+            Alert.alert(
+              "Booking Confirmed! ✅",
+              "Great news! Your booking request has been confirmed by the shop partner. 🎉\n\nYou can now visit the shop at your scheduled time. Your Check-in OTP code will unlock upon arrival."
+            );
+          }
+          if (data && (data.status === "cancelled" || data.status === "declined") && (data.isDeclined || data.title?.includes("Declined"))) {
+            Alert.alert(
+              "Booking Request Declined ❌",
+              data.message || "Sorry, your appointment request was declined by the shop partner."
+            );
+          }
           if (data && data.verificationPin && !data.isOtpVerified && data.status === "confirmed") {
             Alert.alert("It's Your Turn! 🔑", `Your Check-in OTP is: ${data.verificationPin}. Please share this 4-digit code with your barber.`);
           }
@@ -296,6 +309,18 @@ export function MyBookingsScreen({ navigation, route }) {
         }
       };
 
+      const handleNewBookingRequest = (data) => {
+        if (isActive) {
+          load();
+          if (isPartner && viewMode !== "My Appointments") {
+            Alert.alert(
+              "New Booking Request! 🔔",
+              `Customer ${data?.customerName || "A client"} has requested an appointment for ${data?.serviceNames || "services"}.\n\nPlease Accept or Decline.`
+            );
+          }
+        }
+      };
+
       const handleTailorOrderCompleted = (data) => {
         if (isActive) {
           load();
@@ -311,15 +336,19 @@ export function MyBookingsScreen({ navigation, route }) {
 
       socket.on("bookingUpdated", handleBookingUpdated);
       socket.on("bookingCancelled", handleBookingUpdated);
+      socket.on("newBookingRequest", handleNewBookingRequest);
+      socket.on("newBooking", handleNewBookingRequest);
       socket.on("tailorOrderCompleted", handleTailorOrderCompleted);
 
       return () => {
         isActive = false;
         socket.off("bookingUpdated", handleBookingUpdated);
         socket.off("bookingCancelled", handleBookingUpdated);
+        socket.off("newBookingRequest", handleNewBookingRequest);
+        socket.off("newBooking", handleNewBookingRequest);
         socket.off("tailorOrderCompleted", handleTailorOrderCompleted);
       };
-    }, [load, user?.id])
+    }, [load, user?.id, isPartner, viewMode])
   );
 
   async function onRefresh() {
@@ -339,21 +368,41 @@ export function MyBookingsScreen({ navigation, route }) {
       return;
     }
 
+    let alertTitle = "Confirm Action";
     let confirmMsg = `Are you sure you want to mark this booking as ${status}?`;
-    if (status === "confirmed" && startTime) {
-      confirmMsg = `Confirm this booking for arrival at ${formatTime(startTime)}?`;
-    } else if (status === "cancelled" && viewMode === "My Appointments") {
-      confirmMsg = "Are you sure you want to cancel this booking?";
+    let confirmBtnText = "Yes";
+
+    if (status === "confirmed") {
+      alertTitle = "Confirm Booking ✅";
+      confirmMsg = startTime 
+        ? `Accept & confirm this booking for arrival at ${formatTime(startTime)}?`
+        : "Accept & confirm this customer appointment request?";
+      confirmBtnText = "Accept & Confirm ✅";
+    } else if (status === "cancelled") {
+      if (viewMode === "My Appointments") {
+        alertTitle = "Cancel Booking";
+        confirmMsg = "Are you sure you want to cancel your booking?";
+        confirmBtnText = "Yes, Cancel";
+      } else {
+        alertTitle = "Decline Request ❌";
+        confirmMsg = "Are you sure you want to decline this customer's booking request?";
+        confirmBtnText = "Yes, Decline ❌";
+      }
     }
 
-    Alert.alert("Confirm Action", confirmMsg, [
+    Alert.alert(alertTitle, confirmMsg, [
       { text: "No", style: "cancel" },
       {
-        text: "Yes",
+        text: confirmBtnText,
         style: status === "cancelled" ? "destructive" : "default",
         onPress: async () => {
           try {
             await api.patch(`/bookings/${id}`, { status });
+            if (status === "confirmed") {
+              Alert.alert("Booking Confirmed! ✅", "Appointment is confirmed. Customer has been notified. Enter OTP will unlock upon arrival.");
+            } else if (status === "cancelled" && viewMode !== "My Appointments") {
+              Alert.alert("Request Declined", "Booking request has been declined. Customer has been notified.");
+            }
             await load();
           } catch (e) {
             const err = e?.response?.data?.error;
@@ -372,6 +421,12 @@ export function MyBookingsScreen({ navigation, route }) {
 
   const handleTriggerCheckinOtp = async (item) => {
     const bookingId = item.id || item._id;
+    if (item.status === "pending") {
+      return Alert.alert(
+        "Confirmation Required ⏳",
+        "Please confirm this booking first before generating or entering the check-in OTP."
+      );
+    }
     if (item.verificationPin) {
       promptVerifyOtp(bookingId);
       return;
@@ -424,6 +479,10 @@ export function MyBookingsScreen({ navigation, route }) {
     if (targetBooking && (targetBooking.status === "cancelled" || targetBooking.status === "declined")) {
       setOtpModalVisible(false);
       return Alert.alert("Booking Cancelled", "This booking is cancelled. OTP verification cannot be performed.");
+    }
+    if (targetBooking && targetBooking.status === "pending") {
+      setOtpModalVisible(false);
+      return Alert.alert("Booking Pending ⏳", "This booking is awaiting partner confirmation. Please confirm the booking first.");
     }
     setVerifying(true);
     try {
@@ -1042,14 +1101,61 @@ export function MyBookingsScreen({ navigation, route }) {
           </View>
         )}
 
-        {/* Pending Confirmation Banner */}
+        {/* Pending Confirmation Card for Customer */}
         {item.status === "pending" && (
-          <View style={{ backgroundColor: "#fffbeb", padding: 10, borderRadius: 10, marginBottom: 8, borderWidth: 1, borderColor: "#fef08a", flexDirection: "row", alignItems: "center" }}>
-            <Ionicons name="time" size={18} color="#d97706" style={{ marginRight: 8 }} />
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 12, fontWeight: "800", color: "#b45309" }}>Pending Confirmation</Text>
-              <Text style={{ fontSize: 11, color: "#d97706", marginTop: 1 }}>
-                Waiting for partner to confirm. OTP will be ready once confirmed.
+          <View style={{
+            backgroundColor: "#fffdf5",
+            borderRadius: 14,
+            padding: 13,
+            marginBottom: 10,
+            borderWidth: 1.5,
+            borderColor: "#fde68a",
+          }}>
+            {/* Header with amber badge */}
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 7, flex: 1 }}>
+                <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: "#fef3c7", justifyContent: "center", alignItems: "center" }}>
+                  <Ionicons name="hourglass" size={16} color="#d97706" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 13, fontWeight: "800", color: "#92400e" }}>
+                    Awaiting Shop Confirmation ⏳
+                  </Text>
+                  <Text style={{ fontSize: 11, color: "#b45309", fontWeight: "600" }}>
+                    Booking Request Sent • Not Confirmed Yet
+                  </Text>
+                </View>
+              </View>
+              <View style={{ backgroundColor: "#fef3c7", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, borderWidth: 1, borderColor: "#fde68a" }}>
+                <Text style={{ fontSize: 10.5, fontWeight: "800", color: "#b45309" }}>PENDING</Text>
+              </View>
+            </View>
+
+            {/* Visual 3-Stage Booking Progress Stepper */}
+            <View style={{ backgroundColor: "#ffffff", borderRadius: 10, padding: 10, borderWidth: 1, borderColor: "#fef3c7", marginBottom: 9 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <View style={{ alignItems: "center", flex: 1 }}>
+                  <Ionicons name="checkmark-circle" size={18} color="#16a34a" />
+                  <Text style={{ fontSize: 10, fontWeight: "700", color: "#16a34a", marginTop: 2 }}>Requested</Text>
+                </View>
+                <View style={{ height: 2, flex: 1, backgroundColor: "#fde68a" }} />
+                <View style={{ alignItems: "center", flex: 1 }}>
+                  <Ionicons name="time" size={18} color="#d97706" />
+                  <Text style={{ fontSize: 10, fontWeight: "800", color: "#d97706", marginTop: 2 }}>Confirming...</Text>
+                </View>
+                <View style={{ height: 2, flex: 1, backgroundColor: "#e2e8f0" }} />
+                <View style={{ alignItems: "center", flex: 1 }}>
+                  <Ionicons name="lock-closed" size={18} color="#94a3b8" />
+                  <Text style={{ fontSize: 10, fontWeight: "600", color: "#94a3b8", marginTop: 2 }}>OTP Locked</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Informational Message */}
+            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 6, backgroundColor: "#fffbeb", padding: 8, borderRadius: 8 }}>
+              <Ionicons name="information-circle" size={16} color="#d97706" style={{ marginTop: 1 }} />
+              <Text style={{ fontSize: 11.5, color: "#78350f", flex: 1, lineHeight: 16 }}>
+                Shop partner has not accepted yet. Your Check-in OTP code will unlock and become visible once the shopkeeper confirms your appointment.
               </Text>
             </View>
           </View>
@@ -1106,47 +1212,191 @@ export function MyBookingsScreen({ navigation, route }) {
               </Text>
             </View>
           </View>
-        ) : item.status === "confirmed" && !item.isOtpVerified && !item.verificationPin ? (
+        ) : null}
+
+        {/* Confirmed but No OTP yet: Barber confirmed, waiting for their turn */}
+        {item.status === "confirmed" && !item.isOtpVerified && !item.verificationPin && !item.isTailorOrder && (
           <View style={{
-            backgroundColor: "#f5f3ff",
-            borderWidth: 1,
-            borderColor: "#ddd6fe",
-            borderRadius: 12,
+            backgroundColor: "#ecfdf5",
+            borderRadius: 14,
             padding: 12,
-            marginTop: 6,
-            flexDirection: "row",
-            alignItems: "center"
+            marginBottom: 10,
+            borderWidth: 1.5,
+            borderColor: "#6ee7b7",
           }}>
-            <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: "#ede9fe", justifyContent: "center", alignItems: "center", marginRight: 10 }}>
-              <Ionicons name="hourglass-outline" size={20} color="#7c3aed" />
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: "#d1fae5", justifyContent: "center", alignItems: "center" }}>
+                <Ionicons name="checkmark-circle" size={20} color="#059669" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: "800", color: "#065f46" }}>Booking Confirmed by Shop! ✅</Text>
+                <Text style={{ fontSize: 11, color: "#047857", fontWeight: "600" }}>Shopkeeper accepted your request</Text>
+              </View>
+              <View style={{ backgroundColor: "#d1fae5", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, borderWidth: 1, borderColor: "#6ee7b7" }}>
+                <Text style={{ fontSize: 10.5, fontWeight: "800", color: "#065f46" }}>CONFIRMED</Text>
+              </View>
             </View>
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                <Text style={{ fontSize: 13, fontWeight: "800", color: "#6d28d9" }}>
-                  Booking Confirmed • Waiting for Turn ⏳
-                </Text>
-                <View style={{ backgroundColor: "#e0e7ff", paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
-                  <Text style={{ fontSize: 10, fontWeight: "700", color: "#4338ca" }}>Waiting</Text>
+
+            {/* 3-stage mini-stepper for confirmed */}
+            <View style={{ backgroundColor: "#ffffff", borderRadius: 10, padding: 10, borderWidth: 1, borderColor: "#d1fae5", marginTop: 10, marginBottom: 4 }}>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <View style={{ alignItems: "center", flex: 1 }}>
+                  <Ionicons name="checkmark-circle" size={18} color="#16a34a" />
+                  <Text style={{ fontSize: 10, fontWeight: "700", color: "#16a34a", marginTop: 2 }}>Requested</Text>
+                </View>
+                <View style={{ height: 2, flex: 1, backgroundColor: "#6ee7b7" }} />
+                <View style={{ alignItems: "center", flex: 1 }}>
+                  <Ionicons name="checkmark-circle" size={18} color="#16a34a" />
+                  <Text style={{ fontSize: 10, fontWeight: "700", color: "#16a34a", marginTop: 2 }}>Confirmed ✅</Text>
+                </View>
+                <View style={{ height: 2, flex: 1, backgroundColor: "#e2e8f0" }} />
+                <View style={{ alignItems: "center", flex: 1 }}>
+                  <Ionicons name="key" size={18} color="#94a3b8" />
+                  <Text style={{ fontSize: 10, fontWeight: "600", color: "#94a3b8", marginTop: 2 }}>OTP Pending</Text>
                 </View>
               </View>
-              <Text style={{ fontSize: 11.5, color: "#5b21b6", marginTop: 3, lineHeight: 16 }}>
-                Your appointment is confirmed! The barber/shopkeeper will generate your Check-in OTP when your turn arrives at the shop.
+            </View>
+
+            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 5, backgroundColor: "#f0fdf4", padding: 8, borderRadius: 8 }}>
+              <Ionicons name="information-circle" size={14} color="#16a34a" style={{ marginTop: 1 }} />
+              <Text style={{ fontSize: 11, color: "#166534", flex: 1, lineHeight: 15 }}>
+                Your Check-in OTP will appear here when the shopkeeper generates it at your turn. Please visit the shop at your scheduled time.
               </Text>
             </View>
           </View>
-        ) : null}
+        )}
 
-        {item.status !== "cancelled" && item.status !== "completed" && item.status !== "in-progress" && item.status !== "expired" && (
+        {/* Action Buttons Section */}
+        {viewMode !== "My Appointments" ? (
+          /* ================= SHOP PARTNER ACTION CONTROLS ================= */
           <View style={{ marginTop: 14 }}>
-            <Pressable
-              style={[
-                styles.cancelBtn,
-                { marginTop: 0, backgroundColor: "#fef2f2", borderColor: "#fca5a5", borderWidth: 1 }
-              ]}
-              onPress={() => setStatus(item.id, "cancelled")}
-            >
-              <Text style={[styles.cancelText, { color: "#dc2626" }]}>Cancel Booking</Text>
-            </Pressable>
+            {item.status === "pending" && (
+              <View style={{ gap: 8 }}>
+                <View style={{ backgroundColor: "#fef3c7", padding: 10, borderRadius: 10, borderWidth: 1, borderColor: "#fde68a", flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Ionicons name="time" size={18} color="#b45309" />
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: "#92400e", flex: 1 }}>
+                    New Customer Request • Please confirm to accept this appointment
+                  </Text>
+                </View>
+                <View style={{ flexDirection: "row", gap: 10 }}>
+                  <Pressable
+                    style={[styles.cancelBtn, { flex: 1, marginTop: 0, backgroundColor: "#fef2f2", borderColor: "#fca5a5", borderWidth: 1 }]}
+                    onPress={() => setStatus(item.id || item._id, "cancelled")}
+                  >
+                    <Ionicons name="close-circle" size={15} color="#dc2626" style={{ marginRight: 4 }} />
+                    <Text style={[styles.cancelText, { color: "#dc2626" }]}>Decline ❌</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.cancelBtn, { flex: 2, marginTop: 0, backgroundColor: "#6d28d9", borderColor: "#6d28d9" }]}
+                    onPress={() => setStatus(item.id || item._id, "confirmed", item.arrivalTime || item.startTime, item.isHomeService)}
+                  >
+                    <Ionicons name="checkmark-circle" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                    <Text style={[styles.cancelText, { color: "#ffffff", fontWeight: "800" }]}>Confirm Booking ✅</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
+
+            {item.status === "confirmed" && (
+              <View style={{ gap: 8 }}>
+                <View style={{ backgroundColor: "#ecfdf5", padding: 10, borderRadius: 10, borderWidth: 1, borderColor: "#a7f3d0", flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Ionicons name="checkmark-circle" size={18} color="#059669" />
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: "#065f46", flex: 1 }}>
+                    Booking Confirmed ✅ • Ask customer for 4-digit OTP upon arrival
+                  </Text>
+                </View>
+                <View style={{ flexDirection: "row", gap: 10 }}>
+                  <Pressable
+                    style={[
+                      styles.cancelBtn,
+                      {
+                        flex: 2,
+                        marginTop: 0,
+                        backgroundColor: "#0f172a",
+                        borderColor: "#0f172a",
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 6
+                      },
+                      generatingOtpBookingId === (item.id || item._id) && { opacity: 0.7 }
+                    ]}
+                    onPress={() => handleTriggerCheckinOtp(item)}
+                    disabled={generatingOtpBookingId === (item.id || item._id)}
+                  >
+                    {generatingOtpBookingId === (item.id || item._id) ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <>
+                        <Ionicons name="key" size={15} color="#fbbf24" />
+                        <Text style={[styles.cancelText, { color: "#ffffff", fontWeight: "800" }]}>Enter OTP ✂️</Text>
+                      </>
+                    )}
+                  </Pressable>
+                  <Pressable
+                    style={[styles.cancelBtn, { flex: 1, marginTop: 0, backgroundColor: "#fef2f2", borderColor: "#fca5a5", borderWidth: 1 }]}
+                    onPress={() => setStatus(item.id || item._id, "cancelled")}
+                  >
+                    <Text style={[styles.cancelText, { color: "#dc2626" }]}>Cancel</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
+
+            {item.status === "arrived" && (
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <Pressable
+                  style={[styles.cancelBtn, { flex: 2, marginTop: 0, backgroundColor: "#0f172a", borderColor: "#0f172a" }]}
+                  onPress={() => handleTriggerCheckinOtp(item)}
+                >
+                  <Ionicons name="key" size={15} color="#fbbf24" style={{ marginRight: 6 }} />
+                  <Text style={[styles.cancelText, { color: "#ffffff", fontWeight: "800" }]}>Enter OTP ✂️</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.cancelBtn, { flex: 1, marginTop: 0, backgroundColor: "#fef2f2", borderColor: "#fca5a5", borderWidth: 1 }]}
+                  onPress={() => setStatus(item.id || item._id, "cancelled")}
+                >
+                  <Text style={[styles.cancelText, { color: "#dc2626" }]}>Cancel</Text>
+                </Pressable>
+              </View>
+            )}
+
+            {item.status === "in-progress" && (
+              <Pressable
+                style={[styles.cancelBtn, { marginTop: 0, backgroundColor: "#16a34a", borderColor: "#16a34a" }]}
+                onPress={() => handleStartCompletion(item)}
+              >
+                <Ionicons name="checkmark-done" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                <Text style={[styles.cancelText, { color: "#ffffff", fontWeight: "800" }]}>Complete Service ✂️</Text>
+              </Pressable>
+            )}
+          </View>
+        ) : (
+          /* ================= CUSTOMER ACTION CONTROLS ================= */
+          <View style={{ marginTop: 14 }}>
+            {item.status === "pending" && (
+              <Pressable
+                style={[
+                  styles.cancelBtn,
+                  { marginTop: 0, backgroundColor: "#fef2f2", borderColor: "#fca5a5", borderWidth: 1 }
+                ]}
+                onPress={() => setStatus(item.id || item._id, "cancelled")}
+              >
+                <Text style={[styles.cancelText, { color: "#dc2626" }]}>Cancel Request</Text>
+              </Pressable>
+            )}
+
+            {item.status !== "cancelled" && item.status !== "completed" && item.status !== "in-progress" && item.status !== "expired" && item.status !== "pending" && (
+              <Pressable
+                style={[
+                  styles.cancelBtn,
+                  { marginTop: 0, backgroundColor: "#fef2f2", borderColor: "#fca5a5", borderWidth: 1 }
+                ]}
+                onPress={() => setStatus(item.id || item._id, "cancelled")}
+              >
+                <Text style={[styles.cancelText, { color: "#dc2626" }]}>Cancel Booking</Text>
+              </Pressable>
+            )}
           </View>
         )}
 
@@ -1877,14 +2127,40 @@ export function MyBookingsScreen({ navigation, route }) {
 
         {/* Barber Actions (Pending, Confirmed, In Progress) */}
         {item.status?.toLowerCase() === "pending" ? (
-          <View style={styles.actionGrid}>
-            <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#fef2f2" }]} onPress={() => setStatus(item.id, "cancelled")}>
-              <Text style={[styles.actionBtnTextSolid, { color: "#ef4444" }]}>Decline</Text>
-            </Pressable>
+          <View style={{ marginTop: 6 }}>
+            <View style={{
+              backgroundColor: "#fffbeb",
+              borderWidth: 1,
+              borderColor: "#fde68a",
+              borderRadius: 10,
+              padding: 9,
+              marginBottom: 8,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 8,
+            }}>
+              <Ionicons name="time" size={18} color="#d97706" />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, fontWeight: "800", color: "#92400e" }}>
+                  Pending Confirmation Request ⏳
+                </Text>
+                <Text style={{ fontSize: 11, color: "#b45309" }}>
+                  Please confirm to accept this booking. Check-in OTP will unlock only after you confirm.
+                </Text>
+              </View>
+            </View>
 
-            <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#6d28d9" }]} onPress={() => setStatus(item.id, "confirmed", item.arrivalTime || item.startTime, item.isHomeService)}>
-              <Text style={[styles.actionBtnTextSolid, { color: "#ffffff" }]}>Confirm Booking</Text>
-            </Pressable>
+            <View style={styles.actionGrid}>
+              <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#fef2f2", borderWidth: 1, borderColor: "#fca5a5", flexDirection: "row", alignItems: "center", justifyContent: "center" }]} onPress={() => setStatus(item.id, "cancelled")}>
+                <Ionicons name="close-circle" size={14} color="#ef4444" style={{ marginRight: 4 }} />
+                <Text style={[styles.actionBtnTextSolid, { color: "#ef4444" }]}>Decline</Text>
+              </Pressable>
+
+              <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#6d28d9", flexDirection: "row", alignItems: "center", justifyContent: "center" }]} onPress={() => setStatus(item.id, "confirmed", item.arrivalTime || item.startTime, item.isHomeService)}>
+                <Ionicons name="checkmark-circle" size={14} color="#ffffff" style={{ marginRight: 4 }} />
+                <Text style={[styles.actionBtnTextSolid, { color: "#ffffff" }]}>Confirm Booking ✅</Text>
+              </Pressable>
+            </View>
           </View>
         ) : (item.status === "confirmed") ? (
           <View style={{ marginTop: 6, flexDirection: "row", gap: 8 }}>
@@ -2634,7 +2910,83 @@ export function MyBookingsScreen({ navigation, route }) {
         </View>
       </Modal>
 
+      {/* Check-in OTP Modal */}
+      <Modal visible={otpModalVisible} transparent animationType="fade" onRequestClose={() => setOtpModalVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", padding: 20 }}>
+          <View style={{ backgroundColor: "#fff", borderRadius: 24, padding: 24, width: "100%", maxWidth: 340, alignItems: "center" }}>
+            <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: "#ede9fe", justifyContent: "center", alignItems: "center", marginBottom: 12 }}>
+              <Ionicons name="key" size={28} color="#6d28d9" />
+            </View>
+            <Text style={{ fontSize: 20, fontWeight: "800", color: "#0f172a", marginBottom: 8 }}>Verify Customer OTP</Text>
+            <Text style={{ fontSize: 13.5, color: "#64748b", textAlign: "center", marginBottom: 16, lineHeight: 20 }}>
+              Enter the 4-digit PIN shown on the customer's phone to check them in and begin the haircut.
+            </Text>
 
+            <TextInput
+              style={{ width: "100%", backgroundColor: "#f8fafc", borderWidth: 1.5, borderColor: "#a78bfa", borderRadius: 16, padding: 14, fontSize: 26, fontWeight: "800", textAlign: "center", letterSpacing: 8, color: "#4c1d95", marginBottom: 12 }}
+              placeholder="0000"
+              keyboardType="number-pad"
+              maxLength={4}
+              value={otpInput}
+              onChangeText={setOtpInput}
+              editable={!verifying}
+            />
+
+            <Pressable
+              onPress={() => handleResendOtp(activeBookingId)}
+              disabled={verifying}
+              style={{ marginBottom: 18 }}
+            >
+              <Text style={{ fontSize: 13, color: "#6d28d9", fontWeight: "600", textAlign: "center" }}>
+                Didn't receive code? Resend OTP
+              </Text>
+            </Pressable>
+
+            <View style={{ flexDirection: "row", width: "100%", gap: 12 }}>
+              <Pressable style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: "#f1f5f9", alignItems: "center" }} onPress={() => setOtpModalVisible(false)} disabled={verifying}>
+                <Text style={{ fontSize: 15, fontWeight: "700", color: "#64748b" }}>Cancel</Text>
+              </Pressable>
+              <Pressable style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: "#6d28d9", alignItems: "center" }} onPress={submitOtp} disabled={verifying}>
+                {verifying ? <ActivityIndicator color="#fff" /> : <Text style={{ fontSize: 15, fontWeight: "700", color: "#fff" }}>Verify & Start</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Completion OTP Modal */}
+      <Modal visible={completionOtpModalVisible} transparent animationType="fade" onRequestClose={() => setCompletionOtpModalVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", padding: 20 }}>
+          <View style={{ backgroundColor: "#fff", borderRadius: 24, padding: 24, width: "100%", maxWidth: 340, alignItems: "center" }}>
+            <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: "#f3e8ff", justifyContent: "center", alignItems: "center", marginBottom: 12 }}>
+              <Ionicons name="checkmark-done-circle" size={32} color="#7c3aed" />
+            </View>
+            <Text style={{ fontSize: 20, fontWeight: "800", color: "#0f172a", marginBottom: 8 }}>Verify Completion OTP</Text>
+            <Text style={{ fontSize: 13.5, color: "#64748b", textAlign: "center", marginBottom: 20, lineHeight: 20 }}>
+              Ask customer for the 4-digit Completion OTP code sent to their phone to verify service is complete.
+            </Text>
+
+            <TextInput
+              style={{ width: "100%", backgroundColor: "#f8fafc", borderWidth: 1.5, borderColor: "#c084fc", borderRadius: 16, padding: 14, fontSize: 26, fontWeight: "800", textAlign: "center", letterSpacing: 8, color: "#6d28d9", marginBottom: 24 }}
+              placeholder="0000"
+              keyboardType="number-pad"
+              maxLength={4}
+              value={completionOtpInput}
+              onChangeText={setCompletionOtpInput}
+              editable={!verifyingCompletionOtp}
+            />
+
+            <View style={{ flexDirection: "row", width: "100%", gap: 12 }}>
+              <Pressable style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: "#f1f5f9", alignItems: "center" }} onPress={() => setCompletionOtpModalVisible(false)} disabled={verifyingCompletionOtp}>
+                <Text style={{ fontSize: 15, fontWeight: "700", color: "#64748b" }}>Cancel</Text>
+              </Pressable>
+              <Pressable style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: "#7c3aed", alignItems: "center" }} onPress={submitCompletionOtp} disabled={verifyingCompletionOtp}>
+                {verifyingCompletionOtp ? <ActivityIndicator color="#fff" /> : <Text style={{ fontSize: 15, fontWeight: "700", color: "#fff" }}>Verify & Complete</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
     </SafeAreaView>
   );
