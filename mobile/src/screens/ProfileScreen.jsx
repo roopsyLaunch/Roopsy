@@ -8,6 +8,7 @@ import { useAuth } from "../context/AuthContext";
 import { uploadImageAsync } from "../api/upload";
 import { api } from "../api/client";
 import LocationPickerModal from "../components/LocationPickerModal";
+import Constants from "expo-constants";
 
 const { width } = Dimensions.get("window");
 
@@ -750,7 +751,7 @@ export function ProfileScreen() {
                   <Image source={require("../../assets/logo.jpeg")} style={{ width: "100%", height: "100%", borderRadius: 20 }} />
                 </View>
                 <Text style={{ fontSize: 20, fontWeight: "900", color: "#0f172a" }}>ROOPSY</Text>
-                <Text style={{ fontSize: 13, color: "#6d28d9", fontWeight: "700", marginTop: 4 }}>Version 1.0.0</Text>
+                <Text style={{ fontSize: 13, color: "#6d28d9", fontWeight: "700", marginTop: 4 }}>Version {Constants.expoConfig?.version || "1.0.3"}</Text>
               </View>
 
               <Text style={{ fontSize: 13.5, color: "#475569", lineHeight: 22, textAlign: "justify", marginBottom: 16 }}>
