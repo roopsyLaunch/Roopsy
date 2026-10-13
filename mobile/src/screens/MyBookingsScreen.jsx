@@ -2151,12 +2151,12 @@ export function MyBookingsScreen({ navigation, route }) {
             </View>
 
             <View style={styles.actionGrid}>
-              <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#fef2f2", borderWidth: 1, borderColor: "#fca5a5", flexDirection: "row", alignItems: "center", justifyContent: "center" }]} onPress={() => setStatus(item.id, "cancelled")}>
+              <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#fef2f2", borderWidth: 1, borderColor: "#fca5a5", flexDirection: "row", alignItems: "center", justifyContent: "center" }]} onPress={() => setStatus(item.id || item._id, "cancelled")}>
                 <Ionicons name="close-circle" size={14} color="#ef4444" style={{ marginRight: 4 }} />
                 <Text style={[styles.actionBtnTextSolid, { color: "#ef4444" }]}>Decline</Text>
               </Pressable>
 
-              <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#6d28d9", flexDirection: "row", alignItems: "center", justifyContent: "center" }]} onPress={() => setStatus(item.id, "confirmed", item.arrivalTime || item.startTime, item.isHomeService)}>
+              <Pressable style={[styles.actionBtnSolid, { backgroundColor: "#6d28d9", flexDirection: "row", alignItems: "center", justifyContent: "center" }]} onPress={() => setStatus(item.id || item._id, "confirmed", item.arrivalTime || item.startTime, item.isHomeService)}>
                 <Ionicons name="checkmark-circle" size={14} color="#ffffff" style={{ marginRight: 4 }} />
                 <Text style={[styles.actionBtnTextSolid, { color: "#ffffff" }]}>Confirm Booking ✅</Text>
               </Pressable>
@@ -2206,7 +2206,7 @@ export function MyBookingsScreen({ navigation, route }) {
                 alignItems: "center",
                 justifyContent: "center"
               }}
-              onPress={() => setStatus(item.id, "cancelled")}
+              onPress={() => setStatus(item.id || item._id, "cancelled")}
             >
               <Ionicons name="close-circle" size={15} color="#dc2626" style={{ marginRight: 4 }} />
               <Text style={{ color: "#dc2626", fontWeight: "700", fontSize: 13 }}>Cancel</Text>

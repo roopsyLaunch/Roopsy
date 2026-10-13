@@ -6,6 +6,7 @@ const Barber = require("../models/Barber");
 const Service = require("../models/Service");
 const AuditLog = require("../models/AuditLog");
 const User = require("../models/User");
+const Notification = require("../models/Notification");
 const { 
   isWithinWorkingHours, 
   endFitsWorkingHours, 
@@ -703,6 +704,7 @@ async function patch(req, res) {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const booking = await Booking.findById(req.params.id);
   if (!booking) return res.status(404).json({ error: "Booking not found" });
+  const oldStatus = booking.status;
   const barber = await Barber.findById(booking.barberId);
   const userBarber = await Barber.findOne({ userId: req.user._id });
   const isCustomer = booking.customerId && booking.customerId.toString() === req.user._id.toString();
@@ -719,7 +721,6 @@ async function patch(req, res) {
 
 
   if (parsed.data.status !== undefined && parsed.data.status !== booking.status) {
-    const oldStatus = booking.status;
     booking.status = parsed.data.status;
     const now = new Date();
 
