@@ -89,12 +89,26 @@ export function TailorDashboardScreen({ navigation }) {
       Alert.alert("New Booking Request ✂️", "You have a new tailor booking request!");
       loadStats();
     };
+    const handleOrderCancelled = (data) => {
+      loadStats();
+      if (data && (data.title || data.type === "tailor_order_cancelled" || data.status === "cancelled")) {
+        Alert.alert(
+          data.title || "Tailor Booking Cancelled ❌",
+          data.message || `${data.customerName || "Customer"} cancelled their booking.`
+        );
+      }
+    };
+
     socket.on("tailorNewOrder", handleNewOrder);
     socket.on("bookingUpdated", loadStats);
+    socket.on("bookingCancelled", handleOrderCancelled);
+    socket.on("tailorOrderCancelled", handleOrderCancelled);
 
     return () => {
       socket.off("tailorNewOrder", handleNewOrder);
       socket.off("bookingUpdated", loadStats);
+      socket.off("bookingCancelled", handleOrderCancelled);
+      socket.off("tailorOrderCancelled", handleOrderCancelled);
     };
   }, [loadStats, user?.id]));
 

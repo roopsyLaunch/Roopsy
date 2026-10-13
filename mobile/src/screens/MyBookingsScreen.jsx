@@ -296,6 +296,14 @@ export function MyBookingsScreen({ navigation, route }) {
             if (data && data.completionPin) {
               Alert.alert("Service Finished! 🎉", `Your service is complete! Your Completion OTP is: ${data.completionPin}. Please share this OTP with your barber/stylist to confirm completion.`);
             }
+          } else {
+            // Partner view: Alert partner when a customer cancels their booking / tailor order
+            if (data && (data.type === "tailor_order_cancelled" || data.type === "booking_cancelled" || (data.status === "cancelled" && data.customerName))) {
+              Alert.alert(
+                data.title || "Booking Cancelled by Customer ❌",
+                data.message || `${data.customerName || "Customer"} cancelled their booking.`
+              );
+            }
           }
           if (data && data.requestReview && data.bookingId) {
             setReviewBookingId(data.bookingId);

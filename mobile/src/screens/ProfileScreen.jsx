@@ -625,7 +625,7 @@ export function ProfileScreen() {
               <View style={{ gap: 10, marginBottom: 20 }}>
                 <Pressable 
                   style={{ backgroundColor: "#0284c7", paddingVertical: 12, borderRadius: 12, flexDirection: "row", justifyContent: "center", alignItems: "center" }}
-                  onPress={() => Linking.openURL("tel:1800123456")}
+                  onPress={() => Linking.openURL("tel:9507710143")}
                 >
                   <Ionicons name="call" size={18} color="#ffffff" style={{ marginRight: 8 }} />
                   <Text style={{ color: "#ffffff", fontWeight: "800", fontSize: 13.5 }}>Call Customer Support (Toll Free)</Text>
@@ -806,7 +806,7 @@ export function ProfileScreen() {
                   <Ionicons name="mail-outline" size={20} color="#6d28d9" style={{ marginRight: 12 }} />
                   <View>
                     <Text style={{ fontSize: 10, color: "#94a3b8", fontWeight: "700" }}>SUPPORT EMAIL</Text>
-                    <Text style={{ fontSize: 14, color: "#0f172a", fontWeight: "600" }}>support@starpriyanshu.com</Text>
+                    <Text style={{ fontSize: 14, color: "#0f172a", fontWeight: "600" }}>roopsy1013@gmail.com </Text>
                   </View>
                 </View>
 

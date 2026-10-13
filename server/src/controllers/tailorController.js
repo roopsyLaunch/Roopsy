@@ -495,47 +495,80 @@ exports.cancelCustomerOrder = async (req, res) => {
     await order.save();
 
     // Notify tailor partner
-    const tailor = await Tailor.findById(order.tailorId);
-    if (tailor && tailor.userId) {
+    let tailor = await Tailor.findById(order.tailorId);
+    if (!tailor) {
+      tailor = await Tailor.findOne({ userId: order.tailorId });
+    }
+    const tailorUserId = tailor?.userId?._id || tailor?.userId || order.tailorId;
+
+    if (tailorUserId) {
       const customerName = req.user?.name || "Customer";
       const serviceList = (order.services || []).map(s => s && s.name ? `${s.name} (x${s.quantity || 1})` : "").filter(Boolean).join(", ");
       const notifTitle = "Tailor Booking Cancelled by Customer ❌";
       const notifBody = `${customerName} cancelled order #${order._id.toString().slice(-6)}${serviceList ? ` (${serviceList})` : ""}.`;
 
+      // 1. Create In-App Notification (which also triggers post-save hook)
       await Notification.create({
-        userId: tailor.userId,
+        userId: tailorUserId,
         title: notifTitle,
         body: notifBody,
         type: "tailor_order_cancelled",
         data: {
-          orderId: order._id,
+          orderId: order._id.toString(),
           type: "tailor_order_cancelled",
           status: "cancelled",
           customerName,
           services: serviceList,
-          shopName: tailor.shopName,
+          shopName: tailor?.shopName || "Tailor Shop",
         }
       }).catch(err => console.error("Notification create error:", err));
 
+      // 2. Direct high-priority push notification dispatch to tailor partner
+      try {
+        const tailorUser = await User.findById(tailorUserId).select("expoPushToken");
+        if (tailorUser && tailorUser.expoPushToken) {
+          const { sendPushNotification } = require("../services/notificationService");
+          await sendPushNotification(
+            tailorUser.expoPushToken,
+            notifTitle,
+            notifBody,
+            {
+              orderId: order._id.toString(),
+              type: "tailor_order_cancelled",
+              status: "cancelled",
+            }
+          );
+        }
+      } catch (pushErr) {
+        console.error("[Tailor Cancel] Direct push notification error:", pushErr);
+      }
+
+      // 3. Emit real-time socket events to tailor rooms
       const io = req.app.get("io");
       if (io) {
         const partnerPayload = {
-          orderId: order._id,
+          orderId: order._id.toString(),
           status: "cancelled",
           title: notifTitle,
           message: notifBody,
           type: "tailor_order_cancelled",
           customerName,
           services: serviceList,
-          shopName: tailor.shopName,
+          shopName: tailor?.shopName || "Tailor Shop",
         };
-        io.to(`user_${tailor.userId.toString()}`).emit("bookingUpdated", partnerPayload);
-        io.to(`user_${tailor.userId.toString()}`).emit("bookingCancelled", partnerPayload);
-        io.to(`user_${tailor.userId.toString()}`).emit("notification", {
+        io.to(`user_${tailorUserId.toString()}`).emit("bookingUpdated", partnerPayload);
+        io.to(`user_${tailorUserId.toString()}`).emit("bookingCancelled", partnerPayload);
+        io.to(`user_${tailorUserId.toString()}`).emit("tailorOrderCancelled", partnerPayload);
+        io.to(`user_${tailorUserId.toString()}`).emit("notification", {
           title: notifTitle,
           body: notifBody,
           data: partnerPayload,
         });
+        if (tailor && tailor._id) {
+          io.to(`tailor_${tailor._id.toString()}`).emit("bookingUpdated", partnerPayload);
+          io.to(`tailor_${tailor._id.toString()}`).emit("bookingCancelled", partnerPayload);
+          io.to(`tailor_${tailor._id.toString()}`).emit("tailorOrderCancelled", partnerPayload);
+        }
       }
     }
 

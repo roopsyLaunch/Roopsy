@@ -234,15 +234,28 @@ export function TailorOrdersScreen({ navigation, route }) {
         }
       };
 
+      const handleOrderCancelled = (data) => {
+        loadOrders();
+        loadCustomerAppointments();
+        if (data && (data.title || data.type === "tailor_order_cancelled" || data.status === "cancelled")) {
+          Alert.alert(
+            data.title || "Tailor Booking Cancelled ❌",
+            data.message || `${data.customerName || "Customer"} cancelled order #${data.orderId ? data.orderId.toString().slice(-6) : ""}.`
+          );
+        }
+      };
+
       socket.on("tailorNewOrder", handleNewOrder);
       socket.on("bookingUpdated", handleOrderUpdated);
-      socket.on("bookingCancelled", handleOrderUpdated);
+      socket.on("bookingCancelled", handleOrderCancelled);
+      socket.on("tailorOrderCancelled", handleOrderCancelled);
       socket.on("tailorOrderCompleted", handleTailorCompleted);
 
       return () => {
         socket.off("tailorNewOrder", handleNewOrder);
         socket.off("bookingUpdated", handleOrderUpdated);
-        socket.off("bookingCancelled", handleOrderUpdated);
+        socket.off("bookingCancelled", handleOrderCancelled);
+        socket.off("tailorOrderCancelled", handleOrderCancelled);
         socket.off("tailorOrderCompleted", handleTailorCompleted);
       };
     }, [loadOrders, loadCustomerAppointments, user?.id])
