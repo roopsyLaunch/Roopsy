@@ -272,27 +272,30 @@ export function MyBookingsScreen({ navigation, route }) {
       const handleBookingUpdated = (data) => {
         if (isActive) {
           load();
-          // When barber confirms a pending booking (no OTP yet) — show confirmation alert to customer
-          if (data && data.status === "confirmed" && !data.verificationPin && !data.isOtpVerified) {
-            Alert.alert(
-              "Booking Confirmed! ✅",
-              "Great news! Your booking request has been confirmed by the shop partner. 🎉\n\nYou can now visit the shop at your scheduled time. Your Check-in OTP code will unlock upon arrival."
-            );
-          }
-          if (data && (data.status === "cancelled" || data.status === "declined") && (data.isDeclined || data.title?.includes("Declined"))) {
-            Alert.alert(
-              "Booking Request Declined ❌",
-              data.message || "Sorry, your appointment request was declined by the shop partner."
-            );
-          }
-          if (data && data.verificationPin && !data.isOtpVerified && data.status === "confirmed") {
-            Alert.alert("It's Your Turn! 🔑", `Your Check-in OTP is: ${data.verificationPin}. Please share this 4-digit code with your barber.`);
-          }
-          if (data && (data.isOtpVerified || data.message === "OTP Verified ✅")) {
-            Alert.alert("OTP Verified! ✅", "Your OTP was verified by the barber partner. Haircut service is now in progress!");
-          }
-          if (data && data.completionPin) {
-            Alert.alert("Service Finished! 🎉", `Your service is complete! Your Completion OTP is: ${data.completionPin}. Please share this OTP with your barber/stylist to confirm completion.`);
+          // When in Customer view, show customer-specific status alerts
+          if (viewMode === "My Appointments") {
+            // When barber confirms a pending booking (no OTP yet) — show confirmation alert to customer
+            if (data && data.status === "confirmed" && !data.verificationPin && !data.isOtpVerified) {
+              Alert.alert(
+                "Booking Confirmed! ✅",
+                "Great news! Your booking request has been confirmed by the shop partner. 🎉\n\nYou can now visit the shop at your scheduled time. Your Check-in OTP code will unlock upon arrival."
+              );
+            }
+            if (data && (data.status === "cancelled" || data.status === "declined") && (data.isDeclined || data.title?.includes("Declined"))) {
+              Alert.alert(
+                "Booking Request Declined ❌",
+                data.message || "Sorry, your appointment request was declined by the shop partner."
+              );
+            }
+            if (data && data.verificationPin && !data.isOtpVerified && data.status === "confirmed") {
+              Alert.alert("It's Your Turn! 🔑", `Your Check-in OTP is: ${data.verificationPin}. Please share this 4-digit code with your barber.`);
+            }
+            if (data && (data.isOtpVerified || data.message === "OTP Verified ✅")) {
+              Alert.alert("OTP Verified! ✅", "Your OTP was verified by the barber partner. Haircut service is now in progress!");
+            }
+            if (data && data.completionPin) {
+              Alert.alert("Service Finished! 🎉", `Your service is complete! Your Completion OTP is: ${data.completionPin}. Please share this OTP with your barber/stylist to confirm completion.`);
+            }
           }
           if (data && data.requestReview && data.bookingId) {
             setReviewBookingId(data.bookingId);
@@ -427,7 +430,8 @@ export function MyBookingsScreen({ navigation, route }) {
         "Please confirm this booking first before generating or entering the check-in OTP."
       );
     }
-    if (item.verificationPin) {
+    const hasExistingOtp = Boolean(item.verificationPin || item.hasVerificationPin || item.hasOtp);
+    if (hasExistingOtp) {
       promptVerifyOtp(bookingId);
       return;
     }
@@ -2179,7 +2183,7 @@ export function MyBookingsScreen({ navigation, route }) {
               <Pressable
                 style={[
                   styles.verifyBtn,
-                  { flexDirection: "row", justifyContent: "center", paddingVertical: 11, backgroundColor: item.verificationPin ? "#0f172a" : "#6d28d9", flex: 1 },
+                  { flexDirection: "row", justifyContent: "center", paddingVertical: 11, backgroundColor: (item.verificationPin || item.hasVerificationPin || item.hasOtp) ? "#0f172a" : "#6d28d9", flex: 1 },
                   generatingOtpBookingId === (item.id || item._id) && { opacity: 0.7 }
                 ]}
                 onPress={() => handleTriggerCheckinOtp(item)}

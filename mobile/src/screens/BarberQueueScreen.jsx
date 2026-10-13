@@ -298,7 +298,8 @@ export function BarberQueueScreen() {
         "Please confirm this booking request first before generating or verifying the Check-in OTP."
       );
     }
-    if (item.verificationPin) {
+    const hasExistingOtp = Boolean(item.verificationPin || item.hasVerificationPin || item.hasOtp);
+    if (hasExistingOtp) {
       promptVerifyOtp(bookingId);
       return;
     }
@@ -520,7 +521,7 @@ export function BarberQueueScreen() {
                   style={[
                     styles.btn,
                     { 
-                      backgroundColor: item.verificationPin ? "#0f172a" : "#7c3aed", 
+                      backgroundColor: (item.verificationPin || item.hasVerificationPin || item.hasOtp) ? "#0f172a" : "#7c3aed", 
                       flex: 1, 
                       flexDirection: "row", 
                       alignItems: "center", 
@@ -552,7 +553,7 @@ export function BarberQueueScreen() {
               <Pressable
                 style={[
                   styles.btn,
-                  { backgroundColor: item.verificationPin ? "#0f172a" : "#7c3aed", flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+                  { backgroundColor: (item.verificationPin || item.hasVerificationPin || item.hasOtp) ? "#0f172a" : "#7c3aed", flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
                   generatingOtpBookingId === (item.id || item._id) && { opacity: 0.7 }
                 ]}
                 onPress={() => handleTriggerCheckinOtp(item)}

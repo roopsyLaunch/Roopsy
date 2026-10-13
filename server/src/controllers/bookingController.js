@@ -119,14 +119,14 @@ async function activateNextBookingInQueue(barberId, io) {
       io.to(`barber_${barberId.toString()}`).emit("bookingUpdated", {
         bookingId: nextBooking._id,
         status: nextBooking.status,
-        verificationPin: nextBooking.verificationPin || ""
+        hasOtp: hasExistingPin
       });
       io.to(`barber_${barberId.toString()}`).emit("queueUpdated");
       if (barber && barber.userId) {
         io.to(`user_${barber.userId.toString()}`).emit("bookingUpdated", {
           bookingId: nextBooking._id,
           status: nextBooking.status,
-          verificationPin: nextBooking.verificationPin || ""
+          hasOtp: hasExistingPin
         });
       }
     }
@@ -670,6 +670,9 @@ async function listForBarber(req, res) {
 
   const out = bookings.map(b => {
     const formatted = formatBooking(b);
+    delete formatted.verificationPin;
+    formatted.hasOtp = Boolean(b.verificationPin);
+    formatted.hasVerificationPin = Boolean(b.verificationPin);
     const custDoc = b.customerId;
     const custAddrParts = custDoc?.address
       ? [custDoc.address.line1, custDoc.address.city, custDoc.address.pincode].filter(Boolean)
@@ -1060,10 +1063,16 @@ async function getUnifiedQueue(req, res) {
     return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
   });
 
-  const out = bookings.map(b => ({
-    ...formatBooking(b),
-    customer: b.customerId ? { name: b.customerId.name, phone: b.customerId.phone, avatarUrl: b.customerId.avatarUrl } : { name: b.guestName, phone: b.guestPhone }
-  }));
+  const out = bookings.map(b => {
+    const formatted = formatBooking(b);
+    delete formatted.verificationPin;
+    formatted.hasOtp = Boolean(b.verificationPin);
+    formatted.hasVerificationPin = Boolean(b.verificationPin);
+    return {
+      ...formatted,
+      customer: b.customerId ? { name: b.customerId.name, phone: b.customerId.phone, avatarUrl: b.customerId.avatarUrl } : { name: b.guestName, phone: b.guestPhone }
+    };
+  });
   res.json({ queue: out });
 }
 
@@ -1369,23 +1378,28 @@ async function generateCheckinOtp(req, res) {
     io.to(`barber_${booking.barberId.toString()}`).emit("bookingUpdated", {
       bookingId: booking._id,
       status: booking.status,
-      verificationPin: newOtp
+      hasOtp: true
     });
     io.to(`barber_${booking.barberId.toString()}`).emit("queueUpdated");
     if (barber && barber.userId) {
       io.to(`user_${barber.userId.toString()}`).emit("bookingUpdated", {
         bookingId: booking._id,
         status: booking.status,
-        verificationPin: newOtp
+        hasOtp: true
       });
     }
   }
 
+  const barberBooking = formatBooking(booking);
+  delete barberBooking.verificationPin;
+  barberBooking.hasOtp = true;
+  barberBooking.hasVerificationPin = true;
+
   return res.json({
     success: true,
     message: "Check-in OTP generated and sent to customer!",
-    verificationPin: newOtp,
-    booking: formatBooking(booking)
+    hasOtp: true,
+    booking: barberBooking
   });
 }
 
