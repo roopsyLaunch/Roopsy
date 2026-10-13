@@ -145,6 +145,7 @@ async function register(req, res) {
     const email = `user_${phone}_${Date.now()}@roopsy.com`;
     const passwordHash = await bcrypt.hash(password, 10);
     const cleanedName = cleanUserName(name);
+    const userRole = role || "customer";
     const user = await User.create({
       email,
       passwordHash,
