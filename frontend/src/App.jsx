@@ -40,8 +40,28 @@ import {
   UserCheck
 } from 'lucide-react';
 
-// API Configuration with auto-fallback
-const DEFAULT_API_URL = import.meta.env.VITE_API_BASE || "/api";
+// API Configuration with auto-fallback and Mixed Content protection
+const getCleanApiBase = () => {
+  const envBase = (import.meta.env.VITE_API_BASE || "").trim().replace(/\/+$/, "");
+  
+  // If running in browser over HTTPS and envBase is insecure HTTP (e.g. http://76.13.246.224:4000)
+  // modern browsers block it (Mixed Content). We use '/api' to proxy via Render _redirects!
+  if (typeof window !== "undefined" && window.location.protocol === "https:" && envBase.startsWith("http://")) {
+    console.warn("[API] Insecure HTTP base detected on HTTPS page. Falling back to '/api' to prevent Mixed Content blocking.");
+    return "/api";
+  }
+
+  if (!envBase) return "/api";
+  
+  // Ensure that absolute URLs end with /api
+  if (envBase.startsWith("http") && !envBase.endsWith("/api")) {
+    return `${envBase}/api`;
+  }
+  
+  return envBase;
+};
+
+const DEFAULT_API_URL = getCleanApiBase();
 const RENDER_FALLBACK_URL = "http://76.13.246.224:4000/api";
 
 export default function App() {
@@ -352,7 +372,12 @@ export default function App() {
       }
     } catch (err) {
       console.error("Login error:", err);
-      setLoginError(err.response?.data?.error || "Invalid Email/Phone or password.");
+      const isMixedContent = typeof window !== "undefined" && window.location.protocol === "https:" && apiUrl.startsWith("http://");
+      if (isMixedContent) {
+        setLoginError("Browser Security Block (Mixed Content): HTTPS page cannot connect to http:// API directly. Please set VITE_API_BASE=/api on Render.");
+      } else {
+        setLoginError(err.response?.data?.error || "Invalid Email/Phone or password.");
+      }
     } finally {
       setLoginLoading(false);
     }
