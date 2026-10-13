@@ -1887,13 +1887,44 @@ async function reschedule(req, res) {
     details: { newStartTime }
   });
 
+  const barber = await Barber.findById(booking.barberId);
+  const customer = await User.findById(booking.customerId);
+  const customerName = customer?.name || req.user?.name || "Customer";
+
+  if (barber && barber.userId) {
+    try {
+      await Notification.create({
+        userId: barber.userId,
+        title: "Booking Rescheduled 🗓️",
+        body: `${customerName} rescheduled their appointment. Please confirm or decline.`,
+        type: "booking_rescheduled",
+        data: { bookingId: booking._id, status: "pending" }
+      });
+    } catch (e) {
+      console.error("Failed to create reschedule notification for barber:", e);
+    }
+  }
+
+  if (booking.customerId) {
+    try {
+      await Notification.create({
+        userId: booking.customerId,
+        title: "Booking Rescheduled 🗓️",
+        body: `Your appointment at ${barber?.shopName || "the salon"} has been rescheduled. Waiting for shopkeeper confirmation.`,
+        type: "booking_rescheduled",
+        data: { bookingId: booking._id, status: "pending" }
+      });
+    } catch (e) {
+      console.error("Failed to create reschedule notification for customer:", e);
+    }
+  }
+
   const io = req.app.get("io");
   if (io) {
     io.to(`user_${booking.customerId.toString()}`).emit("bookingUpdated", { bookingId: booking._id });
-    const barber = await Barber.findById(booking.barberId);
-    if(barber) {
-        io.to(`user_${barber.userId.toString()}`).emit("bookingUpdated", { bookingId: booking._id });
-        io.to(`barber_${barber._id.toString()}`).emit("queueUpdated");
+    if (barber) {
+      io.to(`user_${barber.userId.toString()}`).emit("bookingUpdated", { bookingId: booking._id });
+      io.to(`barber_${barber._id.toString()}`).emit("queueUpdated");
     }
   }
 
