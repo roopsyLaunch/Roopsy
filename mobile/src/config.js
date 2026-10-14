@@ -1,48 +1,13 @@
-import { Platform } from "react-native";
-import Constants from "expo-constants";
-
-const extra = Constants.expoConfig?.extra;
-const LIVE_PRODUCTION_URL = "http://76.13.246.224:4000";
-
-function getHostIp() {
-  const hostUri =
-    Constants.expoConfig?.hostUri ||
-    Constants.manifest2?.extra?.expoGo?.developer?.manifest?.debuggerHost ||
-    Constants.manifest?.debuggerHost;
-  if (hostUri) {
-    return hostUri.split(":")[0];
-  }
-  return null;
-}
-
 /**
  * Hostinger VPS Server: http://76.13.246.224:4000
- * Both Development and Production builds run on the Hostinger VPS backend server.
+ * Directly connected to Hostinger VPS backend server for both Development & Production.
  */
+export const LIVE_VPS_URL = "http://76.13.246.224:4000";
+
 export function getApiBaseUrl() {
-  // 1. In standalone / production builds (Play Store APK/AAB), ALWAYS enforce Hostinger VPS server
-  if (typeof __DEV__ !== "undefined" && !__DEV__) {
-    return LIVE_PRODUCTION_URL;
-  }
-
-  // 2. In development, check process.env or Expo extra config
-  let url = process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl;
-
-  // 3. If running in dev on physical device without set URL, attempt host IP detection
-  if (!url) {
-    const hostIp = getHostIp();
-    url = hostIp ? `http://${hostIp}:5000` : LIVE_PRODUCTION_URL;
-  }
-
-  // Clean whitespace and remove trailing slash if present
-  if (url && typeof url === "string") {
-    url = url.trim().replace(/^http:\/\/\s+/, "http://").replace(/^https:\/\/\s+/, "https://");
-    if (url.endsWith("/")) {
-      url = url.slice(0, -1);
-    }
-  }
-
-  return url || LIVE_PRODUCTION_URL;
+  // Directly and unconditionally connect to Hostinger VPS
+  const url = process.env.EXPO_PUBLIC_API_URL || LIVE_VPS_URL;
+  return (url && typeof url === "string" ? url.trim().replace(/\/$/, "") : LIVE_VPS_URL);
 }
 
 export const API_PREFIX = "/api";

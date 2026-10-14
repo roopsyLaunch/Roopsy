@@ -44,6 +44,7 @@ api.interceptors.response.use(
     if (error.code === "ECONNABORTED" || error.message?.includes("timeout")) {
       error.friendlyMessage = "Server response took too long. Please check your internet connection and try again.";
     } else if (!error.response && (error.message?.includes("Network Error") || error.code === "ERR_NETWORK")) {
+      console.warn("[API Network Error]", error?.config?.baseURL, error?.config?.url, error?.message);
       error.friendlyMessage = "Unable to connect to ROOPSY servers. Please check your internet connection.";
     }
     return Promise.reject(error);

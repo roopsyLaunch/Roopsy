@@ -2,7 +2,7 @@
   "expo": {
     "name": "ROOPSY",
     "slug": "roopsy",
-    "version": "1.0.3",
+    "version": "1.0.5",
     "orientation": "portrait",
     "icon": "./assets/logo.png",
     "userInterfaceStyle": "light",
@@ -19,12 +19,17 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.roopsy.app",
-      "buildNumber": "4"
+      "buildNumber": "6",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
     },
     "android": {
       "package": "com.roopsy.app",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 4,
+      "versionCode": 6,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -37,9 +42,6 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
         "CAMERA",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE",
-        "READ_MEDIA_IMAGES",
         "POST_NOTIFICATIONS"
       ]
     },

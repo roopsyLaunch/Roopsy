@@ -103,12 +103,6 @@ export async function pickOrCaptureImage({
           text: "🖼️ Choose from Gallery",
           onPress: async () => {
             try {
-              const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-              if (status !== "granted") {
-                Alert.alert("Permission Required", "Gallery permission is required to choose photo.");
-                resolve(null);
-                return;
-              }
               const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ['images'],
                 allowsEditing: true,
